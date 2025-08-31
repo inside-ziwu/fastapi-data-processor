@@ -94,6 +94,8 @@ def read_excel_as_pandas(path: str, sheet_name=None) -> pd.DataFrame:
     return pd.read_excel(path, sheet_name=sheet_name, engine="openpyxl")
 
 def df_pandas_to_polars(df: pd.DataFrame) -> pl.DataFrame:
+    for col in df.columns:
+        df[col] = df[col].astype(str)
     return pl.from_pandas(df)
 
 def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFrame:
