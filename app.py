@@ -488,15 +488,15 @@ def process_all_files(local_paths: Dict[str,str], spending_sheet_names: Optional
 
 # ---------- FastAPI endpoints ----------
 class ProcessRequest(BaseModel):
-    video_url: Optional[str] = None
-    live_url: Optional[str] = None
-    msg_url: Optional[str] = None
-    dr1_url: Optional[str] = None
-    dr2_url: Optional[str] = None
-    base_url: Optional[str] = None
-    leads_url: Optional[str] = None
+    video_excel_file: Optional[str] = None
+    live_bi_file: Optional[str] = None
+    msg_excel_file: Optional[str] = None
+    DR1_file: Optional[str] = None
+    DR2_file: Optional[str] = None
+    account_base_file: Optional[str] = None
+    leads_file: Optional[str] = None
     account_bi_file: Optional[str] = None
-    spending_url: Optional[str] = None
+    Spending_file: Optional[str] = None
     spending_sheet_names: Optional[str] = None
     save_to_disk: Optional[bool] = False
 
@@ -504,64 +504,50 @@ class ProcessRequest(BaseModel):
 async def process_files(request: Request, payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
     if not auth_ok(x_api_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    # create unique temp dir for this request
     run_dir = os.path.join(TMP_ROOT, f"run_{int(time.time()*1000)}")
     os.makedirs(run_dir, exist_ok=True)
-# Log raw request body for debugging
+
+    # Log raw request body for debugging
     raw_body = await request.body()
     logger.info(f"RAW REQUEST BODY: {raw_body.decode()}")
-    
-    # Map Coze field names to internal field names (1:1 mapping)
-    field_mapping = {
-        'video_url': 'video_excel_file',
-        'live_url': 'live_bi_file', 
-        'msg_url': 'msg_excel_file',
-        'dr1_url': 'DR1_file',
-        'dr2_url': 'DR2_file',
-        'base_url': 'account_base_file',
-        'leads_url': 'leads_file',
-        'account_bi_file': 'account_bi_file',
-        'spending_url': 'Spending_file',
-        'spending_sheet_names': 'spending_sheet_names'
-    }
-    
+
+    # 只处理文件字段
+    file_keys = [
+        "video_excel_file", "live_bi_file", "msg_excel_file", "DR1_file", "DR2_file",
+        "account_base_file", "leads_file", "account_bi_file", "Spending_file"
+    ]
     provided = payload.dict()
     local_paths = {}
-    logger.info(f"Starting file processing with Coze payload: {list(provided.keys())}")
-    
-    # Map and filter valid files
-    valid_files = {}
-    for coze_key, internal_key in field_mapping.items():
-        val = provided.get(coze_key)
-        logger.info(f"DEBUG: {coze_key} raw value = '{repr(val)}' (type: {type(val)})")
+    logger.info(f"Starting file processing with payload: {list(provided.keys())}")
+
+    # 下载文件字段
+    for key in file_keys:
+        val = provided.get(key)
+        logger.info(f"DEBUG: {key} raw value = '{repr(val)}' (type: {type(val)})")
         if val is not None and str(val).strip() != "" and str(val).strip() != "None":
-            valid_files[internal_key] = val
-            logger.info(f"✅ Mapping {coze_key} -> {internal_key}: {val}")
+            try:
+                logger.info(f"Downloading file: {key} = {val}")
+                local_paths[key] = download_to_file(val, run_dir)
+                logger.info(f"Successfully downloaded {key} to {local_paths[key]}")
+            except Exception as e:
+                shutil.rmtree(run_dir, ignore_errors=True)
+                raise HTTPException(status_code=500, detail=f"Failed to download {key}: {str(e)}")
         else:
-            logger.info(f"❌ Skipping {coze_key}: value is '{repr(val)}'")
-    
-    logger.info(f"Valid files to process: {list(valid_files.keys())}")
-    
-    if not valid_files:
+            logger.info(f"❌ Skipping {key}: value is '{repr(val)}'")
+
+    logger.info(f"Valid files to process: {list(local_paths.keys())}")
+
+    if not local_paths:
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="No valid file URLs provided. Please provide at least one file URL.")
-    
-    try:
-        for key, val in valid_files.items():
-            logger.info(f"Downloading file: {key} = {val}")
-            local_paths[key] = download_to_file(val, run_dir)
-            logger.info(f"Successfully downloaded {key} to {local_paths[key]}")
-    
-        logger.info(f"Total files downloaded: {len(local_paths)}")
-    except Exception as e:
-        # cleanup
-        shutil.rmtree(run_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"Failed to download files: {str(e)}")
+
+    # spending_sheet_names 作为辅助参数单独传递
+    spending_sheet_names = provided.get("spending_sheet_names")
 
     # call core processor
     try:
         logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
-        results = process_all_files(local_paths, spending_sheet_names=provided.get('spending_sheet_names') or provided.get('spending_sheets'))
+        results = process_all_files(local_paths, spending_sheet_names=spending_sheet_names)
         logger.info(f"Processing completed successfully, returning {len(results)} results")
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}", exc_info=True)
@@ -573,10 +559,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         out_path = os.path.join(run_dir, "result.json")
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
-        # return path (or you can return download link if hosting static serving)
         return {"status":"ok","result_path":out_path, "results_preview": results[:3]}
     # else return JSON directly
-    # cleanup temp dir (optional: keep for debug)
     shutil.rmtree(run_dir, ignore_errors=True)
     return results
 
