@@ -277,7 +277,6 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         p = local_paths["msg_excel_file"]
         all_sheets = read_excel_as_pandas(p, sheet_name=None)
 
-        # 允许的主键列名（根据实际表头，支持主机厂经销商ID、经销商ID、主机ID）
         PRIMARY_KEYS = ["主机厂经销商ID", "经销商ID", "主机ID"]
 
         per_sheet_frames = []
@@ -339,19 +338,24 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             sheet_status["kept_cols"] = keep
             sheet_report.append(sheet_status)
 
-        if per_sheet_frames:
-            df = pl.concat(per_sheet_frames, how="vertical")
-            logger.debug(f"[MSG合并后] columns={df.columns}")
-            # 直接聚合，不再调用 process_single_table
-            group_cols = ["NSC_CODE", "date"]
-            sum_cols = ["enter_private_count","private_open_count","private_leads_count"]
-            agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols if c in df.columns]
-            if agg_exprs:
-                df = df.groupby(group_cols).agg(agg_exprs)
-            else:
-                df = df.unique(subset=group_cols)
-            logger.debug(f"[MSG聚合后] columns={df.columns}")
-            dfs["msg"] = df
+        if not per_sheet_frames:
+            logger.error("[MSG] per_sheet_frames 为空，未生成 msg df")
+            raise ValueError("[MSG] per_sheet_frames 为空，未生成 msg df")
+
+        df = pl.concat(per_sheet_frames, how="vertical")
+        logger.debug(f"[MSG合并后] columns={df.columns}")
+        group_cols = ["NSC_CODE", "date"]
+        sum_cols = ["enter_private_count","private_open_count","private_leads_count"]
+        agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols if c in df.columns]
+        if agg_exprs:
+            df = df.groupby(group_cols).agg(agg_exprs)
+        else:
+            df = df.unique(subset=group_cols)
+        logger.debug(f"[MSG聚合后] columns={df.columns}")
+        if "NSC_CODE" not in df.columns:
+            logger.error(f"[MSG聚合后] 没有 NSC_CODE，实际列: {df.columns}")
+            raise ValueError(f"[MSG聚合后] 没有 NSC_CODE，实际列: {df.columns}")
+        dfs["msg"] = df
 
         logger.info(f"[MSG 严格模式报告] {sheet_report}")
 
@@ -436,6 +440,8 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     keys = []
     for k, v in dfs.items():
         logger.debug(f"[keys] {k} columns={v.columns}")
+        if "NSC_CODE" not in v.columns:
+            logger.error(f"[keys] {k} 没有 NSC_CODE，实际列: {v.columns}")
         if "NSC_CODE" in v.columns and "date" in v.columns:
             keys.append(v.select(["NSC_CODE", "date"]).unique())
     logger.debug(f"[keys] keys count={len(keys)}")
@@ -463,4 +469,3 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     logger.debug(f"[最终输出] base.columns={base.columns}")
 
     return base
-
