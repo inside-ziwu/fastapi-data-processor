@@ -65,14 +65,17 @@ def split_chinese_english(s: str):
 def field_match(src: str, col: str) -> bool:
     src_parts = split_chinese_english(src)
     col_parts = split_chinese_english(col)
+    print(f"field_match: src='{src}', col='{col}', src_parts={src_parts}, col_parts={col_parts}")
     if len(src_parts) != len(col_parts):
         return False
     for s, c in zip(src_parts, col_parts):
-        if re.search(r'[\u4e00-\u9fff]', s):
+        if re.search(r'[\u4e00-\u9fff]', s):  # 中文片段
             if s != c:
+                print(f"中文不匹配: '{s}' != '{c}'")
                 return False
-        else:
+        else:  # 英文/符号片段
             if normalize_symbol(s).lower() != normalize_symbol(c).lower():
+                print(f"英文/符号不匹配: '{normalize_symbol(s).lower()}' != '{normalize_symbol(c).lower()}'")
                 return False
     return True
 
@@ -80,11 +83,16 @@ def rename_columns_loose(pl_df: pl.DataFrame, mapping: Dict[str, str]) -> pl.Dat
     col_map = {}
     for src, dst in mapping.items():
         for c in pl_df.columns:
-            if field_match(src, c):
+            match = field_match(src, c)
+            print(f"字段映射尝试: 源字段='{src}'，目标字段='{c}'，match={match}")
+            if match:
                 col_map[c] = dst
                 break
     if col_map:
+        print("最终映射关系:", col_map)
         pl_df = pl_df.rename(col_map)
+    else:
+        print("没有任何字段被映射")
     return pl_df
 
 def read_csv_polars(path: str) -> pl.DataFrame:
