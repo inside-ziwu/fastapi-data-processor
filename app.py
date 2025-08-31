@@ -520,6 +520,11 @@ def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] 
     
     logger.info(f"Valid files to process: {list(valid_files.keys())}")
     
+    # Debug: log actual values received from Coze
+    for key, val in provided.items():
+        if key not in ("spending_sheet_names","save_to_disk"):
+            logger.info(f"DEBUG: {key} = '{val}' (type: {type(val)}, length: {len(str(val)) if val else 0})")
+    
     if not valid_files:
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="No valid file URLs provided. Please provide at least one file URL.")
