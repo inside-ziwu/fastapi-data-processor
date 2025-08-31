@@ -529,9 +529,12 @@ def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] 
     valid_files = {}
     for coze_key, internal_key in field_mapping.items():
         val = provided.get(coze_key)
+        logger.info(f"DEBUG: {coze_key} raw value = '{repr(val)}' (type: {type(val)})")
         if val is not None and str(val).strip() != "" and str(val).strip() != "None":
             valid_files[internal_key] = val
-            logger.info(f"Mapping {coze_key} -> {internal_key}: {val}")
+            logger.info(f"✅ Mapping {coze_key} -> {internal_key}: {val}")
+        else:
+            logger.info(f"❌ Skipping {coze_key}: value is '{repr(val)}'")
     
     logger.info(f"Valid files to process: {list(valid_files.keys())}")
     
