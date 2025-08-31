@@ -511,16 +511,29 @@ def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] 
     provided = payload.dict()
     local_paths = {}
     logger.info(f"Starting file processing with payload: {list(provided.keys())}")
+    
+    # Filter out None/empty values and build valid file list
+    valid_files = {k: v for k, v in provided.items() 
+                   if k not in ("spending_sheet_names","save_to_disk") 
+                   and v is not None 
+                   and str(v).strip() != ""}
+    
+    logger.info(f"Valid files to process: {list(valid_files.keys())}")
+    
+    if not valid_files:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="No valid file URLs provided. Please provide at least one file URL.")
+    
     try:
-        for key, val in provided.items():
-            if key in ("spending_sheet_names","save_to_disk") or val is None:
-                continue
+        for key, val in valid_files.items():
             # Only handle the 9 expected keys
             if key not in ("video_excel_file","live_bi_file","msg_excel_file","DR1_file","DR2_file","account_base_file","leads_file","account_bi_file","Spending_file"):
                 continue
             logger.info(f"Downloading file: {key} = {val}")
             local_paths[key] = download_to_file(val, run_dir)
             logger.info(f"Successfully downloaded {key} to {local_paths[key]}")
+    
+        logger.info(f"Total files downloaded: {len(local_paths)}")
     except Exception as e:
         # cleanup
         shutil.rmtree(run_dir, ignore_errors=True)
