@@ -1,5 +1,3 @@
-# data_processor.py
-
 import os
 import shutil
 import logging
