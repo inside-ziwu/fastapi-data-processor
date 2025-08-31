@@ -339,10 +339,6 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
 
         if per_sheet_frames:
             df = pl.concat(per_sheet_frames, how="vertical")
-            df = process_single_table(df, mapping={}, sum_cols=["enter_private_count","private_open_count","private_leads_count"])
-            dfs["msg"] = df
-        if per_sheet_frames:
-            df = pl.concat(per_sheet_frames, how="vertical")
             # 直接聚合，不再调用 process_single_table
             group_cols = ["NSC_CODE", "date"]
             sum_cols = ["enter_private_count","private_open_count","private_leads_count"]
