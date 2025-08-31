@@ -581,6 +581,17 @@ def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] 
 def health():
     return {"status":"ok","time": datetime.utcnow().isoformat()}
 
+@app.post("/debug")
+def debug(payload: dict = Body(...), x_api_key: Optional[str] = Header(None)):
+    """Debug endpoint to see exact raw payload"""
+    if not auth_ok(x_api_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return {
+        "raw_payload": payload,
+        "keys_received": list(payload.keys()),
+        "types": {k: str(type(v)) for k, v in payload.items()}
+    }
+
 @app.post("/process-and-download")
 def process_and_download(payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
     """Process and return as downloadable attachment (Content-Disposition)."""
