@@ -136,8 +136,7 @@ def try_cast_numeric(pl_df: pl.DataFrame, cols):
 VIDEO_MAP = {
     "主机厂经销商id":"NSC_CODE", "日期":"date",
     "锚点曝光次数":"anchor_exposure", "锚点点击次数":"component_clicks",
-    "新发布视频数":"short_video_count", "短视频表单提交商机量":"short_video_leads",
-    "短视频播放量":"short_video_plays"
+    "新发布视频数":"short_video_count", "短视频表单提交商机量":"short_video_leads"
 }
 LIVE_MAP = {
     "主机厂经销商id列表":"NSC_CODE", "开播日期":"date",
@@ -146,7 +145,7 @@ LIVE_MAP = {
     "小风车点击次数（不含小雪花）":"small_wheel_clicks"
 }
 MSG_MAP = {
-    "主机厂经销商ID":"NSC_CODE", "进入私信客户数":"enter_private_count",
+    "主机厂经销商ID":"NSC_CODE", "日期":"date", "进入私信客户数":"enter_private_count",
     "主动咨询客户数":"private_open_count","私信留资客户数":"private_leads_count"
 }
 ACCOUNT_BI_MAP = {
@@ -157,7 +156,7 @@ LEADS_MAP = {
 }
 DR_MAP = {
     "reg_dealer":"NSC_CODE","register_time":"date","leads_type":"leads_type",
-    "mkt_second_channel_name":"mkt_second_channel_name","send2dealer":"send2dealer"
+    "mkt_second_channel_name":"mkt_second_channel_name","send2dealer_id":"send2dealer_id"
 }
 SPENDING_MAP = {"NSC CODE":"NSC_CODE","Date":"date","Spending(Net)":"spending_net"}
 ACCOUNT_BASE_MAP = {"NSC_id":"NSC_CODE","第二期层级":"level","NSC Code":"NSC_Code","抖音id":"store_name"}
