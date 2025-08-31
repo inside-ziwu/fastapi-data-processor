@@ -501,13 +501,17 @@ class ProcessRequest(BaseModel):
     save_to_disk: Optional[bool] = False
 
 @app.post("/process-files")
-def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
+def process_files(request: Request, payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
     if not auth_ok(x_api_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
     # create unique temp dir for this request
     run_dir = os.path.join(TMP_ROOT, f"run_{int(time.time()*1000)}")
     os.makedirs(run_dir, exist_ok=True)
-# Map Coze field names to internal field names
+# Log raw request body for debugging
+    raw_body = await request.body()
+    logger.info(f"RAW REQUEST BODY: {raw_body.decode()}")
+    
+    # Map Coze field names to internal field names
     field_mapping = {
         'video_url': 'video_excel_file',
         'live_url': 'live_bi_file', 
@@ -544,7 +548,6 @@ def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] 
     
     try:
         for key, val in valid_files.items():
-            # Already mapped to correct internal keys
             logger.info(f"Downloading file: {key} = {val}")
             local_paths[key] = download_to_file(val, run_dir)
             logger.info(f"Successfully downloaded {key} to {local_paths[key]}")
