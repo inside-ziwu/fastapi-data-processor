@@ -6,7 +6,7 @@ import json
 import time
 import logging
 from typing import Optional, Dict, Any
-from fastapi import FastAPI, Body, HTTPException, Header, Response
+from fastapi import FastAPI, Body, HTTPException, Header, Response, Request
 from pydantic import BaseModel
 import requests
 import polars as pl
