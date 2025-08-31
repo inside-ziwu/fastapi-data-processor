@@ -8,7 +8,11 @@ import polars as pl
 import pandas as pd
 import re
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 logger = logging.getLogger(__name__)
 
 VIDEO_MAP = {
@@ -69,17 +73,17 @@ def split_chinese_english(s: str):
 def field_match(src: str, col: str) -> bool:
     src_parts = split_chinese_english(src)
     col_parts = split_chinese_english(col)
-    logger.info(f"field_match: src='{src}', col='{col}', src_parts={src_parts}, col_parts={col_parts}")
+    logger.debug(f"field_match: src='{src}', col='{col}', src_parts={src_parts}, col_parts={col_parts}")
     if len(src_parts) != len(col_parts):
         return False
     for s, c in zip(src_parts, col_parts):
         if re.search(r'[\u4e00-\u9fff]', s):  # 中文片段
             if s != c:
-                logger.info(f"中文不匹配: '{s}' != '{c}'")
+                logger.debug(f"中文不匹配: '{s}' != '{c}'")
                 return False
         else:  # 英文/符号片段
             if normalize_symbol(s).lower() != normalize_symbol(c).lower():
-                logger.info(f"英文/符号不匹配: '{normalize_symbol(s).lower()}' != '{normalize_symbol(c).lower()}'")
+                logger.debug(f"英文/符号不匹配: '{normalize_symbol(s).lower()}' != '{normalize_symbol(c).lower()}'")
                 return False
     return True
 
@@ -88,13 +92,13 @@ def rename_columns_loose(pl_df: pl.DataFrame, mapping: Dict[str, str]) -> pl.Dat
     for src, dst in mapping.items():
         for c in pl_df.columns:
             match = field_match(src, c)
-            logger.info(f"字段映射尝试: 源字段='{src}'，目标字段='{c}'，match={match}")
+            logger.debug(f"字段映射尝试: 源字段='{src}'，目标字段='{c}'，match={match}")
             if match:
                 col_map[c] = dst
                 break
-    logger.info(f"最终映射关系: {col_map}")
+    logger.debug(f"最终映射关系: {col_map}")
     pl_df = pl_df.rename(col_map)
-    logger.info(f"重命名后列名: {pl_df.columns}")
+    logger.debug(f"重命名后列名: {pl_df.columns}")
     return pl_df
 
 def read_csv_polars(path: str) -> pl.DataFrame:
@@ -142,11 +146,11 @@ def try_cast_numeric(pl_df: pl.DataFrame, cols):
 
 def process_single_table(df, mapping, sum_cols=None):
     orig_cols = list(df.columns)
-    logger.info(f"[process_single_table] 原始列名: {orig_cols}")
+    logger.debug(f"[process_single_table] 原始列名: {orig_cols}")
 
     df = rename_columns_loose(df, mapping)
     renamed_cols = list(df.columns)
-    logger.info(f"[process_single_table] 重命名后列名: {renamed_cols}")
+    logger.debug(f"[process_single_table] 重命名后列名: {renamed_cols}")
 
     if "NSC_CODE" not in df.columns:
         hit_report = {}
@@ -165,24 +169,24 @@ def process_single_table(df, mapping, sum_cols=None):
             "请确认主键源字段（例如：主机厂经销商ID/经销商ID/主机ID）是否在 mapping 中，"
             "且与实际表头中文部分完全一致。"
         )
-        logger.info(err_msg)
+        logger.error(err_msg)
         raise ValueError(err_msg)
 
     df = normalize_nsc_col(df, "NSC_CODE")
     after_norm_cols = list(df.columns)
-    logger.info(f"[process_single_table] 标准化 NSC_CODE 后列名: {after_norm_cols}")
+    logger.debug(f"[process_single_table] 标准化 NSC_CODE 后列名: {after_norm_cols}")
 
     if "NSC_CODE" not in df.columns:
-        logger.info("[process_single_table] normalize_nsc_col 之后 NSC_CODE 列丢失。")
+        logger.error("[process_single_table] normalize_nsc_col 之后 NSC_CODE 列丢失。")
         raise ValueError("[process_single_table] normalize_nsc_col 之后 NSC_CODE 列丢失。")
     non_null_cnt = df.filter(pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE") != "")).height
     if non_null_cnt == 0:
-        logger.info(f"[process_single_table] NSC_CODE 标准化后为空。非空行计数={non_null_cnt}")
+        logger.error(f"[process_single_table] NSC_CODE 标准化后为空。非空行计数={non_null_cnt}")
         raise ValueError(f"[process_single_table] NSC_CODE 标准化后为空。非空行计数={non_null_cnt}")
 
     df = ensure_date_column(df, "date")
     if "date" not in df.columns:
-        logger.info("[process_single_table] ensure_date_column 之后未发现 date 列。")
+        logger.error("[process_single_table] ensure_date_column 之后未发现 date 列。")
         raise ValueError("[process_single_table] ensure_date_column 之后未发现 date 列。")
 
     if sum_cols:
@@ -195,7 +199,7 @@ def process_single_table(df, mapping, sum_cols=None):
     else:
         df = df.unique(subset=group_cols)
 
-    logger.info(f"[process_single_table] 完成。输出列名: {list(df.columns)}, 行数={df.height}")
+    logger.debug(f"[process_single_table] 完成。输出列名: {list(df.columns)}, 行数={df.height}")
     return df
 
 def process_dr_table(df):
@@ -271,19 +275,21 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         p = local_paths["msg_excel_file"]
         all_sheets = read_excel_as_pandas(p, sheet_name=None)
 
-        # 允许的主键列名（根据实际表头，支持主机厂经销商ID、经销商ID、主机ID）
-        PRIMARY_KEYS = ["主机厂经销商ID", "经销商ID", "主机ID"]
+        # 允许的主键列名（根据实际表头，支持主机厂经销商ID）
+        PRIMARY_KEYS = ["主机厂经销商ID"]
 
         per_sheet_frames = []
         sheet_report = []
 
         for sheetname, pdf in all_sheets.items():
             orig_cols = list(map(str, pdf.columns))
+            logger.debug(f"[MSG调试] sheet={sheetname}, columns={orig_cols}")
             pk_matched = None
             for pk in PRIMARY_KEYS:
                 if pk in pdf.columns:
                     pk_matched = pk
                     break
+            logger.debug(f"[MSG调试] sheet={sheetname}, pk_matched={pk_matched}")
 
             sheet_status = {
                 "sheet": sheetname,
@@ -297,7 +303,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                     f"MSG sheet 缺少主键列。sheet='{sheetname}' "
                     f"需要列之一={PRIMARY_KEYS}，实际列={orig_cols}"
                 )
-                logger.info(err_msg)
+                logger.error(err_msg)
                 raise ValueError(err_msg)
 
             pdf_local = pdf.copy()
@@ -314,9 +320,11 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 "私信留资": "private_leads_count",
             }
             rename_map_eff = {k: v for k, v in rename_map.items() if k in pdf_local.columns}
+            logger.debug(f"[MSG调试] sheet={sheetname}, rename_map_eff={rename_map_eff}")
             pdf_local = pdf_local.rename(columns=rename_map_eff)
 
             df = df_pandas_to_polars(pdf_local)
+            logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
             assert "NSC_CODE" in df.columns, f"[严格] NSC_CODE 不存在。sheet='{sheetname}', cols={df.columns}"
 
             df = normalize_nsc_col(df, "NSC_CODE")
@@ -433,3 +441,4 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     ])
 
     return base
+
