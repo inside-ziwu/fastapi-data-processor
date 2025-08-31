@@ -497,7 +497,7 @@ class ProcessRequest(BaseModel):
     leads_url: Optional[str] = None
     account_bi_file: Optional[str] = None
     spending_url: Optional[str] = None
-    spending_sheets: Optional[str] = None
+    spending_sheet_names: Optional[str] = None
     save_to_disk: Optional[bool] = False
 
 @app.post("/process-files")
@@ -511,7 +511,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     raw_body = await request.body()
     logger.info(f"RAW REQUEST BODY: {raw_body.decode()}")
     
-    # Map Coze field names to internal field names
+    # Map Coze field names to internal field names (1:1 mapping)
     field_mapping = {
         'video_url': 'video_excel_file',
         'live_url': 'live_bi_file', 
@@ -522,7 +522,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         'leads_url': 'leads_file',
         'account_bi_file': 'account_bi_file',
         'spending_url': 'Spending_file',
-        'spending_sheets': 'spending_sheet_names'
+        'spending_sheet_names': 'spending_sheet_names'
     }
     
     provided = payload.dict()
