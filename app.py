@@ -561,7 +561,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     # call core processor
     try:
         logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
-        results = process_all_files(local_paths, spending_sheet_names=payload.spending_sheet_names)
+        results = process_all_files(local_paths, spending_sheet_names=provided.get('spending_sheet_names') or provided.get('spending_sheets'))
         logger.info(f"Processing completed successfully, returning {len(results)} results")
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}", exc_info=True)
