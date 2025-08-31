@@ -224,15 +224,81 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     if "msg_excel_file" in local_paths:
         p = local_paths["msg_excel_file"]
         all_sheets = read_excel_as_pandas(p, sheet_name=None)
-        rows = []
+
+        # 仅允许的主键列名（中文完全一致；英文/符号不涉及这里）
+        PRIMARY_KEYS = ["主机厂经销商ID"]  # 如需允许“经销商ID”，明确加进去：["主机厂经销商ID", "经销商ID"]
+
+        per_sheet_frames = []
+        sheet_report = []  # 调试报告
+
         for sheetname, pdf in all_sheets.items():
-            pdf = pdf.copy()
-            pdf["日期"] = sheetname
-            rows.append(pdf)
-        if rows:
-            big_pdf = pd.concat(rows, ignore_index=True)
-            df = df_pandas_to_polars(big_pdf)
-            dfs["msg"] = process_single_table(df, MSG_MAP, ["enter_private_count","private_open_count","private_leads_count"])
+            # 记录原始列名
+            orig_cols = list(map(str, pdf.columns))
+
+            # 精准寻找主键列（中文完全一致）
+            pk_matched = None
+            for pk in PRIMARY_KEYS:
+                if pk in pdf.columns:
+                    pk_matched = pk
+                    break
+
+            sheet_status = {
+                "sheet": sheetname,
+                "orig_cols": orig_cols,
+                "pk_found": pk_matched or "",
+            }
+
+            if pk_matched is None:
+                # 严格模式：遇到缺主键的 sheet，直接报错，定位问题
+                sheet_report.append(sheet_status)
+                err_msg = (
+                    f"MSG sheet 缺少主键列。sheet='{sheetname}' "
+                    f"需要列之一={PRIMARY_KEYS}，实际列={orig_cols}"
+                )
+                raise ValueError(err_msg)
+
+            # 复制并构造“日期=sheetname”
+            pdf_local = pdf.copy()
+            pdf_local["日期"] = sheetname
+
+            # 仅对这一张表做最小 rename：把 pk_matched -> NSC_CODE；把度量中文列精确映射
+            rename_map = {
+                pk_matched: "NSC_CODE",
+                "日期": "date",
+                "进入私信客户数": "enter_private_count",
+                "主动咨询客户数": "private_open_count",
+                "私信留资客户数": "private_leads_count",
+            }
+            # 只改存在的列
+            rename_map_eff = {k: v for k, v in rename_map.items() if k in pdf_local.columns}
+            pdf_local = pdf_local.rename(columns=rename_map_eff)
+
+            # 转 polars 并做 NSC 与 date 标准化
+            df = df_pandas_to_polars(pdf_local)
+            # 此时必须已经有 NSC_CODE，否则直接断言失败
+            assert "NSC_CODE" in df.columns, f"[严格] NSC_CODE 不存在。sheet='{sheetname}', cols={df.columns}"
+
+            df = normalize_nsc_col(df, "NSC_CODE")
+            df = ensure_date_column(df, "date")
+
+            # 只保留关心列（其余列不进合并，避免后续被误导）
+            keep = [c for c in ["NSC_CODE","date","enter_private_count","private_open_count","private_leads_count"] if c in df.columns]
+            df = df.select(keep)
+
+            per_sheet_frames.append(df)
+            sheet_status["kept_cols"] = keep
+            sheet_report.append(sheet_status)
+
+        # 合并各 sheet（同一主键标准化后再合并，避免列名不一致问题）
+        if per_sheet_frames:
+            df = pl.concat(per_sheet_frames, how="vertical")
+            # 聚合到 NSC_CODE+date
+            df = process_single_table(df, mapping={}, sum_cols=["enter_private_count","private_open_count","private_leads_count"])
+            dfs["msg"] = df
+
+        # 打印一份可追溯报告（出现在日志里）
+        logger.info(f"[MSG 严格模式报告] {sheet_report}")
+
 
     # 4. account_bi_file
     if "account_bi_file" in local_paths:
