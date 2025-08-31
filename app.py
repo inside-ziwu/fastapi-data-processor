@@ -488,16 +488,16 @@ def process_all_files(local_paths: Dict[str,str], spending_sheet_names: Optional
 
 # ---------- FastAPI endpoints ----------
 class ProcessRequest(BaseModel):
-    video_excel_file: Optional[str] = None
-    live_bi_file: Optional[str] = None
-    msg_excel_file: Optional[str] = None
-    DR1_file: Optional[str] = None
-    DR2_file: Optional[str] = None
-    account_base_file: Optional[str] = None
-    leads_file: Optional[str] = None
+    video_url: Optional[str] = None
+    live_url: Optional[str] = None
+    msg_url: Optional[str] = None
+    dr1_url: Optional[str] = None
+    dr2_url: Optional[str] = None
+    base_url: Optional[str] = None
+    leads_url: Optional[str] = None
     account_bi_file: Optional[str] = None
-    Spending_file: Optional[str] = None
-    spending_sheet_names: Optional[str] = None
+    spending_url: Optional[str] = None
+    spending_sheets: Optional[str] = None
     save_to_disk: Optional[bool] = False
 
 @app.post("/process-files")
@@ -507,23 +507,33 @@ def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] 
     # create unique temp dir for this request
     run_dir = os.path.join(TMP_ROOT, f"run_{int(time.time()*1000)}")
     os.makedirs(run_dir, exist_ok=True)
-    # download all provided urls to disk
+# Map Coze field names to internal field names
+    field_mapping = {
+        'video_url': 'video_excel_file',
+        'live_url': 'live_bi_file', 
+        'msg_url': 'msg_excel_file',
+        'dr1_url': 'DR1_file',
+        'dr2_url': 'DR2_file',
+        'base_url': 'account_base_file',
+        'leads_url': 'leads_file',
+        'account_bi_file': 'account_bi_file',
+        'spending_url': 'Spending_file',
+        'spending_sheets': 'spending_sheet_names'
+    }
+    
     provided = payload.dict()
     local_paths = {}
-    logger.info(f"Starting file processing with payload: {list(provided.keys())}")
+    logger.info(f"Starting file processing with Coze payload: {list(provided.keys())}")
     
-    # Filter out None/empty values and build valid file list
-    valid_files = {k: v for k, v in provided.items() 
-                   if k not in ("spending_sheet_names","save_to_disk") 
-                   and v is not None 
-                   and str(v).strip() != ""}
+    # Map and filter valid files
+    valid_files = {}
+    for coze_key, internal_key in field_mapping.items():
+        val = provided.get(coze_key)
+        if val is not None and str(val).strip() != "" and str(val).strip() != "None":
+            valid_files[internal_key] = val
+            logger.info(f"Mapping {coze_key} -> {internal_key}: {val}")
     
     logger.info(f"Valid files to process: {list(valid_files.keys())}")
-    
-    # Debug: log actual values received from Coze
-    for key, val in provided.items():
-        if key not in ("spending_sheet_names","save_to_disk"):
-            logger.info(f"DEBUG: {key} = '{val}' (type: {type(val)}, length: {len(str(val)) if val else 0})")
     
     if not valid_files:
         shutil.rmtree(run_dir, ignore_errors=True)
@@ -531,9 +541,7 @@ def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] 
     
     try:
         for key, val in valid_files.items():
-            # Only handle the 9 expected keys
-            if key not in ("video_excel_file","live_bi_file","msg_excel_file","DR1_file","DR2_file","account_base_file","leads_file","account_bi_file","Spending_file"):
-                continue
+            # Already mapped to correct internal keys
             logger.info(f"Downloading file: {key} = {val}")
             local_paths[key] = download_to_file(val, run_dir)
             logger.info(f"Successfully downloaded {key} to {local_paths[key]}")
