@@ -88,11 +88,9 @@ def rename_columns_loose(pl_df: pl.DataFrame, mapping: Dict[str, str]) -> pl.Dat
             if match:
                 col_map[c] = dst
                 break
-    if col_map:
-        print("最终映射关系:", col_map)
-        pl_df = pl_df.rename(col_map)
-    else:
-        print("没有任何字段被映射")
+    print("最终映射关系:", col_map)
+    pl_df = pl_df.rename(col_map)
+    print("重命名后列名:", pl_df.columns)
     return pl_df
 
 def read_csv_polars(path: str) -> pl.DataFrame:
@@ -139,17 +137,67 @@ def try_cast_numeric(pl_df: pl.DataFrame, cols):
     return pl_df
 
 def process_single_table(df, mapping, sum_cols=None):
+    # 记录原始列名，便于定位
+    orig_cols = list(df.columns)
+    print(f"[process_single_table] 原始列名: {orig_cols}")
+
+    # 1) 重命名（中文精准 + 英文/符号模糊匹配由 field_match 决定）
     df = rename_columns_loose(df, mapping)
+    renamed_cols = list(df.columns)
+    print(f"[process_single_table] 重命名后列名: {renamed_cols}")
+
+    # 1.1) 验证主键是否被正确映射为 NSC_CODE
+    if "NSC_CODE" not in df.columns:
+        # 统计 mapping 中每个 key 是否命中，便于快速定位
+        hit_report = {}
+        for src, dst in mapping.items():
+            hit = False
+            for c in orig_cols:
+                if field_match(src, c):
+                    hit = True
+                    break
+            hit_report[src] = {"expected": dst, "matched": hit}
+        err_msg = (
+            "[process_single_table] 重命名后未发现 NSC_CODE。\n"
+            f"  - 原始列名: {orig_cols}\n"
+            f"  - 重命名后列名: {renamed_cols}\n"
+            f"  - 映射命中报告: {hit_report}\n"
+            "请确认主键源字段（例如：主机厂经销商ID/经销商ID/主机ID）是否在 mapping 中，"
+            "且与实际表头中文部分完全一致。"
+        )
+        raise ValueError(err_msg)
+
+    # 2) 标准化 NSC_CODE（分裂多值、去空格等）
     df = normalize_nsc_col(df, "NSC_CODE")
+    after_norm_cols = list(df.columns)
+    print(f"[process_single_table] 标准化 NSC_CODE 后列名: {after_norm_cols}")
+
+    # 2.1) 再次验证 NSC_CODE 是否还在，且非空
+    if "NSC_CODE" not in df.columns:
+        raise ValueError("[process_single_table] normalize_nsc_col 之后 NSC_CODE 列丢失。")
+    if df.select(pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE") != "")).sum().row(0)[0] == 0:
+        # 注意：上面这行是“有非空行吗”的快速判断（也可用 filter/count）
+        non_null_cnt = df.filter(pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE") != "")).height
+        raise ValueError(f"[process_single_table] NSC_CODE 标准化后为空。非空行计数={non_null_cnt}")
+
+    # 3) 标准化 date
     df = ensure_date_column(df, "date")
+    if "date" not in df.columns:
+        raise ValueError("[process_single_table] ensure_date_column 之后未发现 date 列。")
+
+    # 4) 数值列转换
     if sum_cols:
         df = try_cast_numeric(df, sum_cols)
+
+    # 5) 聚合或去重
     group_cols = ["NSC_CODE", "date"]
     agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols] if sum_cols else []
     if agg_exprs:
         df = df.groupby(group_cols).agg(agg_exprs)
     else:
         df = df.unique(subset=group_cols)
+
+    print(f"[process_single_table] 完成。输出列名: {list(df.columns)}, 行数={df.height}")
     return df
 
 def process_dr_table(df):
