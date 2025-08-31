@@ -256,6 +256,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             pdf = read_excel_as_pandas(p, sheet_name=0)
             df = df_pandas_to_polars(pdf)
         if df is not None:
+            logger.debug(f"[video] columns={df.columns}")
             dfs["video"] = process_single_table(df, VIDEO_MAP, ["anchor_exposure","component_clicks","short_video_count","short_video_leads"])
 
     # 2. live_bi_file
@@ -268,6 +269,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             pdf = read_excel_as_pandas(p, sheet_name=0)
             df = df_pandas_to_polars(pdf)
         if df is not None:
+            logger.debug(f"[live] columns={df.columns}")
             dfs["live"] = process_single_table(df, LIVE_MAP, ["over25_min_live_mins","live_effective_hours","effective_live_sessions","exposures","viewers","small_wheel_clicks"])
 
     # 3. msg_excel_file
@@ -275,8 +277,8 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         p = local_paths["msg_excel_file"]
         all_sheets = read_excel_as_pandas(p, sheet_name=None)
 
-        # 允许的主键列名（根据实际表头，支持主机厂经销商ID）
-        PRIMARY_KEYS = ["主机厂经销商ID"]
+        # 允许的主键列名（根据实际表头，支持主机厂经销商ID、经销商ID、主机ID）
+        PRIMARY_KEYS = ["主机厂经销商ID", "经销商ID", "主机ID"]
 
         per_sheet_frames = []
         sheet_report = []
@@ -339,6 +341,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
 
         if per_sheet_frames:
             df = pl.concat(per_sheet_frames, how="vertical")
+            logger.debug(f"[MSG合并后] columns={df.columns}")
             # 直接聚合，不再调用 process_single_table
             group_cols = ["NSC_CODE", "date"]
             sum_cols = ["enter_private_count","private_open_count","private_leads_count"]
@@ -347,6 +350,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 df = df.groupby(group_cols).agg(agg_exprs)
             else:
                 df = df.unique(subset=group_cols)
+            logger.debug(f"[MSG聚合后] columns={df.columns}")
             dfs["msg"] = df
 
         logger.info(f"[MSG 严格模式报告] {sheet_report}")
@@ -361,6 +365,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             pdf = read_excel_as_pandas(p, sheet_name=0)
             df = df_pandas_to_polars(pdf)
         if df is not None:
+            logger.debug(f"[account_bi] columns={df.columns}")
             dfs["account_bi"] = process_single_table(df, ACCOUNT_BI_MAP, ["live_leads","short_video_plays"])
 
     # 5. leads_file
@@ -373,6 +378,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             pdf = read_excel_as_pandas(p, sheet_name=0)
             df = df_pandas_to_polars(pdf)
         if df is not None:
+            logger.debug(f"[leads] columns={df.columns}")
             dfs["leads"] = process_single_table(df, LEADS_MAP, ["small_wheel_leads"])
 
     # 6. DR1_file, DR2_file
@@ -387,6 +393,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 logger.warning(f"{key} 只支持CSV格式，已跳过: {p}")
     if dr_frames:
         dr_df = pl.concat(dr_frames, how="vertical")
+        logger.debug(f"[dr] columns={dr_df.columns}")
         dfs["dr"] = process_dr_table(dr_df)
 
     # 7. Spending_file
@@ -416,6 +423,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 big_pdf = pd.concat(all_sheets.values(), ignore_index=True)
             df = df_pandas_to_polars(big_pdf)
         if df is not None:
+            logger.debug(f"[spending] columns={df.columns}")
             dfs["spending"] = process_single_table(df, SPENDING_MAP, ["spending_net"])
 
     # 8. account_base_file
@@ -427,25 +435,31 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
 
     keys = []
     for k, v in dfs.items():
+        logger.debug(f"[keys] {k} columns={v.columns}")
         if "NSC_CODE" in v.columns and "date" in v.columns:
             keys.append(v.select(["NSC_CODE", "date"]).unique())
+    logger.debug(f"[keys] keys count={len(keys)}")
     if not keys:
         raise ValueError("No frames with NSC_CODE + date found.")
     base = pl.concat(keys).unique().sort(["NSC_CODE", "date"])
+    logger.debug(f"[最终合并] base.columns={base.columns}")
 
     for name, df in dfs.items():
+        logger.debug(f"[join] {name} columns={df.columns}")
         if "date" in df.columns:
             base = base.join(df, on=["NSC_CODE", "date"], how="left")
         else:
             base = base.join(df, on="NSC_CODE", how="left")
+        logger.debug(f"[join后] base.columns={base.columns}")
 
     if account_base is not None:
         base = base.join(account_base, on="NSC_CODE", how="left")
+        logger.debug(f"[account_base join后] base.columns={base.columns}")
 
     base = base.with_columns([
         pl.col("date").dt.month().cast(pl.Utf8).str.zfill(2).alias("月份"),
         pl.col("date").dt.day().cast(pl.Utf8).str.zfill(2).alias("日期")
     ])
+    logger.debug(f"[最终输出] base.columns={base.columns}")
 
     return base
-
