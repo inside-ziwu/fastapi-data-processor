@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV TMP_ROOT=/tmp/fastapi_data_proc
+ENV TMP_ROOT /tmp/fastapi_data_proc
 
 EXPOSE 8000
 
