@@ -4,6 +4,7 @@ import tempfile
 import shutil
 import json
 import time
+import logging
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, Body, HTTPException, Header, Response
 from pydantic import BaseModel
@@ -13,6 +14,10 @@ import pandas as pd
 from io import BytesIO
 from datetime import datetime, date
 import math
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Coze-Compatible Data Processor")
 
@@ -33,6 +38,8 @@ def download_to_file(url_or_path: str, target_dir: str) -> str:
     """Download a URL (or copy local file) to target_dir and return local file path.
        Uses streaming to avoid loading entire file into memory."""
     os.makedirs(target_dir, exist_ok=True)
+    logger.info(f"Processing URL/path: {url_or_path}")
+    
     if url_or_path.startswith("file://") or os.path.exists(url_or_path):
         # Local file: copy
         if url_or_path.startswith("file://"):
@@ -43,18 +50,25 @@ def download_to_file(url_or_path: str, target_dir: str) -> str:
             raise FileNotFoundError(f"Local file not found: {local_src}")
         dest = os.path.join(target_dir, os.path.basename(local_src))
         shutil.copy(local_src, dest)
+        logger.info(f"Copied local file from {local_src} to {dest}")
         return dest
 
     # Remote URL
+    logger.info(f"Downloading from URL: {url_or_path}")
     resp = requests.get(url_or_path, stream=True, timeout=120)
     if resp.status_code != 200:
+        logger.error(f"Failed to download {url_or_path}: HTTP {resp.status_code}")
         raise HTTPException(status_code=502, detail=f"Failed to download {url_or_path}: {resp.status_code}")
     fname = url_or_path.split("/")[-1].split("?")[0] or f"file_{int(time.time())}"
     dest = os.path.join(target_dir, fname)
+    logger.info(f"Saving downloaded file to: {dest}")
+    
     with open(dest, "wb") as f:
         for chunk in resp.iter_content(chunk_size=4*1024*1024):
             if chunk:
                 f.write(chunk)
+    file_size = os.path.getsize(dest)
+    logger.info(f"Successfully downloaded {fname} ({file_size} bytes)")
     return dest
 
 # Utilities to read CSV/Excel robustly
@@ -153,20 +167,27 @@ def process_all_files(local_paths: Dict[str,str], spending_sheet_names: Optional
     local_paths: dict mapping keys (same names as in req JSON) to local file paths (downloaded).
     returns: list of JSON-able dicts as described in your output format.
     """
+    logger.info(f"Entering process_all_files with {len(local_paths)} files")
+    
     # 1) Read each file into polars DataFrames (or pandas for Excel sheets)
     # We'll try to detect CSV vs Excel by extension.
     def read_generic(path, kind_hint=None):
+        logger.info(f"Reading file: {path}")
         p = path.lower()
         if p.endswith(".csv") or p.endswith(".txt"):
+            logger.info(f"Detected CSV/TXT file: {path}")
             return read_csv_polars(path)
         if p.endswith(".xlsx") or p.endswith(".xls"):
+            logger.info(f"Detected Excel file: {path}")
             # For single-sheet small excel, read first sheet to pandas then convert.
             # But some files (msg_excel_file, spending) need multiple sheets.
             return None  # caller will handle Excel differently
         # fallback: try csv then excel
         try:
+            logger.info(f"Trying CSV fallback for: {path}")
             return read_csv_polars(path)
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to read file {path} as CSV: {str(e)}")
             return None
 
     # Read video
@@ -489,6 +510,7 @@ def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] 
     # download all provided urls to disk
     provided = payload.dict()
     local_paths = {}
+    logger.info(f"Starting file processing with payload: {list(provided.keys())}")
     try:
         for key, val in provided.items():
             if key in ("spending_sheet_names","save_to_disk") or val is None:
@@ -496,8 +518,9 @@ def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] 
             # Only handle the 9 expected keys
             if key not in ("video_excel_file","live_bi_file","msg_excel_file","DR1_file","DR2_file","account_base_file","leads_file","account_bi_file","Spending_file"):
                 continue
-            # download or copy local
+            logger.info(f"Downloading file: {key} = {val}")
             local_paths[key] = download_to_file(val, run_dir)
+            logger.info(f"Successfully downloaded {key} to {local_paths[key]}")
     except Exception as e:
         # cleanup
         shutil.rmtree(run_dir, ignore_errors=True)
@@ -505,8 +528,11 @@ def process_files(payload: ProcessRequest = Body(...), x_api_key: Optional[str] 
 
     # call core processor
     try:
+        logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
         results = process_all_files(local_paths, spending_sheet_names=payload.spending_sheet_names)
+        logger.info(f"Processing completed successfully, returning {len(results)} results")
     except Exception as e:
+        logger.error(f"Processing failed: {str(e)}", exc_info=True)
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
