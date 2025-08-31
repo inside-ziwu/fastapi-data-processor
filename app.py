@@ -83,8 +83,13 @@ def df_pandas_to_polars(df: pd.DataFrame) -> pl.DataFrame:
     # Convert pandas to polars; ensure object->string conversion for safety
     return pl.from_pandas(df)
 
+import polars as pl
+
 def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFrame:
-    """Ensure NSC_CODE column exists and is exploded if it contains comma/; separated lists."""
+    """
+    Ensure NSC_CODE column exists and is exploded if it contains comma/; separated lists.
+    修正 polars 的 strip 用法，兼容新旧版本。
+    """
     if colname not in df.columns:
         df = df.with_columns(pl.lit(None).alias(colname))
     # convert to string
@@ -97,7 +102,18 @@ def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFra
     )
     # split -> list -> explode
     df = df.with_columns(pl.col(colname).str.split(",").alias("_nsc_list"))
-    df = df.explode("_nsc_list").with_columns(pl.col("_nsc_list").str.strip().alias("NSC_CODE")).drop(colname).drop("_nsc_list")
+    df = df.explode("_nsc_list")
+    # 兼容 polars 新旧API
+    # 新版用 strip_characters，旧版用 strip_chars
+    try:
+        df = df.with_columns(
+            pl.col("_nsc_list").str.strip_characters().alias("NSC_CODE")
+        )
+    except AttributeError:
+        df = df.with_columns(
+            pl.col("_nsc_list").str.strip_chars().alias("NSC_CODE")
+        )
+    df = df.drop(colname).drop("_nsc_list")
     # drop empty NSC_CODE rows
     df = df.filter(pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE") != ""))
     return df
