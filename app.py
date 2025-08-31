@@ -501,7 +501,7 @@ class ProcessRequest(BaseModel):
     save_to_disk: Optional[bool] = False
 
 @app.post("/process-files")
-def process_files(request: Request, payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
+async def process_files(request: Request, payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
     if not auth_ok(x_api_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
     # create unique temp dir for this request
