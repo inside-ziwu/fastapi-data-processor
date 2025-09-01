@@ -460,8 +460,9 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 pass
             else:
                 # 创建默认日期（当前日期）
+                from datetime import date
                 logger.warning("[MSG] 未找到日期列，使用当前日期作为默认日期")
-                df = df.with_columns(pl.lit(pl.today()).alias("日期"))
+                df = df.with_columns(pl.lit(date.today()).alias("日期"))
             
             # 使用MSG_MAP进行列映射
             df = rename_columns_loose(df, MSG_MAP)
