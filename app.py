@@ -165,15 +165,14 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
-    logger.info(f"DEBUG: save_to_disk value = {repr(payload.save_to_disk)}, type = {type(payload.save_to_disk)}")
-    if payload.save_to_disk is True or str(payload.save_to_disk).lower() == 'true':
-        out_path = os.path.join(run_dir, "result.json")
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(final_response, f, ensure_ascii=False, indent=2, default=json_date_serializer)
-        return {"status":"ok", "message": message, "result_path":out_path, "results_preview": final_response["data"][:3]}
-
-    shutil.rmtree(run_dir, ignore_errors=True)
-    return Response(content=json.dumps(final_response, ensure_ascii=False, default=json_date_serializer), media_type="application/json")
+    # Per user request, save_to_disk is now hardcoded to True.
+    logger.info("save_to_disk is hardcoded to True. Saving result to file.")
+    out_path = os.path.join(run_dir, "result.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(final_response, f, ensure_ascii=False, indent=2, default=json_date_serializer)
+    
+    # The function now ALWAYS returns the path and does not delete the run_dir.
+    return {"status":"ok", "message": message, "result_path":out_path, "results_preview": final_response["data"][:3]}
 
 @app.get("/health")
 def health():
