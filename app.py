@@ -9,6 +9,7 @@ from fastapi import FastAPI, Body, HTTPException, Header, Response, Request
 from pydantic import BaseModel
 import requests
 from datetime import datetime
+import polars as pl
 
 from data_processor import process_all_files
 
@@ -104,20 +105,65 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     try:
         logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
         result_df = process_all_files(local_paths, spending_sheet_names=spending_sheet_names)
-        # 这里返回 polars DataFrame 的 to_dicts() 结果
-        results = result_df.to_dicts()
-        logger.info(f"Processing completed successfully, returning {len(results)} results")
+
+        # --- NEW LOGIC START ---
+        # 1. Get shape for size hint
+        num_rows, num_cols = result_df.shape
+
+        # 2. Count non-compliant floats before cleaning
+        nan_count = 0
+        inf_count = 0
+        for col in result_df.columns:
+            if result_df[col].dtype in [pl.Float32, pl.Float64]:
+                nan_count += result_df[col].is_nan().sum()
+                inf_count += result_df[col].is_infinite().sum()
+        cleaned_count = nan_count + inf_count
+
+        # 3. Clean the dataframe
+        for col in result_df.columns:
+            if result_df[col].dtype in [pl.Float32, pl.Float64]:
+                result_df = result_df.with_columns(
+                    pl.col(col).fill_nan(None).fill_infinite(None).alias(col)
+                )
+
+        # 4. Convert to dicts for serialization
+        results_data = result_df.to_dicts()
+
+        # 5. Serialize to get data size
+        json_string = json.dumps(results_data)
+        data_size_bytes = len(json_string.encode('utf-8'))
+        data_size_mb = data_size_bytes / (1024 * 1024)
+
+        # 6. Construct the message
+        size_warning = " (超过2MB)" if data_size_mb > 2 else ""
+        message = (
+            f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，"
+            f"数据大小约 {data_size_mb:.2f} MB{size_warning}。"
+            f"清理了 {cleaned_count} 个无效数值。"
+        )
+        logger.info(message)
+
+        # 7. Construct final response
+        final_response = {
+            "message": message,
+            "data": results_data
+        }
+        # --- NEW LOGIC END ---
+
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}", exc_info=True)
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
     if payload.save_to_disk:
         out_path = os.path.join(run_dir, "result.json")
         with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-        return {"status":"ok","result_path":out_path, "results_preview": results[:3]}
+            json.dump(final_response, f, ensure_ascii=False, indent=2)
+        # Also modify the save_to_disk return value
+        return {"status":"ok", "message": message, "result_path":out_path, "results_preview": final_response["data"][:3]}
+
     shutil.rmtree(run_dir, ignore_errors=True)
-    return results
+    return Response(content=json.dumps(final_response, ensure_ascii=False, default=str), media_type="application/json")
 
 @app.get("/health")
 def health():
