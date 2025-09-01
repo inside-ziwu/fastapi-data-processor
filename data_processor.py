@@ -478,10 +478,12 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         logger.info(f"[MSG合并后] 列名: {df.columns}")
         if df.height > 0:
             logger.info(f"[MSG数据预览]\n{df.head(5)}")
-            # 显示数值统计
+            # 显示数值统计 - 先确保是数值类型再求和
             numeric_cols = ["enter_private_count","private_open_count","private_leads_count"]
             for col in numeric_cols:
                 if col in df.columns:
+                    # 先转换为数值类型
+                    df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False).fill_null(0).fill_nan(0).alias(col))
                     total = df[col].sum()
                     non_null = df[col].is_not_null().sum()
                     logger.info(f"[MSG统计] {col}: 总和={total}, 非空值={non_null}, 空值={(df.height - non_null)}")
@@ -499,9 +501,11 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         logger.info(f"[MSG聚合后] 列名: {df.columns}")
         if df.height > 0:
             logger.info(f"[MSG聚合数据预览]\n{df.head(5)}")
-            # 显示聚合后统计
+            # 显示聚合后统计 - 确保数值类型
             for col in sum_cols:
                 if col in df.columns:
+                    # 再次确保数值类型
+                    df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False).fill_null(0).fill_nan(0).alias(col))
                     total = df[col].sum()
                     logger.info(f"[MSG聚合统计] {col}: 总和={total}")
         logger.debug(f"[MSG聚合后] columns={df.columns}")
