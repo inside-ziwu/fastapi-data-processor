@@ -8,7 +8,13 @@ from typing import Optional, Dict
 from fastapi import FastAPI, Body, HTTPException, Header, Response, Request
 from pydantic import BaseModel
 import requests
-from datetime import datetime
+from datetime import datetime, date
+
+def json_date_serializer(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    raise TypeError (f"Type {type(obj)} not serializable")
 import polars as pl
 
 from data_processor import process_all_files
@@ -113,10 +119,10 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         # 2. Count non-compliant floats before cleaning
         nan_count = 0
         inf_count = 0
-        for col in result_df.columns:
-            if result_df[col].dtype in [pl.Float32, pl.Float64]:
-                nan_count += result_df[col].is_nan().sum()
-                inf_count += result_df[col].is_infinite().sum()
+        for col_name in result_df.columns:
+            if result_df[col_name].dtype in [pl.Float32, pl.Float64]:
+                nan_count += result_df[col_name].is_nan().sum()
+                inf_count += result_df[col_name].is_infinite().sum()
         cleaned_count = nan_count + inf_count
 
         # 3. Clean the dataframe
@@ -133,8 +139,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         # 4. Convert to dicts for serialization
         results_data = result_df.to_dicts()
 
-        # 5. Serialize to get data size
-        json_string = json.dumps(results_data)
+        # 5. Serialize to get data size, using the custom date serializer
+        json_string = json.dumps(results_data, default=json_date_serializer)
         data_size_bytes = len(json_string.encode('utf-8'))
         data_size_mb = data_size_bytes / (1024 * 1024)
 
@@ -162,12 +168,11 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     if payload.save_to_disk:
         out_path = os.path.join(run_dir, "result.json")
         with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(final_response, f, ensure_ascii=False, indent=2)
-        # Also modify the save_to_disk return value
+            json.dump(final_response, f, ensure_ascii=False, indent=2, default=json_date_serializer)
         return {"status":"ok", "message": message, "result_path":out_path, "results_preview": final_response["data"][:3]}
 
     shutil.rmtree(run_dir, ignore_errors=True)
-    return Response(content=json.dumps(final_response, ensure_ascii=False, default=str), media_type="application/json")
+    return Response(content=json.dumps(final_response, ensure_ascii=False, default=json_date_serializer), media_type="application/json")
 
 @app.get("/health")
 def health():
