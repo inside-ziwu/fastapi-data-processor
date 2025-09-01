@@ -456,10 +456,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 )
                 logger.error(err_msg)
                 raise ValueError(err_msg)
-            # 先使用MSG_MAP进行列映射
-            df = rename_columns_loose(df, MSG_MAP)
-            
-            # MSG文件：每个sheet的title就是日期，直接使用sheetname作为日期
+            # MSG文件处理：每个sheet的title就是日期，强制添加date列
             date_str = str(sheetname)
             try:
                 from datetime import datetime
@@ -469,14 +466,21 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                     date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
                 elif len(date_str) == 8 and date_str.isdigit():
                     date_obj = datetime.strptime(date_str, "%Y%m%d").date()
+                elif len(date_str) == 10 and date_str.count("/") == 2:
+                    date_obj = datetime.strptime(date_str, "%Y/%m/%d").date()
                 else:
-                    raise ValueError
+                    date_obj = datetime.strptime(date_str, "%Y%m%d").date()  # 默认尝试
                     
+                # 强制添加date列
                 df = df.with_columns(pl.lit(date_obj).alias("date"))
                 logger.debug(f"[MSG日期] 使用sheet标题作为日期: {date_obj}")
-            except ValueError:
-                logger.error(f"[MSG日期] sheet标题 '{date_str}' 不是有效日期格式")
-                df = df.with_columns(pl.lit(None, dtype=pl.Date).alias("date"))
+            except ValueError as e:
+                logger.error(f"[MSG日期] sheet标题 '{date_str}' 不是有效日期格式: {e}")
+                # 作为字符串让ensure_date_column处理
+                df = df.with_columns(pl.lit(date_str).alias("date"))
+            
+            # 然后进行列映射
+            df = rename_columns_loose(df, MSG_MAP)
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
             df = normalize_nsc_col(df, "NSC_CODE")
             df = ensure_date_column(df, "date")
