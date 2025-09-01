@@ -122,9 +122,13 @@ def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFra
     df = df.with_columns(pl.col(colname).str.split(",").alias("_nsc_list"))
     df = df.explode("_nsc_list")
     df = df.with_columns(
-        pl.col("_nsc_list").str.strip_chars().alias("NSC_CODE")
+        pl.col("_nsc_list").str.strip_chars().alias("NSC_CODE_CLEAN")
     )
-    df = df.drop(colname).drop("_nsc_list")
+    if colname in df.columns:
+        df = df.drop([colname, "_nsc_list"])
+    else:
+        df = df.drop(["_nsc_list"])
+    df = df.rename({"NSC_CODE_CLEAN": "NSC_CODE"})
     df = df.filter(pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE") != ""))
     return df
 
