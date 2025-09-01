@@ -536,8 +536,8 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     logger.debug(f"[JOIN PROBE] Schema of base df: {base.schema}")
     logger.debug(f"[JOIN PROBE] Head of base df:\n{base.head()}")
     if "dr" in dfs:
-        logger.debug(f"[JOIN PROBE] Schema of dfs[\'dr\']: {dfs[\'dr\'].schema}")
-        logger.debug(f"[JOIN PROBE] Head of dfs[\'dr\']:\n{dfs[\'dr\'].head()}")
+        logger.debug(f"[JOIN PROBE] Schema of dfs['dr']: {dfs['dr'].schema}")
+        logger.debug(f"[JOIN PROBE] Head of dfs['dr']:\n{dfs['dr'].head()}")
     # --- END JOIN PROBE ---
 
     for name, df in dfs.items():
