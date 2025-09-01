@@ -27,13 +27,17 @@ LIVE_MAP = {
     "小风车点击次数（不含小雪花）": "small_wheel_clicks"
 }
 MSG_MAP = {
-    "主机厂经销商ID": "NSC_CODE", "日期": "date",
+    "主机厂经销商ID": "NSC_CODE", 
+    "日期": "date",
     "进入私信客户数": "enter_private_count",
     "主动咨询客户数": "private_open_count",
     "私信留资客户数": "private_leads_count"
 }
 ACCOUNT_BI_MAP = {
-    "主机厂经销商id列表": "NSC_CODE", "日期": "date", "直播间表单提交商机量": "live_leads", "短-播放量": "short_video_plays"
+    "主机厂经销商id列表": "NSC_CODE", 
+    "日期": "date", 
+    "直播间表单提交商机量": "live_leads", 
+    "短-播放量": "short_video_plays"
 }
 LEADS_MAP = {
     "主机厂经销商id列表": "NSC_CODE", "留资日期": "date", "直播间表单提交商机量(去重)": "small_wheel_leads"
@@ -352,23 +356,19 @@ def process_account_base(all_sheets):
         sheets_data = [("sheet1", all_sheets)]
 
     for sheetname, df_sheet in sheets_data:
+        df_sheet = pl.from_pandas(df_sheet) if hasattr(df_sheet, 'dtypes') else df_sheet
         df_cols = list(df_sheet.columns) if hasattr(df_sheet, 'columns') else []
         
-        # Check if it's the level sheet
-        if all(key in df_cols for key in level_sheet_keys):
+        # Use loose matching for column names
+        level_df_sheet = rename_columns_loose(df_sheet, {"NSC_id": "NSC_CODE", "第二期层级": "level"})
+        if "NSC_CODE" in level_df_sheet.columns and "level" in level_df_sheet.columns:
             logger.info(f"[ACC_BASE] Identified level sheet: {sheetname}")
-            level_df = df_sheet.select(
-                pl.col("NSC_id").alias("NSC_CODE"),
-                pl.col("第二期层级").alias("level")
-            )
+            level_df = level_df_sheet.select(["NSC_CODE", "level"])
         
-        # Check if it's the store name sheet
-        elif all(key in df_cols for key in store_sheet_keys):
+        store_name_df_sheet = rename_columns_loose(df_sheet, {"NSC Code": "NSC_CODE", "抖音id": "store_name"})
+        if "NSC_CODE" in store_name_df_sheet.columns and "store_name" in store_name_df_sheet.columns:
             logger.info(f"[ACC_BASE] Identified store_name sheet: {sheetname}")
-            store_name_df = df_sheet.select(
-                pl.col("NSC Code").alias("NSC_CODE"),
-                pl.col("抖音id").alias("store_name")
-            )
+            store_name_df = store_name_df_sheet.select(["NSC_CODE", "store_name"])
 
     if level_df is None and store_name_df is None:
         logger.warning("[ACC_BASE] Could not find valid level or store_name sheets in account_base_file.")
@@ -446,15 +446,8 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 logger.error(err_msg)
                 raise ValueError(err_msg)
             df = df.with_columns(pl.lit(sheetname).alias("日期"))
-            rename_map = {
-                PK_COLUMN: "NSC_CODE",
-                "日期": "date",
-                "进入私信客户数": "enter_private_count",
-                "主动咨询客户数": "private_open_count",
-                "私信留资客户数": "private_leads_count",
-            }
-            rename_map_eff = {k: v for k, v in rename_map.items() if k in df.columns}
-            df = df.rename(rename_map_eff)
+            # Use MSG_MAP for column mapping
+            df = rename_columns_loose(df, MSG_MAP)
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
             df = normalize_nsc_col(df, "NSC_CODE")
             df = ensure_date_column(df, "date")
@@ -575,8 +568,13 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     account_base = None
     if "account_base_file" in local_paths:
         p = local_paths["account_base_file"]
+        logger.info(f"Processing account_base_file: {p}")
         df_base = read_excel_polars(p, sheet_name=None)
         account_base = process_account_base(df_base)
+        if account_base is not None:
+            logger.info(f"Account base processed successfully: {account_base.shape[0]} records")
+        else:
+            logger.warning("Account base processing returned None")
     if not dfs:
         raise ValueError("No dataframes were processed. Check file inputs and names.")
     logger.info("Building base keys using pure Python to bypass Polars concat bug.")
@@ -719,7 +717,9 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     )
     # Step 5: Calculate Final Ratios (全部英文)
     def safe_div(num_expr, den_expr):
-        return pl.when(den_expr != 0).then(num_expr / den_expr).otherwise(None)
+        return pl.when((den_expr != 0) & den_expr.is_not_null() & num_expr.is_not_null())
+                  .then(num_expr / den_expr)
+                  .otherwise(None)
     summary_df = summary_df.with_columns(
         safe_div(pl.col("spending_net_total"), (pl.col("natural_leads_total").fill_null(0) + pl.col("ad_leads_total").fill_null(0))).alias("total_cpl"),
         safe_div(pl.col("spending_net_total"), pl.col("paid_area_leads_total")).alias("paid_cpl"),
