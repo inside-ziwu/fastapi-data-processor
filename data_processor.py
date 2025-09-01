@@ -454,11 +454,12 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 )
                 logger.error(err_msg)
                 raise ValueError(err_msg)
-            # 使用sheetname作为日期，确保日期列存在
-            df = df.with_columns(pl.lit(sheetname).alias("日期"))
-            
-            # 使用MSG_MAP进行列映射
+            # 先使用MSG_MAP进行列映射
             df = rename_columns_loose(df, MSG_MAP)
+            
+            # 如果date列不存在，使用sheetname作为日期
+            if "date" not in df.columns:
+                df = df.with_columns(pl.lit(sheetname).alias("date"))
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
             df = normalize_nsc_col(df, "NSC_CODE")
             df = ensure_date_column(df, "date")
