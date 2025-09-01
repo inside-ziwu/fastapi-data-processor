@@ -216,7 +216,9 @@ def ensure_date_column(pl_df: pl.DataFrame, colname: str = "date") -> pl.DataFra
 def try_cast_numeric(pl_df: pl.DataFrame, cols):
     for c in cols:
         if c in pl_df.columns:
-            pl_df = pl_df.with_columns(pl.col(c).cast(pl.Float64).fill_null(0))
+            pl_df = pl_df.with_columns(
+                pl.col(c).cast(pl.Float64, strict=False).fill_null(0).fill_nan(0)
+            )
     return pl_df
 
 def process_single_table(df, mapping, sum_cols=None):
@@ -302,33 +304,47 @@ def process_dr_table(df):
 
 def process_account_base(all_sheets):
     level_df, store_name_df = None, None
-    for sheetname, pdf in all_sheets.items():
-        df = df_pandas_to_polars(pdf)
-        df = rename_columns_loose(df, ACCOUNT_BASE_MAP)
-        logger.debug(f"[ACC_BASE PROBE] Sheet '{sheetname}', columns after rename: {df.columns}")
-        if "level" in df.columns and "NSC_CODE" in df.columns:
-            level_df = df.select(["NSC_CODE", "level"])
-        if "store_name" in df.columns and "NSC_CODE" in df.columns:
-            store_name_df = df.select(["NSC_CODE", "store_name"])
-            
-    logger.debug(f"[ACC_BASE PROBE] level_df is None: {level_df is None}")
-    if level_df is not None:
-        logger.debug(f"[ACC_BASE PROBE] level_df head:\n{level_df.head()}")
-    logger.debug(f"[ACC_BASE PROBE] store_name_df is None: {store_name_df is None}")
-    if store_name_df is not None:
-        logger.debug(f"[ACC_BASE PROBE] store_name_df head:\n{store_name_df.head()}")
 
-    if level_df is not None or store_name_df is not None:
-        if level_df is None:
-            merged = store_name_df.with_columns(pl.lit(None).alias("level"))
-        elif store_name_df is None:
-            merged = level_df.with_columns(pl.lit(None).alias("store_name"))
-        else:
-            merged = level_df.join(store_name_df, on="NSC_CODE", how="outer")
+    # Define the exact column names for each sheet
+    level_sheet_keys = ["NSC_id", "第二期层级"]
+    store_sheet_keys = ["NSC Code", "抖音id"]
+
+    for sheetname, pdf in all_sheets.items():
+        df_cols = pdf.columns
         
-        logger.debug(f"[ACC_BASE PROBE] Final merged account_base data:\n{merged.head()}")
-        return merged
-    return None
+        # Check if it's the level sheet
+        if all(key in df_cols for key in level_sheet_keys):
+            logger.info(f"[ACC_BASE] Identified level sheet: {sheetname}")
+            level_df = df_pandas_to_polars(pdf).select(
+                pl.col("NSC_id").alias("NSC_CODE"),
+                pl.col("第二期层级").alias("level")
+            )
+        
+        # Check if it's the store name sheet
+        elif all(key in df_cols for key in store_sheet_keys):
+            logger.info(f"[ACC_BASE] Identified store_name sheet: {sheetname}")
+            store_name_df = df_pandas_to_polars(pdf).select(
+                pl.col("NSC Code").alias("NSC_CODE"),
+                pl.col("抖音id").alias("store_name")
+            )
+
+    if level_df is None and store_name_df is None:
+        logger.warning("[ACC_BASE] Could not find valid level or store_name sheets in account_base_file.")
+        return None
+
+    # Join the two dataframes
+    if level_df is not None and store_name_df is not None:
+        merged = level_df.join(store_name_df, on="NSC_CODE", how="outer")
+    elif level_df is not None:
+        merged = level_df
+    else:
+        merged = store_name_df
+    
+    if merged is not None and "NSC_CODE" in merged.columns:
+         merged = merged.filter(pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE") != ""))
+
+    logger.debug(f"[ACC_BASE PROBE] Final merged account_base data:\n{merged.head() if merged is not None else 'None'}")
+    return merged
 
 def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optional[str] = None) -> pl.DataFrame:
     logger.info(f"Entering process_all_files with {len(local_paths)} files")
@@ -515,6 +531,15 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         raise ValueError("No frames with NSC_CODE + date found.")
     base = pl.concat(keys).unique().sort(["NSC_CODE", "date"])
     logger.debug(f"[最终合并] base.columns={base.columns}")
+
+    # --- JOIN PROBE ---
+    logger.debug(f"[JOIN PROBE] Schema of base df: {base.schema}")
+    logger.debug(f"[JOIN PROBE] Head of base df:\n{base.head()}")
+    if "dr" in dfs:
+        logger.debug(f"[JOIN PROBE] Schema of dfs[\'dr\']: {dfs[\'dr\'].schema}")
+        logger.debug(f"[JOIN PROBE] Head of dfs[\'dr\']:\n{dfs[\'dr\'].head()}")
+    # --- END JOIN PROBE ---
+
     for name, df in dfs.items():
         logger.debug(f"[join] {name} columns={df.columns}")
         if "date" in df.columns:
