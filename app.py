@@ -120,10 +120,14 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         cleaned_count = nan_count + inf_count
 
         # 3. Clean the dataframe
-        for col in result_df.columns:
-            if result_df[col].dtype in [pl.Float32, pl.Float64]:
+        for col_name in result_df.columns:
+            if result_df[col_name].dtype in [pl.Float32, pl.Float64]:
                 result_df = result_df.with_columns(
-                    pl.col(col).fill_nan(None).fill_infinite(None).alias(col)
+                    pl.when(pl.col(col_name).is_infinite())
+                    .then(None)
+                    .otherwise(pl.col(col_name))
+                    .fill_nan(None)
+                    .alias(col_name)
                 )
 
         # 4. Convert to dicts for serialization
