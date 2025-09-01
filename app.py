@@ -112,7 +112,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
         result_df = process_all_files(local_paths, spending_sheet_names=spending_sheet_names)
 
-        # --- NEW LOGIC START ---
+        # --- UNIFIED FINAL LOGIC ---
         # 1. Get shape for size hint
         num_rows, num_cols = result_df.shape
 
@@ -136,15 +136,19 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                     .alias(col_name)
                 )
 
-        # 4. Convert to dicts for serialization
-        results_data = result_df.to_dicts()
+        # 4. Create standard and Feishu data formats
+        results_data_standard = result_df.to_dicts()
+        
+        feishu_records = []
+        for row_dict in results_data_standard:
+            fields_str = json.dumps(row_dict, ensure_ascii=False, default=json_date_serializer)
+            feishu_records.append({"fields": fields_str})
+        feishu_output = {"records": feishu_records}
 
-        # 5. Serialize to get data size, using the custom date serializer
-        json_string = json.dumps(results_data, default=json_date_serializer)
-        data_size_bytes = len(json_string.encode('utf-8'))
+        # 5. Calculate final size and construct message
+        json_string_for_size_calc = json.dumps(results_data_standard, default=json_date_serializer)
+        data_size_bytes = len(json_string_for_size_calc.encode('utf-8'))
         data_size_mb = data_size_bytes / (1024 * 1024)
-
-        # 6. Construct the message
         size_warning = " (超过2MB)" if data_size_mb > 2 else ""
         message = (
             f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，"
@@ -153,34 +157,49 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         )
         logger.info(message)
 
-        # 7. Construct final response
-        final_response = {
-            "message": message,
-            "data": results_data
-        }
-        # --- NEW LOGIC END ---
-
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}", exc_info=True)
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
-    # Per user request, save_to_disk is now hardcoded to True.
-    logger.info("save_to_disk is hardcoded to True. Saving result to file.")
-    out_path = os.path.join(run_dir, "result.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(final_response, f, ensure_ascii=False, indent=2, default=json_date_serializer)
-    
-    # Construct the full downloadable URL
-    base_url = str(request.base_url)
-    download_endpoint = "get-result-file"
-    # Use urljoin to handle potential trailing slashes in base_url
-    full_url = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path)}"
+    # --- FINAL RETURN LOGIC ---
+    if payload.save_to_disk:
+        # Save both files
+        out_path_standard = os.path.join(run_dir, "result.json")
+        with open(out_path_standard, "w", encoding="utf-8") as f:
+            json.dump({"message": message, "data": results_data_standard}, f, ensure_ascii=False, indent=2, default=json_date_serializer)
 
-    logger.info(f"Returning downloadable URL: {full_url}")
-    
-    # The function now ALWAYS returns the path and does not delete the run_dir.
-    return {"status":"ok", "message": message, "result_path": full_url, "results_preview": final_response["data"][:3]}
+        out_path_feishu = os.path.join(run_dir, "feishu_import.json")
+        with open(out_path_feishu, "w", encoding="utf-8") as f:
+            json.dump(feishu_output, f, ensure_ascii=False, indent=2)
+
+        # Construct downloadable URLs
+        from urllib.parse import urljoin, quote
+        base_url = str(request.base_url)
+        download_endpoint = "get-result-file"
+        url_standard = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_standard)}"
+        url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
+        logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
+
+        return {
+            "status": "ok",
+            "message": message,
+            "result_path": {
+                "standard_json": url_standard,
+                "feishu_import_json": url_feishu
+            },
+            "results_preview": results_data_standard[:3],
+            "feishu_data": feishu_output
+        }
+    else:
+        # Return Feishu data directly, but no file is saved
+        shutil.rmtree(run_dir, ignore_errors=True)
+        final_response = {
+            "message": message,
+            "results_preview": results_data_standard[:3],
+            "feishu_data": feishu_output
+        }
+        return Response(content=json.dumps(final_response, ensure_ascii=False, default=json_date_serializer), media_type="application/json")
 
 from urllib.parse import urljoin, quote
 from fastapi.responses import FileResponse
