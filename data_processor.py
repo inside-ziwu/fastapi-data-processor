@@ -168,22 +168,17 @@ def rename_columns_loose(pl_df: pl.DataFrame, mapping: Dict[str, str]) -> pl.Dat
 def read_csv_polars(path: str) -> pl.DataFrame:
     return pl.read_csv(path, try_parse_dates=False, low_memory=False)
 
-def read_excel_polars(path: str, sheet_name=None) -> pl.DataFrame:
+def read_excel_polars(path: str, sheet_name=None):
     # 回退到pandas读取，因为fastexcel不可用
     if sheet_name is None:
-        # 处理多sheet情况
+        # 处理多sheet情况 - 返回字典保持sheet名称
         all_sheets = pd.read_excel(path, sheet_name=None, engine="openpyxl")
-        # 合并所有sheet
-        dfs = []
+        result = {}
         for sheet_name, df in all_sheets.items():
             for col in df.columns:
                 df[col] = df[col].astype(str)
-            dfs.append(df)
-        if dfs:
-            combined = pd.concat(dfs, ignore_index=True)
-            return pl.from_pandas(combined)
-        else:
-            return pl.DataFrame()
+            result[sheet_name] = pl.from_pandas(df)
+        return result
     else:
         pdf = pd.read_excel(path, sheet_name=sheet_name, engine="openpyxl")
         for col in pdf.columns:
