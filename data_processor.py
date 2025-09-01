@@ -586,9 +586,9 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             # 严格过滤：只保留有值的NSC_CODE和有效date
             keys_from_df = v.select(["NSC_CODE", "date"]).filter(
                 pl.col("NSC_CODE").is_not_null() & 
-                pl.col("NSC_CODE") != "" & 
-                pl.col("NSC_CODE") != "--" &
-                pl.col("NSC_CODE").str.strip_chars() != "" &
+                (pl.col("NSC_CODE") != "") & 
+                (pl.col("NSC_CODE") != "--") &
+                (pl.col("NSC_CODE").str.strip_chars() != "") &
                 pl.col("date").is_not_null()
             ).to_dicts()
             for row in keys_from_df:
