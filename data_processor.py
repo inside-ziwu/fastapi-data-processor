@@ -521,34 +521,31 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         account_base = process_account_base(all_sheets)
     if not dfs:
         raise ValueError("No dataframes were processed. Check file inputs and names.")
-    keys_dfs = []
+    logger.info("Building base keys using pure Python to bypass Polars concat bug.")
+    
+    # 1. Use a Python set for automatic uniqueness
+    unique_keys_set = set()
+
+    # 2. Iterate through all processed dataframes
     for k, v in dfs.items():
-        logger.debug(f"[keys] {k} columns={v.columns}")
-        if "NSC_CODE" not in v.columns:
-            logger.error(f"[keys] {k} 没有 NSC_CODE，实际列: {v.columns}")
         if "NSC_CODE" in v.columns and "date" in v.columns:
-            # --- KEYS PROBE ---
-            logger.debug(f"[KEYS PROBE] Inspecting key source df: '{k}'")
-            logger.debug(f"[COLUMN PROBE] Raw column names for '{k}': {repr(v.columns)}")
-            logger.debug(f"[KEYS PROBE] Schema for '{k}': {v.schema}")
-            logger.debug(f"[KEYS PROBE] Head of '{k}':\n{v.select(['NSC_CODE', 'date']).head()}")
-            # --- END KEYS PROBE ---
-            keys_dfs.append(v.select(["NSC_CODE", "date"]).unique())
-    
-    logger.debug(f"[keys] keys count={len(keys_dfs)}")
-    if not keys_dfs:
-        raise ValueError("No frames with NSC_CODE + date found.")
+            logger.debug(f"Extracting keys from '{k}'")
+            # Select key columns, drop any nulls, and convert to list of dicts for iteration
+            keys_from_df = v.select(["NSC_CODE", "date"]).drop_nulls().to_dicts()
+            for row in keys_from_df:
+                # 3. Add tuple to set
+                unique_keys_set.add( (row['NSC_CODE'], row['date']) )
 
-    # New, robust way to build the base table
-    # 1. Create an empty base with a strict schema
-    base = pl.DataFrame(schema={'NSC_CODE': pl.Utf8, 'date': pl.Date})
-    
-    # 2. Vstack (append) each key dataframe one by one
-    for df_keys in keys_dfs:
-        base = base.vstack(df_keys)
+    if not unique_keys_set:
+        raise ValueError("No valid (NSC_CODE, date) key pairs found in any file.")
 
-    # 3. Finally, get the unique and sorted keys, and remove any rows where NSC_CODE is null
-    base = base.unique().sort(["NSC_CODE", "date"]).filter(pl.col("NSC_CODE").is_not_null())
+    logger.info(f"Found {len(unique_keys_set)} unique keys.")
+
+    # 4. Create the base DataFrame from the clean Python set and sort it
+    base = pl.DataFrame(
+        list(unique_keys_set),
+        schema={'NSC_CODE': pl.Utf8, 'date': pl.Date}
+    ).sort(["NSC_CODE", "date"])
     logger.debug(f"[最终合并] base.columns={base.columns}")
 
     # --- JOIN PROBE ---
