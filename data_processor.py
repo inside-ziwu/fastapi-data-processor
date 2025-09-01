@@ -334,7 +334,9 @@ def process_account_base(all_sheets):
 
     # Join the two dataframes
     if level_df is not None and store_name_df is not None:
-        merged = level_df.join(store_name_df, on="NSC_CODE", how="outer")
+        # Select only the necessary columns from the right df to avoid redundant _right columns
+        store_name_to_join = store_name_df.select(["NSC_CODE", "store_name"])
+        merged = level_df.join(store_name_to_join, on="NSC_CODE", how="outer")
     elif level_df is not None:
         merged = level_df
     else:
@@ -519,7 +521,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         account_base = process_account_base(all_sheets)
     if not dfs:
         raise ValueError("No dataframes were processed. Check file inputs and names.")
-    keys = []
+    keys_dfs = []
     for k, v in dfs.items():
         logger.debug(f"[keys] {k} columns={v.columns}")
         if "NSC_CODE" not in v.columns:
@@ -530,11 +532,22 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             logger.debug(f"[KEYS PROBE] Schema for '{k}': {v.schema}")
             logger.debug(f"[KEYS PROBE] Head of '{k}':\n{v.select(['NSC_CODE', 'date']).head()}")
             # --- END KEYS PROBE ---
-            keys.append(v.select(["NSC_CODE", "date"]).unique())
-    logger.debug(f"[keys] keys count={len(keys)}")
-    if not keys:
+            keys_dfs.append(v.select(["NSC_CODE", "date"]).unique())
+    
+    logger.debug(f"[keys] keys count={len(keys_dfs)}")
+    if not keys_dfs:
         raise ValueError("No frames with NSC_CODE + date found.")
-    base = pl.concat(keys).unique().sort(["NSC_CODE", "date"])
+
+    # New, robust way to build the base table
+    # 1. Create an empty base with a strict schema
+    base = pl.DataFrame(schema={'NSC_CODE': pl.Utf8, 'date': pl.Date})
+    
+    # 2. Vstack (append) each key dataframe one by one
+    for df_keys in keys_dfs:
+        base = base.vstack(df_keys)
+
+    # 3. Finally, get the unique and sorted keys, and remove any rows where NSC_CODE is null
+    base = base.unique().sort(["NSC_CODE", "date"]).filter(pl.col("NSC_CODE").is_not_null())
     logger.debug(f"[最终合并] base.columns={base.columns}")
 
     # --- JOIN PROBE ---
