@@ -347,7 +347,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         sum_cols = ["enter_private_count","private_open_count","private_leads_count"]
         agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols if c in df.columns]
         if agg_exprs:
-            df = df.groupby(group_cols).agg(agg_exprs)
+            df = df.group_by(group_cols).agg(agg_exprs)
         else:
             df = df.unique(subset=group_cols)
         logger.debug(f"[MSG聚合后] columns={df.columns}")
