@@ -222,7 +222,7 @@ def process_single_table(df, mapping, sum_cols=None):
     group_cols = ["NSC_CODE", "date"]
     agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols] if sum_cols else []
     if agg_exprs:
-        df = df.groupby(group_cols).agg(agg_exprs)
+        df = df.group_by(group_cols).agg(agg_exprs)
     else:
         df = df.unique(subset=group_cols)
 
