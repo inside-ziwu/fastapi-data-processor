@@ -174,6 +174,38 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     # The function now ALWAYS returns the path and does not delete the run_dir.
     return {"status":"ok", "message": message, "result_path":out_path, "results_preview": final_response["data"][:3]}
 
+from fastapi.responses import FileResponse
+
+from fastapi.responses import FileResponse
+
 @app.get("/health")
 def health():
     return {"status":"ok","time": datetime.utcnow().isoformat()}
+
+@app.get("/get-result-file")
+async def get_result_file(file_path: str, x_api_key: Optional[str] = Header(None)):
+    if not auth_ok(x_api_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    # Security check: ensure the path is within the allowed directory
+    if not os.path.abspath(file_path).startswith(os.path.abspath(TMP_ROOT)):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    return FileResponse(path=file_path, media_type='application/octet-stream', filename=os.path.basename(file_path))
+
+@app.get("/get-result-file")
+async def get_result_file(file_path: str, x_api_key: Optional[str] = Header(None)):
+    if not auth_ok(x_api_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    # Security check: ensure the path is within the allowed directory
+    if not os.path.abspath(file_path).startswith(os.path.abspath(TMP_ROOT)):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    return FileResponse(path=file_path, media_type='application/octet-stream', filename=os.path.basename(file_path))
