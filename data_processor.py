@@ -670,9 +670,13 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     final_df = summary_df.select(final_columns_exist)
 
     # Final cleaning step before returning
-    for col in final_df.columns:
-        if final_df[col].dtype in [pl.Float32, pl.Float64]:
+    for col_name in final_df.columns:
+        if final_df[col_name].dtype in [pl.Float32, pl.Float64]:
             final_df = final_df.with_columns(
-                pl.col(col).fill_nan(None).fill_infinite(None).alias(col)
+                pl.when(pl.col(col_name).is_infinite())
+                .then(None)
+                .otherwise(pl.col(col_name))
+                .fill_nan(None)
+                .alias(col_name)
             )
     return final_df
