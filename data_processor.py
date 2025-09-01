@@ -5,6 +5,7 @@ from typing import Optional, Dict
 import polars as pl
 import pandas as pd
 import re
+import json
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -13,6 +14,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 字段映射（输入部分，中文表头 -> 英文标准字段）
 VIDEO_MAP = {
     "主机厂经销商id": "NSC_CODE", "日期": "date",
     "锚点曝光次数": "anchor_exposure", "锚点点击次数": "component_clicks",
@@ -43,6 +45,69 @@ DR_MAP = {
 SPENDING_MAP = {"NSC CODE": "NSC_CODE", "Date": "date", "Spending(Net)": "spending_net"}
 ACCOUNT_BASE_MAP = {"NSC_id": "NSC_CODE", "第二期层级": "level", "NSC Code": "NSC_Code", "抖音id": "store_name"}
 
+# 输出字段英文化映射（中英文对照表）
+FIELD_EN_MAP = {
+    "车云店+区域综合CPL": "total_cpl",
+    "付费CPL（车云店+区域）": "paid_cpl",
+    "本地线索占比": "local_leads_ratio",
+    "直播车云店+区域日均消耗": "avg_daily_spending",
+    "T月直播车云店+区域日均消耗": "avg_daily_spending_t",
+    "T-1月直播车云店+区域日均消耗": "avg_daily_spending_t_minus_1",
+    "直播车云店+区域付费线索量日均": "avg_daily_paid_leads",
+    "T月直播车云店+区域付费线索量日均": "avg_daily_paid_leads_t",
+    "T-1月直播车云店+区域付费线索量日均": "avg_daily_paid_leads_t_minus_1",
+    "T月直播付费CPL": "paid_cpl_t",
+    "T-1月直播付费CPL": "paid_cpl_t_minus_1",
+    "有效（25min以上）时长（h）": "effective_live_hours_25min",
+    "T月有效（25min以上）时长（h）": "effective_live_hours_25min_t",
+    "T-1月有效（25min以上）时长（h）": "effective_live_hours_25min_t_minus_1",
+    "日均有效（25min以上）时长（h）": "avg_daily_effective_live_hours_25min",
+    "T月日均有效（25min以上）时长（h）": "avg_daily_effective_live_hours_25min_t",
+    "T-1月日均有效（25min以上）时长（h）": "avg_daily_effective_live_hours_25min_t_minus_1",
+    "场均曝光人数": "avg_exposures_per_session",
+    "T月场均曝光人数": "avg_exposures_per_session_t",
+    "T-1月场均曝光人数": "avg_exposures_per_session_t_minus_1",
+    "曝光进入率": "exposure_to_viewer_rate",
+    "T月曝光进入率": "exposure_to_viewer_rate_t",
+    "T-1月曝光进入率": "exposure_to_viewer_rate_t_minus_1",
+    "场均场观": "avg_viewers_per_session",
+    "T月场均场观": "avg_viewers_per_session_t",
+    "T-1月场均场观": "avg_viewers_per_session_t_minus_1",
+    "小风车点击率": "small_wheel_click_rate",
+    "T月小风车点击率": "small_wheel_click_rate_t",
+    "T-1月小风车点击率": "small_wheel_click_rate_t_minus_1",
+    "小风车点击留资率": "small_wheel_leads_rate",
+    "T月小风车点击留资率": "small_wheel_leads_rate_t",
+    "T-1月小风车点击留资率": "small_wheel_leads_rate_t_minus_1",
+    "场均小风车留资量": "avg_small_wheel_leads_per_session",
+    "T月场均小风车留资量": "avg_small_wheel_leads_per_session_t",
+    "T-1月场均小风车留资量": "avg_small_wheel_leads_per_session_t_minus_1",
+    "组件点击率": "component_click_rate",
+    "T月组件点击率": "component_click_rate_t",
+    "T-1月组件点击率": "component_click_rate_t_minus_1",
+    "组件留资率": "component_leads_rate",
+    "T月组件留资率": "component_leads_rate_t",
+    "T-1月组件留资率": "component_leads_rate_t_minus_1",
+    "日均进私人数": "avg_daily_private_entry_count",
+    "T月日均进私人数": "avg_daily_private_entry_count_t",
+    "T-1月日均进私人数": "avg_daily_private_entry_count_t_minus_1",
+    "日均私信开口人数": "avg_daily_private_open_count",
+    "T月日均私信开口人数": "avg_daily_private_open_count_t",
+    "T-1月日均私信开口人数": "avg_daily_private_open_count_t_minus_1",
+    "日均咨询留资人数": "avg_daily_private_leads_count",
+    "T月日均咨询留资人数": "avg_daily_private_leads_count_t",
+    "T-1月日均咨询留资人数": "avg_daily_private_leads_count_t_minus_1",
+    "私信咨询率": "private_open_rate",
+    "T月私信咨询率": "private_open_rate_t",
+    "T-1月私信咨询率": "private_open_rate_t_minus_1",
+    "咨询留资率": "private_leads_rate",
+    "T月咨询留资率": "private_leads_rate_t",
+    "T-1月咨询留资率": "private_leads_rate_t_minus_1",
+    "私信转化率": "private_conversion_rate",
+    "T月私信转化率": "private_conversion_rate_t",
+    "T-1月私信转化率": "private_conversion_rate_t_minus_1"
+}
+
 def normalize_symbol(s: str) -> str:
     return (
         s.replace("（", "(")
@@ -69,26 +134,17 @@ def split_chinese_english(s: str):
     return parts
 
 def field_match(src: str, col: str) -> bool:
-    # Normalize the entire strings first to handle spaces and symbol variations globally.
     src_norm = normalize_symbol(src)
     col_norm = normalize_symbol(col)
-
-    # After normalization, split them into parts.
     src_parts = split_chinese_english(src_norm)
     col_parts = split_chinese_english(col_norm)
-
     logger.debug(f"field_match: src='{src}', col='{col}', src_parts={src_parts}, col_parts={col_parts}")
-
     if len(src_parts) != len(col_parts):
         return False
-
     for s, c in zip(src_parts, col_parts):
-        # For non-Chinese parts, the comparison should be case-insensitive.
-        # For Chinese parts, it remains a direct comparison.
         if s.lower() != c.lower():
             logger.debug(f"片段不匹配: '{s.lower()}' != '{c.lower()}'")
             return False
-            
     return True
 
 def rename_columns_loose(pl_df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
@@ -141,23 +197,15 @@ def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFra
 def ensure_date_column(pl_df: pl.DataFrame, colname: str = "date") -> pl.DataFrame:
     if colname not in pl_df.columns:
         return pl_df.with_columns(pl.lit(None, dtype=pl.Date).alias(colname))
-
-    # List of formats to try, from most to least common in this project
     formats_to_try = [
         "%Y-%m-%d",
         "%Y/%m/%d %H:%M",
         "%Y/%m/%d",
     ]
-
-    # Coalesce allows us to try parsing with one format, and if it fails (produces null),
-    # try the next format in the list.
     parser_expressions = [
         pl.col(colname).str.strptime(pl.Datetime, format=fmt, strict=False)
         for fmt in formats_to_try
     ]
-
-    # We also include the original string as a fallback in case all parsing fails
-    # and to preserve original values that are not dates.
     pl_df = pl_df.with_columns(
         pl.coalesce(parser_expressions)
         .cast(pl.Date)
@@ -174,11 +222,9 @@ def try_cast_numeric(pl_df: pl.DataFrame, cols):
 def process_single_table(df, mapping, sum_cols=None):
     orig_cols = list(df.columns)
     logger.debug(f"[process_single_table] 原始列名: {orig_cols}")
-
     df = rename_columns_loose(df, mapping)
     renamed_cols = list(df.columns)
     logger.debug(f"[process_single_table] 重命名后列名: {renamed_cols}")
-
     if "NSC_CODE" not in df.columns:
         hit_report = {}
         for src, dst in mapping.items():
@@ -198,11 +244,9 @@ def process_single_table(df, mapping, sum_cols=None):
         )
         logger.error(err_msg)
         raise ValueError(err_msg)
-
     df = normalize_nsc_col(df, "NSC_CODE")
     after_norm_cols = list(df.columns)
     logger.debug(f"[process_single_table] 标准化 NSC_CODE 后列名: {after_norm_cols}")
-
     if "NSC_CODE" not in df.columns:
         logger.error("[process_single_table] normalize_nsc_col 之后 NSC_CODE 列丢失。")
         raise ValueError("[process_single_table] normalize_nsc_col 之后 NSC_CODE 列丢失。")
@@ -210,22 +254,18 @@ def process_single_table(df, mapping, sum_cols=None):
     if non_null_cnt == 0:
         logger.error(f"[process_single_table] NSC_CODE 标准化后为空。非空行计数={non_null_cnt}")
         raise ValueError(f"[process_single_table] NSC_CODE 标准化后为空。非空行计数={non_null_cnt}")
-
     df = ensure_date_column(df, "date")
     if "date" not in df.columns:
         logger.error("[process_single_table] ensure_date_column 之后未发现 date 列。")
         raise ValueError("[process_single_table] ensure_date_column 之后未发现 date 列。")
-
     if sum_cols:
         df = try_cast_numeric(df, sum_cols)
-
     group_cols = ["NSC_CODE", "date"]
     agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols] if sum_cols else []
     if agg_exprs:
         df = df.group_by(group_cols).agg(agg_exprs)
     else:
         df = df.unique(subset=group_cols)
-
     logger.debug(f"[process_single_table] 完成。输出列名: {list(df.columns)}, 行数={df.height}")
     return df
 
@@ -233,23 +273,20 @@ def process_dr_table(df):
     df = rename_columns_loose(df, DR_MAP)
     df = normalize_nsc_col(df, "NSC_CODE")
     df = ensure_date_column(df, "date")
-
-    # A single group_by with conditional aggregations is far more efficient
-    # and robust than creating 5 separate dataframes and joining them.
     dr_all = df.group_by("NSC_CODE", "date").agg(
-        pl.col("leads_type").filter(pl.col("leads_type") == "自然").count().alias("自然线索"),
-        pl.col("leads_type").filter(pl.col("leads_type") == "广告").count().alias("广告线索"),
+        pl.col("leads_type").filter(pl.col("leads_type") == "自然").count().alias("natural_leads"),
+        pl.col("leads_type").filter(pl.col("leads_type") == "广告").count().alias("ad_leads"),
         pl.col("leads_type").filter(
             (pl.col("leads_type") == "广告") &
             (pl.col("mkt_second_channel_name").is_in(["抖音车云店_BMW_本市_LS直发", "抖音车云店_LS直发"]))
-        ).count().alias("车云店付费线索"),
+        ).count().alias("paid_leads"),
         pl.col("leads_type").filter(
             (pl.col("leads_type") == "广告") &
             (pl.col("mkt_second_channel_name") == "抖音车云店_BMW_总部BDT_LS直发")
-        ).count().alias("区域付费线索"),
+        ).count().alias("area_leads"),
         pl.col("send2dealer_id").filter(
             pl.col("send2dealer_id").cast(pl.Utf8) == pl.col("NSC_CODE")
-        ).count().alias("本地线索量")
+        ).count().alias("local_leads")
     )
     return dr_all
 
@@ -275,7 +312,6 @@ def process_account_base(all_sheets):
 def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optional[str] = None) -> pl.DataFrame:
     logger.info(f"Entering process_all_files with {len(local_paths)} files")
     dfs = {}
-
     # 1. video_excel_file
     if "video_excel_file" in local_paths:
         p = local_paths["video_excel_file"]
@@ -288,7 +324,6 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if df is not None:
             logger.debug(f"[video] columns={df.columns}")
             dfs["video"] = process_single_table(df, VIDEO_MAP, ["anchor_exposure","component_clicks","short_video_count","short_video_leads"])
-
     # 2. live_bi_file
     if "live_bi_file" in local_paths:
         p = local_paths["live_bi_file"]
@@ -301,21 +336,16 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if df is not None:
             logger.debug(f"[live] columns={df.columns}")
             dfs["live"] = process_single_table(df, LIVE_MAP, ["over25_min_live_mins","live_effective_hours","effective_live_sessions","exposures","viewers","small_wheel_clicks"])
-
     # 3. msg_excel_file
     if "msg_excel_file" in local_paths:
         p = local_paths["msg_excel_file"]
         all_sheets = read_excel_as_pandas(p, sheet_name=None)
-
         per_sheet_frames = []
         sheet_report = []
-
         for sheetname, pdf in all_sheets.items():
             orig_cols = list(map(str, pdf.columns))
             logger.debug(f"[MSG调试] sheet={sheetname}, columns={orig_cols}")
-
             PK_COLUMN = "主机厂经销商ID"
-
             if PK_COLUMN not in pdf.columns:
                 sheet_report.append({
                     "sheet": sheetname,
@@ -328,10 +358,8 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 )
                 logger.error(err_msg)
                 raise ValueError(err_msg)
-
             pdf_local = pdf.copy()
             pdf_local["日期"] = sheetname
-
             rename_map = {
                 PK_COLUMN: "NSC_CODE",
                 "日期": "date",
@@ -341,16 +369,12 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             }
             rename_map_eff = {k: v for k, v in rename_map.items() if k in pdf_local.columns}
             pdf_local = pdf_local.rename(columns=rename_map_eff)
-
             df = df_pandas_to_polars(pdf_local)
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
-
             df = normalize_nsc_col(df, "NSC_CODE")
             df = ensure_date_column(df, "date")
-
             keep = [c for c in ["NSC_CODE","date","enter_private_count","private_open_count","private_leads_count"] if c in df.columns]
             df = df.select(keep)
-
             per_sheet_frames.append(df)
             sheet_status = {
                 "sheet": sheetname,
@@ -359,21 +383,16 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 "kept_cols": keep
             }
             sheet_report.append(sheet_status)
-
         if not per_sheet_frames:
             logger.error("[MSG] per_sheet_frames 为空，未生成 msg df")
             raise ValueError("[MSG] per_sheet_frames 为空，未生成 msg df")
-
         df = pl.concat(per_sheet_frames, how="vertical")
         logger.debug(f"[MSG合并后] columns={df.columns}")
         group_cols = ["NSC_CODE", "date"]
         sum_cols = ["enter_private_count","private_open_count","private_leads_count"]
-
-        # Cast columns to be summed to numeric to avoid type errors
         for col in sum_cols:
             if col in df.columns:
                 df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False).fill_null(0))
-
         agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols if c in df.columns]
         if agg_exprs:
             df = df.group_by(group_cols).agg(agg_exprs)
@@ -384,9 +403,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             logger.error(f"[MSG聚合后] 没有 NSC_CODE，实际列: {df.columns}")
             raise ValueError(f"[MSG聚合后] 没有 NSC_CODE，实际列: {df.columns}")
         dfs["msg"] = df
-
         logger.info(f"[MSG 严格模式报告] {sheet_report}")
-
     # 4. account_bi_file
     if "account_bi_file" in local_paths:
         p = local_paths["account_bi_file"]
@@ -399,7 +416,6 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if df is not None:
             logger.debug(f"[account_bi] columns={df.columns}")
             dfs["account_bi"] = process_single_table(df, ACCOUNT_BI_MAP, ["live_leads","short_video_plays"])
-
     # 5. leads_file
     if "leads_file" in local_paths:
         p = local_paths["leads_file"]
@@ -412,7 +428,6 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if df is not None:
             logger.debug(f"[leads] columns={df.columns}")
             dfs["leads"] = process_single_table(df, LEADS_MAP, ["small_wheel_leads"])
-
     # 6. DR1_file, DR2_file
     dr_frames = []
     for key in ["DR1_file", "DR2_file"]:
@@ -427,7 +442,6 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         dr_df = pl.concat(dr_frames, how="vertical")
         logger.debug(f"[dr] columns={dr_df.columns}")
         dfs["dr"] = process_dr_table(dr_df)
-
     # 7. Spending_file
     if "Spending_file" in local_paths:
         p = local_paths["Spending_file"]
@@ -458,17 +472,14 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if df is not None:
             logger.debug(f"[spending] columns={df.columns}")
             dfs["spending"] = process_single_table(df, SPENDING_MAP, ["spending_net"])
-
     # 8. account_base_file
     account_base = None
     if "account_base_file" in local_paths:
         p = local_paths["account_base_file"]
         all_sheets = read_excel_as_pandas(p, sheet_name=None)
         account_base = process_account_base(all_sheets)
-
     if not dfs:
         raise ValueError("No dataframes were processed. Check file inputs and names.")
-
     keys = []
     for k, v in dfs.items():
         logger.debug(f"[keys] {k} columns={v.columns}")
@@ -481,7 +492,6 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         raise ValueError("No frames with NSC_CODE + date found.")
     base = pl.concat(keys).unique().sort(["NSC_CODE", "date"])
     logger.debug(f"[最终合并] base.columns={base.columns}")
-
     for name, df in dfs.items():
         logger.debug(f"[join] {name} columns={df.columns}")
         if "date" in df.columns:
@@ -489,188 +499,171 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         else:
             base = base.join(df, on="NSC_CODE", how="left")
         logger.debug(f"[join后] base.columns={base.columns}")
-
     if account_base is not None:
         base = base.join(account_base, on="NSC_CODE", how="left")
         logger.debug(f"[account_base join后] base.columns={base.columns}")
-
     # --- FINAL ANALYSIS LOGIC --- #
-    # CRITICAL FIX: Filter out rows with null dates and fill nulls in pivot index keys.
     logger.info("开始最终分析前的数据清洗...")
     base = base.filter(pl.col("date").is_not_null())
-    
     id_cols_to_fill = ["level", "store_name"]
     for col in id_cols_to_fill:
         if col in base.columns:
-            base = base.with_columns(pl.col(col).fill_null("未知"))
+            base = base.with_columns(pl.col(col).fill_null("unknown"))
     logger.info("数据清洗完成")
     logger.info("开始进行T/T-1分析...")
-    
-    # Step 1: Data Preparation
     unique_months = base.get_column("date").dt.month().unique().sort(descending=True)
     if len(unique_months) < 2:
         raise ValueError("数据不足两个月，无法进行T/T-1对比分析。")
     month_t = unique_months[0]
     month_t_minus_1 = unique_months[1]
     logger.info(f"T周期月份: {month_t}, T-1周期月份: {month_t_minus_1}")
-
     base = base.with_columns(
         period=pl.when(pl.col("date").dt.month() == month_t).then(pl.lit("T"))
                  .when(pl.col("date").dt.month() == month_t_minus_1).then(pl.lit("T-1"))
                  .otherwise(pl.lit(None))
     ).filter(pl.col("period").is_not_null())
-
     t_days = base.filter(pl.col("period") == "T").select(pl.col("date").n_unique()).item() or 1
     t_minus_1_days = base.filter(pl.col("period") == "T-1").select(pl.col("date").n_unique()).item() or 1
     logger.info(f"T周期有效天数: {t_days}, T-1周期有效天数: {t_minus_1_days}")
-
-    # Step 2: Pivot Data
     agg_cols = [
         'anchor_exposure', 'component_clicks', 'short_video_count', 'short_video_leads',
         'over25_min_live_mins', 'live_effective_hours', 'effective_live_sessions', 'exposures',
         'viewers', 'small_wheel_clicks', 'enter_private_count', 'private_open_count',
         'private_leads_count', 'live_leads', 'short_video_plays', 'small_wheel_leads',
-        '自然线索', '广告线索', '车云店付费线索', '区域付费线索', '本地线索量', 'spending_net'
+        'natural_leads', 'ad_leads', 'paid_leads', 'area_leads', 'local_leads', 'spending_net'
     ]
     agg_cols_exist = [c for c in agg_cols if c in base.columns]
     id_cols = ["NSC_CODE", "level", "store_name"]
     id_cols_exist = [c for c in id_cols if c in base.columns]
-
     summary_df = base.pivot(
-        index=id_cols_exist, 
-        columns="period", 
-        values=agg_cols_exist, 
+        index=id_cols_exist,
+        columns="period",
+        values=agg_cols_exist,
         aggregate_function="sum"
     )
-
     # Step 3: Calculate Totals
     for col in agg_cols_exist:
         summary_df = summary_df.with_columns(
-            (pl.col(f"{col}_T").fill_null(0) + pl.col(f"{col}_T-1").fill_null(0)).alias(f"{col}_Total")
+            (pl.col(f"{col}_T").fill_null(0) + pl.col(f"{col}_T-1").fill_null(0)).alias(f"{col}_total"),
+            pl.col(f"{col}_T").alias(f"{col}_t"),
+            pl.col(f"{col}_T-1").alias(f"{col}_t_minus_1")
         )
-
-    # Step 4: Calculate Intermediate Derived Metrics
+    # Step 4: Calculate Intermediate Derived Metrics (全部英文)
     summary_df = summary_df.with_columns(
-        (pl.col("车云店付费线索_Total").fill_null(0) + pl.col("区域付费线索_Total").fill_null(0)).alias("直播车云店+区域付费线索量"),
-        (pl.col("车云店付费线索_T").fill_null(0) + pl.col("区域付费线索_T").fill_null(0)).alias("T月直播车云店+区域付费线索量"),
-        (pl.col("车云店付费线索_T-1").fill_null(0) + pl.col("区域付费线索_T-1").fill_null(0)).alias("T-1月直播车云店+区域付费线索量"),
-        (pl.col("over25_min_live_mins_Total") / 60).alias("有效（25min以上）时长（h）"),
-        (pl.col("over25_min_live_mins_T") / 60).alias("T月有效（25min以上）时长（h）"),
-        (pl.col("over25_min_live_mins_T-1") / 60).alias("T-1月有效（25min以上）时长（h）")
+        (pl.col("paid_leads_total").fill_null(0) + pl.col("area_leads_total").fill_null(0)).alias("paid_area_leads_total"),
+        (pl.col("paid_leads_t").fill_null(0) + pl.col("area_leads_t").fill_null(0)).alias("paid_area_leads_t"),
+        (pl.col("paid_leads_t_minus_1").fill_null(0) + pl.col("area_leads_t_minus_1").fill_null(0)).alias("paid_area_leads_t_minus_1"),
+        (pl.col("over25_min_live_mins_total") / 60).alias("effective_live_hours_25min"),
+        (pl.col("over25_min_live_mins_t") / 60).alias("effective_live_hours_25min_t"),
+        (pl.col("over25_min_live_mins_t_minus_1") / 60).alias("effective_live_hours_25min_t_minus_1")
     )
-
-    # Step 5: Calculate Final Ratios
+    # Step 5: Calculate Final Ratios (全部英文)
     def safe_div(num_expr, den_expr):
         return pl.when(den_expr != 0).then(num_expr / den_expr).otherwise(None)
-
     summary_df = summary_df.with_columns(
-        safe_div(pl.col("spending_net_Total"), (pl.col("自然线索_Total").fill_null(0) + pl.col("广告线索_Total").fill_null(0))).alias("车云店+区域综合CPL"),
-        safe_div(pl.col("spending_net_Total"), pl.col("直播车云店+区域付费线索量")).alias("付费CPL（车云店+区域）"),
-        safe_div(pl.col("本地线索量_Total"), (pl.col("自然线索_Total").fill_null(0) + pl.col("广告线索_Total").fill_null(0))).alias("本地线索占比"),
-        safe_div(pl.col("spending_net_Total"), (t_days + t_minus_1_days)).alias("直播车云店+区域日均消耗"),
-        safe_div(pl.col("spending_net_T"), t_days).alias("T月直播车云店+区域日均消耗"),
-        safe_div(pl.col("spending_net_T-1"), t_minus_1_days).alias("T-1月直播车云店+区域日均消耗"),
-        safe_div(pl.col("直播车云店+区域付费线索量"), (t_days + t_minus_1_days)).alias("直播车云店+区域付费线索量日均"),
-        safe_div(pl.col("T月直播车云店+区域付费线索量"), t_days).alias("T月直播车云店+区域付费线索量日均"),
-        safe_div(pl.col("T-1月直播车云店+区域付费线索量"), t_minus_1_days).alias("T-1月直播车云店+区域付费线索量日均"),
-        safe_div(pl.col("spending_net_T"), pl.col("T月直播车云店+区域付费线索量")).alias("T月直播付费CPL"),
-        safe_div(pl.col("spending_net_T-1"), pl.col("T-1月直播车云店+区域付费线索量")).alias("T-1月直播付费CPL"),
-        safe_div(pl.col("有效（25min以上）时长（h）"), (t_days + t_minus_1_days)).alias("日均有效（25min以上）时长（h）"),
-        safe_div(pl.col("T月有效（25min以上）时长（h）"), t_days).alias("T月日均有效（25min以上）时长（h）"),
-        safe_div(pl.col("T-1月有效（25min以上）时长（h）"), t_minus_1_days).alias("T-1月日均有效（25min以上）时长（h）"),
-        safe_div(pl.col("exposures_Total"), pl.col("effective_live_sessions_Total")).alias("场均曝光人数"),
-        safe_div(pl.col("exposures_T"), pl.col("effective_live_sessions_T")).alias("T月场均曝光人数"),
-        safe_div(pl.col("exposures_T-1"), pl.col("effective_live_sessions_T-1")).alias("T-1月场均曝光人数"),
-        safe_div(pl.col("viewers_Total"), pl.col("exposures_Total")).alias("曝光进入率"),
-        safe_div(pl.col("viewers_T"), pl.col("exposures_T")).alias("T月曝光进入率"),
-        safe_div(pl.col("viewers_T-1"), pl.col("exposures_T-1")).alias("T-1月曝光进入率"),
-        safe_div(pl.col("viewers_Total"), pl.col("effective_live_sessions_Total")).alias("场均场观"),
-        safe_div(pl.col("viewers_T"), pl.col("effective_live_sessions_T")).alias("T月场均场观"),
-        safe_div(pl.col("viewers_T-1"), pl.col("effective_live_sessions_T-1")).alias("T-1月场均场观"),
-        safe_div(pl.col("small_wheel_clicks_Total"), pl.col("viewers_Total")).alias("小风车点击率"),
-        safe_div(pl.col("small_wheel_clicks_T"), pl.col("viewers_T")).alias("T月小风车点击率"),
-        safe_div(pl.col("small_wheel_clicks_T-1"), pl.col("viewers_T-1")).alias("T-1月小风车点击率"),
-        safe_div(pl.col("small_wheel_leads_Total"), pl.col("small_wheel_clicks_Total")).alias("小风车点击留资率"),
-        safe_div(pl.col("small_wheel_leads_T"), pl.col("small_wheel_clicks_T")).alias("T月小风车点击留资率"),
-        safe_div(pl.col("small_wheel_leads_T-1"), pl.col("small_wheel_clicks_T-1")).alias("T-1月小风车点击留资率"),
-        safe_div(pl.col("small_wheel_leads_Total"), pl.col("effective_live_sessions_Total")).alias("场均小风车留资量"),
-        safe_div(pl.col("small_wheel_leads_T"), pl.col("effective_live_sessions_T")).alias("T月场均小风车留资量"),
-        safe_div(pl.col("small_wheel_leads_T-1"), pl.col("effective_live_sessions_T-1")).alias("T-1月场均小风车留资量"),
-        safe_div(pl.col("component_clicks_Total"), pl.col("anchor_exposure_Total")).alias("组件点击率"),
-        safe_div(pl.col("component_clicks_T"), pl.col("anchor_exposure_T")).alias("T月组件点击率"),
-        safe_div(pl.col("component_clicks_T-1"), pl.col("anchor_exposure_T-1")).alias("T-1月组件点击率"),
-        safe_div(pl.col("short_video_leads_Total"), pl.col("anchor_exposure_Total")).alias("组件留资率"),
-        safe_div(pl.col("short_video_leads_T"), pl.col("anchor_exposure_T")).alias("T月组件留资率"),
-        safe_div(pl.col("short_video_leads_T-1"), pl.col("anchor_exposure_T-1")).alias("T-1月组件留资率"),
-        safe_div(pl.col("enter_private_count_Total"), (t_days + t_minus_1_days)).alias("日均进私人数"),
-        safe_div(pl.col("enter_private_count_T"), t_days).alias("T月日均进私人数"),
-        safe_div(pl.col("enter_private_count_T-1"), t_minus_1_days).alias("T-1月日均进私人数"),
-        safe_div(pl.col("private_open_count_Total"), (t_days + t_minus_1_days)).alias("日均私信开口人数"),
-        safe_div(pl.col("private_open_count_T"), t_days).alias("T月日均私信开口人数"),
-        safe_div(pl.col("private_open_count_T-1"), t_minus_1_days).alias("T-1月日均私信开口人数"),
-        safe_div(pl.col("private_leads_count_Total"), (t_days + t_minus_1_days)).alias("日均咨询留资人数"),
-        safe_div(pl.col("private_leads_count_T"), t_days).alias("T月日均咨询留资人数"),
-        safe_div(pl.col("private_leads_count_T-1"), t_minus_1_days).alias("T-1月日均咨询留资人数"),
-        safe_div(pl.col("private_open_count_Total"), pl.col("enter_private_count_Total")).alias("私信咨询率"),
-        safe_div(pl.col("private_open_count_T"), pl.col("enter_private_count_T")).alias("T月私信咨询率"),
-        safe_div(pl.col("private_open_count_T-1"), pl.col("enter_private_count_T-1")).alias("T-1月私信咨询率"),
-        safe_div(pl.col("private_leads_count_Total"), pl.col("private_open_count_Total")).alias("咨询留资率"),
-        safe_div(pl.col("private_leads_count_T"), pl.col("private_open_count_T")).alias("T月咨询留资率"),
-        safe_div(pl.col("private_leads_count_T-1"), pl.col("private_open_count_T-1")).alias("T-1月咨询留资率"),
-        safe_div(pl.col("private_leads_count_Total"), pl.col("enter_private_count_Total")).alias("私信转化率"),
-        safe_div(pl.col("private_leads_count_T"), pl.col("enter_private_count_T")).alias("T月私信转化率"),
-        safe_div(pl.col("private_leads_count_T-1"), pl.col("enter_private_count_T-1")).alias("T-1月私信转化率"),
+        safe_div(pl.col("spending_net_total"), (pl.col("natural_leads_total").fill_null(0) + pl.col("ad_leads_total").fill_null(0))).alias("total_cpl"),
+        safe_div(pl.col("spending_net_total"), pl.col("paid_area_leads_total")).alias("paid_cpl"),
+        safe_div(pl.col("local_leads_total"), (pl.col("natural_leads_total").fill_null(0) + pl.col("ad_leads_total").fill_null(0))).alias("local_leads_ratio"),
+        safe_div(pl.col("spending_net_total"), (t_days + t_minus_1_days)).alias("avg_daily_spending"),
+        safe_div(pl.col("spending_net_t"), t_days).alias("avg_daily_spending_t"),
+        safe_div(pl.col("spending_net_t_minus_1"), t_minus_1_days).alias("avg_daily_spending_t_minus_1"),
+        safe_div(pl.col("paid_area_leads_total"), (t_days + t_minus_1_days)).alias("avg_daily_paid_leads"),
+        safe_div(pl.col("paid_area_leads_t"), t_days).alias("avg_daily_paid_leads_t"),
+        safe_div(pl.col("paid_area_leads_t_minus_1"), t_minus_1_days).alias("avg_daily_paid_leads_t_minus_1"),
+        safe_div(pl.col("spending_net_t"), pl.col("paid_area_leads_t")).alias("paid_cpl_t"),
+        safe_div(pl.col("spending_net_t_minus_1"), pl.col("paid_area_leads_t_minus_1")).alias("paid_cpl_t_minus_1"),
+        safe_div(pl.col("effective_live_hours_25min"), (t_days + t_minus_1_days)).alias("avg_daily_effective_live_hours_25min"),
+        safe_div(pl.col("effective_live_hours_25min_t"), t_days).alias("avg_daily_effective_live_hours_25min_t"),
+        safe_div(pl.col("effective_live_hours_25min_t_minus_1"), t_minus_1_days).alias("avg_daily_effective_live_hours_25min_t_minus_1"),
+        safe_div(pl.col("exposures_total"), pl.col("effective_live_sessions_total")).alias("avg_exposures_per_session"),
+        safe_div(pl.col("exposures_t"), pl.col("effective_live_sessions_t")).alias("avg_exposures_per_session_t"),
+        safe_div(pl.col("exposures_t_minus_1"), pl.col("effective_live_sessions_t_minus_1")).alias("avg_exposures_per_session_t_minus_1"),
+        safe_div(pl.col("viewers_total"), pl.col("exposures_total")).alias("exposure_to_viewer_rate"),
+        safe_div(pl.col("viewers_t"), pl.col("exposures_t")).alias("exposure_to_viewer_rate_t"),
+        safe_div(pl.col("viewers_t_minus_1"), pl.col("exposures_t_minus_1")).alias("exposure_to_viewer_rate_t_minus_1"),
+        safe_div(pl.col("viewers_total"), pl.col("effective_live_sessions_total")).alias("avg_viewers_per_session"),
+        safe_div(pl.col("viewers_t"), pl.col("effective_live_sessions_t")).alias("avg_viewers_per_session_t"),
+        safe_div(pl.col("viewers_t_minus_1"), pl.col("effective_live_sessions_t_minus_1")).alias("avg_viewers_per_session_t_minus_1"),
+        safe_div(pl.col("small_wheel_clicks_total"), pl.col("viewers_total")).alias("small_wheel_click_rate"),
+        safe_div(pl.col("small_wheel_clicks_t"), pl.col("viewers_t")).alias("small_wheel_click_rate_t"),
+        safe_div(pl.col("small_wheel_clicks_t_minus_1"), pl.col("viewers_t_minus_1")).alias("small_wheel_click_rate_t_minus_1"),
+        safe_div(pl.col("small_wheel_leads_total"), pl.col("small_wheel_clicks_total")).alias("small_wheel_leads_rate"),
+        safe_div(pl.col("small_wheel_leads_t"), pl.col("small_wheel_clicks_t")).alias("small_wheel_leads_rate_t"),
+        safe_div(pl.col("small_wheel_leads_t_minus_1"), pl.col("small_wheel_clicks_t_minus_1")).alias("small_wheel_leads_rate_t_minus_1"),
+        safe_div(pl.col("small_wheel_leads_total"), pl.col("effective_live_sessions_total")).alias("avg_small_wheel_leads_per_session"),
+        safe_div(pl.col("small_wheel_leads_t"), pl.col("effective_live_sessions_t")).alias("avg_small_wheel_leads_per_session_t"),
+        safe_div(pl.col("small_wheel_leads_t_minus_1"), pl.col("effective_live_sessions_t_minus_1")).alias("avg_small_wheel_leads_per_session_t_minus_1"),
+        safe_div(pl.col("component_clicks_total"), pl.col("anchor_exposure_total")).alias("component_click_rate"),
+        safe_div(pl.col("component_clicks_t"), pl.col("anchor_exposure_t")).alias("component_click_rate_t"),
+        safe_div(pl.col("component_clicks_t_minus_1"), pl.col("anchor_exposure_t_minus_1")).alias("component_click_rate_t_minus_1"),
+        safe_div(pl.col("short_video_leads_total"), pl.col("anchor_exposure_total")).alias("component_leads_rate"),
+        safe_div(pl.col("short_video_leads_t"), pl.col("anchor_exposure_t")).alias("component_leads_rate_t"),
+        safe_div(pl.col("short_video_leads_t_minus_1"), pl.col("anchor_exposure_t_minus_1")).alias("component_leads_rate_t_minus_1"),
+        safe_div(pl.col("enter_private_count_total"), (t_days + t_minus_1_days)).alias("avg_daily_private_entry_count"),
+        safe_div(pl.col("enter_private_count_t"), t_days).alias("avg_daily_private_entry_count_t"),
+        safe_div(pl.col("enter_private_count_t_minus_1"), t_minus_1_days).alias("avg_daily_private_entry_count_t_minus_1"),
+        safe_div(pl.col("private_open_count_total"), (t_days + t_minus_1_days)).alias("avg_daily_private_open_count"),
+        safe_div(pl.col("private_open_count_t"), t_days).alias("avg_daily_private_open_count_t"),
+        safe_div(pl.col("private_open_count_t_minus_1"), t_minus_1_days).alias("avg_daily_private_open_count_t_minus_1"),
+        safe_div(pl.col("private_leads_count_total"), (t_days + t_minus_1_days)).alias("avg_daily_private_leads_count"),
+        safe_div(pl.col("private_leads_count_t"), t_days).alias("avg_daily_private_leads_count_t"),
+        safe_div(pl.col("private_leads_count_t_minus_1"), t_minus_1_days).alias("avg_daily_private_leads_count_t_minus_1"),
+        safe_div(pl.col("private_open_count_total"), pl.col("enter_private_count_total")).alias("private_open_rate"),
+        safe_div(pl.col("private_open_count_t"), pl.col("enter_private_count_t")).alias("private_open_rate_t"),
+        safe_div(pl.col("private_open_count_t_minus_1"), pl.col("enter_private_count_t_minus_1")).alias("private_open_rate_t_minus_1"),
+        safe_div(pl.col("private_leads_count_total"), pl.col("private_open_count_total")).alias("private_leads_rate"),
+        safe_div(pl.col("private_leads_count_t"), pl.col("private_open_count_t")).alias("private_leads_rate_t"),
+        safe_div(pl.col("private_leads_count_t_minus_1"), pl.col("private_open_count_t_minus_1")).alias("private_leads_rate_t_minus_1"),
+        safe_div(pl.col("private_leads_count_total"), pl.col("enter_private_count_total")).alias("private_conversion_rate"),
+        safe_div(pl.col("private_leads_count_t"), pl.col("enter_private_count_t")).alias("private_conversion_rate_t"),
+        safe_div(pl.col("private_leads_count_t_minus_1"), pl.col("enter_private_count_t_minus_1")).alias("private_conversion_rate_t_minus_1"),
     )
-
-    # Step 6: Final Selection
+    # Step 6: Final Selection (全部英文)
     final_columns = [
         "NSC_CODE", "level", "store_name",
-        "dr_natural_Total", "dr_natural_T", "dr_natural_T-1",
-        "dr_ad_Total", "dr_ad_T", "dr_ad_T-1",
-        "spending_net_Total", "spending_net_T", "spending_net_T-1",
-        "dr_cyd_Total", "dr_cyd_T", "dr_cyd_T-1",
-        "dr_area_Total", "dr_area_T", "dr_area_T-1",
-        "dr_local_Total", "dr_local_T", "dr_local_T-1",
-        "live_effective_hours_Total", "live_effective_hours_T", "live_effective_hours_T-1",
-        "effective_live_sessions_Total", "effective_live_sessions_T", "effective_live_sessions_T-1",
-        "exposures_Total", "exposures_T", "exposures_T-1",
-        "viewers_Total", "viewers_T", "viewers_T-1",
-        "small_wheel_clicks_Total", "small_wheel_clicks_T", "small_wheel_clicks_T-1",
-        "small_wheel_leads_Total", "small_wheel_leads_T", "small_wheel_leads_T-1",
-        "live_leads_Total", "live_leads_T", "live_leads_T-1",
-        "anchor_exposure_Total", "anchor_exposure_T", "anchor_exposure_T-1",
-        "component_clicks_Total", "component_clicks_T", "component_clicks_T-1",
-        "short_video_leads_Total", "short_video_leads_T", "short_video_leads_T-1",
-        "short_video_count_Total", "short_video_count_T", "short_video_count_T-1",
-        "short_video_plays_Total", "short_video_plays_T", "short_video_plays_T-1",
-        "enter_private_count_Total", "enter_private_count_T", "enter_private_count_T-1",
-        "private_open_count_Total", "private_open_count_T", "private_open_count_T-1",
-        "private_leads_count_Total", "private_leads_count_T", "private_leads_count_T-1",
-        "车云店+区域综合CPL", "付费CPL（车云店+区域）", "本地线索占比",
-        "直播车云店+区域日均消耗", "T月直播车云店+区域日均消耗", "T-1月直播车云店+区域日均消耗",
-        "直播车云店+区域付费线索量日均", "T月直播车云店+区域付费线索量日均", "T-1月直播车云店+区域付费线索量日均",
-        "T月直播付费CPL", "T-1月直播付费CPL",
-        "日均有效（25min以上）时长（h）", "T月日均有效（25min以上）时长（h）", "T-1月日均有效（25min以上）时长（h）",
-        "场均曝光人数", "T月场均曝光人数", "T-1月场均曝光人数",
-        "曝光进入率", "T月曝光进入率", "T-1月曝光进入率",
-        "场均场观", "T月场均场观", "T-1月场均场观",
-        "小风车点击率", "T月小风车点击率", "T-1月小风车点击率",
-        "小风车点击留资率", "T月小风车点击留资率", "T-1月小风车点击留资率",
-        "场均小风车留资量", "T月场均小风车留资量", "T-1月场均小风车留资量",
-        "组件点击率", "T月组件点击率", "T-1月组件点击率",
-        "组件留资率", "T月组件留资率", "T-1月组件留资率",
-        "日均进私人数", "T月日均进私人数", "T-1月日均进私人数",
-        "日均私信开口人数", "T月日均私信开口人数", "T-1月日均私信开口人数",
-        "日均咨询留资人数", "T月日均咨询留资人数", "T-1月日均咨询留资人数",
-        "私信咨询率", "T月私信咨询率", "T-1月私信咨询率",
-        "咨询留资率", "T月咨询留资率", "T-1月咨询留资率",
-        "私信转化率", "T月私信转化率", "T-1月私信转化率"
+        "natural_leads_total", "natural_leads_t", "natural_leads_t_minus_1",
+        "ad_leads_total", "ad_leads_t", "ad_leads_t_minus_1",
+        "spending_net_total", "spending_net_t", "spending_net_t_minus_1",
+        "paid_leads_total", "paid_leads_t", "paid_leads_t_minus_1",
+        "area_leads_total", "area_leads_t", "area_leads_t_minus_1",
+        "local_leads_total", "local_leads_t", "local_leads_t_minus_1",
+        "live_effective_hours_total", "live_effective_hours_t", "live_effective_hours_t_minus_1",
+        "effective_live_sessions_total", "effective_live_sessions_t", "effective_live_sessions_t_minus_1",
+        "exposures_total", "exposures_t", "exposures_t_minus_1",
+        "viewers_total", "viewers_t", "viewers_t_minus_1",
+        "small_wheel_clicks_total", "small_wheel_clicks_t", "small_wheel_clicks_t_minus_1",
+        "small_wheel_leads_total", "small_wheel_leads_t", "small_wheel_leads_t_minus_1",
+        "live_leads_total", "live_leads_t", "live_leads_t_minus_1",
+        "anchor_exposure_total", "anchor_exposure_t", "anchor_exposure_t_minus_1",
+        "component_clicks_total", "component_clicks_t", "component_clicks_t_minus_1",
+        "short_video_leads_total", "short_video_leads_t", "short_video_leads_t_minus_1",
+        "short_video_count_total", "short_video_count_t", "short_video_count_t_minus_1",
+        "short_video_plays_total", "short_video_plays_t", "short_video_plays_t_minus_1",
+        "enter_private_count_total", "enter_private_count_t", "enter_private_count_t_minus_1",
+        "private_open_count_total", "private_open_count_t", "private_open_count_t_minus_1",
+        "private_leads_count_total", "private_leads_count_t", "private_leads_count_t_minus_1",
+        "total_cpl", "paid_cpl", "local_leads_ratio",
+        "avg_daily_spending", "avg_daily_spending_t", "avg_daily_spending_t_minus_1",
+        "avg_daily_paid_leads", "avg_daily_paid_leads_t", "avg_daily_paid_leads_t_minus_1",
+        "paid_cpl_t", "paid_cpl_t_minus_1",
+        "avg_daily_effective_live_hours_25min", "avg_daily_effective_live_hours_25min_t", "avg_daily_effective_live_hours_25min_t_minus_1",
+        "avg_exposures_per_session", "avg_exposures_per_session_t", "avg_exposures_per_session_t_minus_1",
+        "exposure_to_viewer_rate", "exposure_to_viewer_rate_t", "exposure_to_viewer_rate_t_minus_1",
+        "avg_viewers_per_session", "avg_viewers_per_session_t", "avg_viewers_per_session_t_minus_1",
+        "small_wheel_click_rate", "small_wheel_click_rate_t", "small_wheel_click_rate_t_minus_1",
+        "small_wheel_leads_rate", "small_wheel_leads_rate_t", "small_wheel_leads_rate_t_minus_1",
+        "avg_small_wheel_leads_per_session", "avg_small_wheel_leads_per_session_t", "avg_small_wheel_leads_per_session_t_minus_1",
+        "component_click_rate", "component_click_rate_t", "component_click_rate_t_minus_1",
+        "component_leads_rate", "component_leads_rate_t", "component_leads_rate_t_minus_1",
+        "avg_daily_private_entry_count", "avg_daily_private_entry_count_t", "avg_daily_private_entry_count_t_minus_1",
+        "avg_daily_private_open_count", "avg_daily_private_open_count_t", "avg_daily_private_open_count_t_minus_1",
+        "avg_daily_private_leads_count", "avg_daily_private_leads_count_t", "avg_daily_private_leads_count_t_minus_1",
+        "private_open_rate", "private_open_rate_t", "private_open_rate_t_minus_1",
+        "private_leads_rate", "private_leads_rate_t", "private_leads_rate_t_minus_1",
+        "private_conversion_rate", "private_conversion_rate_t", "private_conversion_rate_t_minus_1"
     ]
-    
     final_columns_exist = [c for c in final_columns if c in summary_df.columns]
     final_df = summary_df.select(final_columns_exist)
-
-    # Final cleaning step before returning
     for col_name in final_df.columns:
         if final_df[col_name].dtype in [pl.Float32, pl.Float64]:
             final_df = final_df.with_columns(
@@ -680,4 +673,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 .fill_nan(None)
                 .alias(col_name)
             )
+    # 输出中英文对照表
+    print("字段中英文对照表如下：")
+    print(json.dumps(FIELD_EN_MAP, ensure_ascii=False, indent=2))
     return final_df
