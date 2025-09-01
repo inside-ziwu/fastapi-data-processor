@@ -164,7 +164,11 @@ def read_csv_polars(path: str) -> pl.DataFrame:
     return pl.read_csv(path, try_parse_dates=False, low_memory=False)
 
 def read_excel_polars(path: str, sheet_name=None) -> pl.DataFrame:
-    return pl.read_excel(path, sheet_name=sheet_name)
+    # 回退到pandas读取，因为fastexcel不可用
+    pdf = pd.read_excel(path, sheet_name=sheet_name, engine="openpyxl")
+    for col in pdf.columns:
+        pdf[col] = pdf[col].astype(str)
+    return pl.from_pandas(pdf)
 
 
 def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFrame:
