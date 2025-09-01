@@ -389,7 +389,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     for key in ["DR1_file", "DR2_file"]:
         if key in local_paths:
             p = local_paths[key]
-            if p.lower().endswith(('.csv', '.txt')):
+            if '.csv' in p.lower() or '.txt' in p.lower():
                 df = read_csv_polars(p)
                 dr_frames.append(df)
             else:
