@@ -201,7 +201,7 @@ def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFra
         .alias(colname)
     )
     
-    # 修复：只分割真正的多值，保留单值
+    # 单条NSC数据不拆分，保留原始值
     mask = pl.col(colname).str.contains(",")
     multi_df = df.filter(mask).with_columns(pl.col(colname).str.split(",").alias("_nsc_list")).explode("_nsc_list")
     single_df = df.filter(~mask).with_columns(pl.col(colname).alias("_nsc_list"))
@@ -214,7 +214,12 @@ def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFra
     else:
         df = df.drop(["_nsc_list"])
     df = df.rename({"NSC_CODE_CLEAN": "NSC_CODE"})
+    original_count = df.height
     df = df.filter(pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE") != ""))
+    filtered_count = df.height
+    logger.debug(f"[NSC_CODE过滤] 原始行数: {original_count}, 过滤后: {filtered_count}")
+    if filtered_count == 0:
+        logger.warning(f"[NSC_CODE过滤] 过滤后无数据，保留部分原始数据: {df.head()}")
     return df
 
 def ensure_date_column(pl_df: pl.DataFrame, colname: str = "date") -> pl.DataFrame:
@@ -375,9 +380,9 @@ def process_account_base(all_sheets):
         store_name_to_join = store_name_df.select(["NSC_CODE", "store_name"])
         merged = level_df.join(store_name_to_join, on="NSC_CODE", how="outer")
     elif level_df is not None:
-        merged = level_df
+        merged = level_df.with_columns(pl.lit(None).alias("store_name"))
     else:
-        merged = store_name_df
+        merged = store_name_df.with_columns(pl.lit(None).alias("level"))
     
     if merged is not None and "NSC_CODE" in merged.columns:
          merged = merged.filter(pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE") != ""))
@@ -581,29 +586,61 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
 
     # 2. Iterate through all processed dataframes
     for k, v in dfs.items():
-        if "NSC_CODE" in v.columns and "date" in v.columns:
-            logger.debug(f"Extracting keys from '{k}'")
-            # 严格过滤：只保留有值的NSC_CODE和有效date
-            keys_from_df = v.select(["NSC_CODE", "date"]).filter(
-                pl.col("NSC_CODE").is_not_null() & 
-                (pl.col("NSC_CODE") != "") & 
-                (pl.col("NSC_CODE") != "--") &
-                (pl.col("NSC_CODE").str.strip_chars() != "") &
-                pl.col("date").is_not_null()
-            ).to_dicts()
-            for row in keys_from_df:
-                # 3. Add tuple to set
-                unique_keys_set.add( (row['NSC_CODE'], row['date']) )
+        try:
+            logger.debug(f"Extracting keys from '{k}', columns: {v.columns}")
+            if "NSC_CODE" in v.columns and "date" in v.columns:
+                logger.debug(f"Processing {k} with {v.height} rows")
+                # 严格过滤：只保留有值的NSC_CODE和有效date
+                try:
+                    filtered_df = v.select(["NSC_CODE", "date"]).filter(
+                        pl.col("NSC_CODE").is_not_null() & 
+                        (pl.col("NSC_CODE") != "") & 
+                        (pl.col("NSC_CODE") != "--") &
+                        (pl.col("NSC_CODE").str.strip_chars() != "") &
+                        pl.col("date").is_not_null()
+                    )
+                    keys_from_df = filtered_df.to_dicts()
+                    logger.debug(f"Extracted {len(keys_from_df)} valid keys from {k}")
+                    for row in keys_from_df:
+                        unique_keys_set.add((row['NSC_CODE'], row['date']))
+                except Exception as e:
+                    logger.error(f"Error filtering {k}: {str(e)}")
+                    # 如果没有过滤成功，至少添加原始数据
+                    keys_from_df = v.select(["NSC_CODE", "date"]).drop_nulls().to_dicts()
+                    for row in keys_from_df:
+                        unique_keys_set.add((row['NSC_CODE'], row['date']))
+            else:
+                logger.warning(f"Skipping {k}: missing NSC_CODE or date columns")
+        except Exception as e:
+            logger.error(f"Error processing dataframe {k}: {str(e)}")
+            logger.error(f"DataFrame info: columns={list(v.columns) if hasattr(v, 'columns') else 'unknown'}, type={type(v)}")
 
     if not unique_keys_set:
         raise ValueError("No valid (NSC_CODE, date) key pairs found in any file.")
 
     logger.info(f"Found {len(unique_keys_set)} unique keys.")
+    
+    # 数据验证日志
+    logger.info("开始验证各数据源：")
+    for name, df in dfs.items():
+        logger.info(f"[数据源] {name}: 行数={df.height}, 列={len(df.columns)}")
+        # 检查数值列总和
+        numeric_cols = [col for col in df.columns if col in [
+            'natural_leads', 'ad_leads', 'paid_leads', 'area_leads', 'local_leads', 
+            'spending_net', 'live_leads', 'small_wheel_leads', 'private_leads_count',
+            'enter_private_count', 'private_open_count', 'short_video_leads'
+        ]]
+        for col in numeric_cols:
+            if col in df.columns:
+                total = df[col].sum()
+                null_count = df[col].is_null().sum()
+                logger.info(f"[数据验证] {name}.{col}: 总和={total}, 空值={null_count}")
 
     # 4. Create the base DataFrame from the clean Python set and sort it
     base = pl.DataFrame(
         list(unique_keys_set),
-        schema={'NSC_CODE': pl.Utf8, 'date': pl.Date}
+        schema={'NSC_CODE': pl.Utf8, 'date': pl.Date},
+        orient="row"
     ).sort(["NSC_CODE", "date"])
     logger.debug(f"[最终合并] base.columns={base.columns}")
 

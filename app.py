@@ -123,7 +123,11 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
         # PROFILING: Before Core Processing
         core_processing_start_time = time.time()
-        result_df = process_all_files(local_paths, spending_sheet_names=spending_sheet_names)
+        try:
+            result_df = process_all_files(local_paths, spending_sheet_names=spending_sheet_names)
+        except Exception as e:
+            logger.error(f"Core processing failed: {str(e)}", exc_info=True)
+            raise
         # PROFILING: After Core Processing
         core_processing_end_time = time.time()
         logger.info(f"PROFILING: Core processing finished. Total core processing time: {core_processing_end_time - core_processing_start_time:.2f} seconds.")
@@ -168,7 +172,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         json_string_for_size_calc = json.dumps(results_data_standard, default=json_date_serializer)
         data_size_bytes = len(json_string_for_size_calc.encode('utf-8'))
         data_size_mb = data_size_bytes / (1024 * 1024)
-        size_warning = " (超过2MB)" if data_size_mb > 2 else ""
+        size_warning = " (超过1.5MB)" if data_size_mb > 1.5 else ""
         message = (
             f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，"
             f"数据大小约 {data_size_mb:.2f} MB{size_warning}。"
@@ -205,9 +209,22 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
     logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
 
-    # 同时生成分页飞书格式
+    # 智能分页：任一上限触发（400条或1.5MB）
     total_records = len(results_data_standard)
-    page_size = min(500, total_records)
+    
+    # 计算1.5MB对应的记录数
+    if total_records > 0:
+        sample_size = min(10, total_records)
+        json_string_for_page_calc = json.dumps(results_data_standard[:sample_size], default=json_date_serializer)
+        avg_record_size = len(json_string_for_page_calc.encode('utf-8')) / sample_size
+        max_records_by_size = int((1.5 * 1024 * 1024) / avg_record_size) if avg_record_size > 0 else 400
+    else:
+        max_records_by_size = 400
+    
+    # 取400条和1.5MB限制的较小值
+    page_size = min(400, max_records_by_size, total_records)
+    page_size = max(1, page_size)  # 确保至少1条
+    
     total_pages = (total_records + page_size - 1) // page_size
     
     feishu_pages = []
@@ -222,11 +239,15 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             fields_str = json.dumps(row_dict, ensure_ascii=False, default=json_date_serializer)
             feishu_page_records.append({"fields": fields_str})
         
+        # 计算实际页大小
+        actual_page_size = len(json.dumps(page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
+        
         feishu_page = {
             "page": page_num + 1,
             "total_pages": total_pages,
             "total_records": total_records,
             "page_size": len(page_records),
+            "actual_size_mb": round(actual_page_size, 2),
             "records": feishu_page_records
         }
         feishu_pages.append(feishu_page)
