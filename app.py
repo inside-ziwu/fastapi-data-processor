@@ -185,46 +185,76 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
-    # --- FINAL RETURN LOGIC ---
-    if payload.save_to_disk:
-        # Save both files
-        out_path_standard = os.path.join(run_dir, "result.json")
-        with open(out_path_standard, "w", encoding="utf-8") as f:
-            json.dump({"message": message, "data": results_data_standard}, f, ensure_ascii=False, indent=2, default=json_date_serializer)
+# 设置save_to_disk默认为true
+    save_to_disk = provided.get("save_to_disk", True)
+    
+    # 始终保存文件（默认行为）
+    out_path_standard = os.path.join(run_dir, "result.json")
+    with open(out_path_standard, "w", encoding="utf-8") as f:
+        json.dump({"message": message, "data": results_data_standard}, f, ensure_ascii=False, indent=2, default=json_date_serializer)
 
-        out_path_feishu = os.path.join(run_dir, "feishu_import.json")
-        with open(out_path_feishu, "w", encoding="utf-8") as f:
-            json.dump(feishu_output, f, ensure_ascii=False, indent=2)
+    out_path_feishu = os.path.join(run_dir, "feishu_import.json")
+    with open(out_path_feishu, "w", encoding="utf-8") as f:
+        json.dump(feishu_output, f, ensure_ascii=False, indent=2)
 
-        # Construct downloadable URLs
-        from urllib.parse import urljoin, quote
-        base_url = str(request.base_url)
-        download_endpoint = "get-result-file"
-        url_standard = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_standard)}"
-        url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
-        logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
-        logger.info(f"PROFILING: Total request time before returning response: {time.time() - request_start_time:.2f} seconds.")
+    # 构造下载URL
+    from urllib.parse import urljoin, quote
+    base_url = str(request.base_url)
+    download_endpoint = "get-result-file"
+    url_standard = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_standard)}"
+    url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
+    logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
 
-        return {
-            "status": "ok",
-            "message": message,
-            "result_path": {
-                "standard_json": url_standard,
-                "feishu_import_json": url_feishu
-            },
-            "results_preview": results_data_standard[:3],
-            "feishu_data": feishu_output
+    # 同时生成分页飞书格式
+    total_records = len(results_data_standard)
+    page_size = min(500, total_records)
+    total_pages = (total_records + page_size - 1) // page_size
+    
+    feishu_pages = []
+    for page_num in range(total_pages):
+        start_idx = page_num * page_size
+        end_idx = min(start_idx + page_size, total_records)
+        
+        page_records = results_data_standard[start_idx:end_idx]
+        feishu_page_records = []
+        
+        for row_dict in page_records:
+            fields_str = json.dumps(row_dict, ensure_ascii=False, default=json_date_serializer)
+            feishu_page_records.append({"fields": fields_str})
+        
+        feishu_page = {
+            "page": page_num + 1,
+            "total_pages": total_pages,
+            "total_records": total_records,
+            "page_size": len(page_records),
+            "records": feishu_page_records
         }
-    else:
-        # Return Feishu data directly, but no file is saved
+        feishu_pages.append(feishu_page)
+
+    final_response = {
+        "status": "ok",
+        "message": message,
+        "total_time_seconds": round(time.time() - request_start_time, 2),
+        "total_rows": num_rows,
+        "total_size_mb": round(data_size_mb, 2),
+        "result_path": {
+            "standard_json": url_standard,
+            "feishu_import_json": url_feishu
+        },
+        "feishu_format": {
+            "pages": len(feishu_pages),
+            "page_size": page_size,
+            "all_pages": feishu_pages
+        },
+        "results_preview": results_data_standard[:3]
+    }
+    
+    # 如果save_to_disk为false，才清理临时目录
+    if not save_to_disk:
         shutil.rmtree(run_dir, ignore_errors=True)
-        final_response = {
-            "message": message,
-            "results_preview": results_data_standard[:3],
-            "feishu_data": feishu_output
-        }
-        logger.info(f"PROFILING: Total request time before returning response: {time.time() - request_start_time:.2f} seconds.")
-        return Response(content=json.dumps(final_response, ensure_ascii=False, default=json_date_serializer), media_type="application/json")
+    
+    logger.info(f"PROFILING: Total request time before returning response: {time.time() - request_start_time:.2f} seconds.")
+    return final_response
 
 from urllib.parse import urljoin, quote
 from fastapi.responses import FileResponse
