@@ -227,17 +227,17 @@ def process_dr_table(df):
     df = rename_columns_loose(df, DR_MAP)
     df = normalize_nsc_col(df, "NSC_CODE")
     df = ensure_date_column(df, "date")
-    dr_natural = df.filter(pl.col("leads_type") == "自然").groupby(["NSC_CODE", "date"]).count().rename({"count": "自然线索"})
-    dr_ad = df.filter(pl.col("leads_type") == "广告").groupby(["NSC_CODE", "date"]).count().rename({"count": "广告线索"})
+    dr_natural = df.filter(pl.col("leads_type") == "自然").group_by(["NSC_CODE", "date"]).count().rename({"count": "自然线索"})
+    dr_ad = df.filter(pl.col("leads_type") == "广告").group_by(["NSC_CODE", "date"]).count().rename({"count": "广告线索"})
     dr_cyd = df.filter(
         (pl.col("leads_type") == "广告") &
         (pl.col("mkt_second_channel_name").is_in(["抖音车云店_BMW_本市_LS直发", "抖音车云店_LS直发"]))
-    ).groupby(["NSC_CODE", "date"]).count().rename({"count": "车云店付费线索"})
+    ).group_by(["NSC_CODE", "date"]).count().rename({"count": "车云店付费线索"})
     dr_area = df.filter(
         (pl.col("leads_type") == "广告") &
         (pl.col("mkt_second_channel_name") == "抖音车云店_BMW_总部BDT_LS直发")
-    ).groupby(["NSC_CODE", "date"]).count().rename({"count": "区域付费线索"})
-    dr_local = df.filter(pl.col("send2dealer_id") == pl.col("reg_dealer")).groupby(["NSC_CODE", "date"]).count().rename({"count": "本地线索量"})
+    ).group_by(["NSC_CODE", "date"]).count().rename({"count": "区域付费线索"})
+    dr_local = df.filter(pl.col("send2dealer_id") == pl.col("reg_dealer")).group_by(["NSC_CODE", "date"]).count().rename({"count": "本地线索量"})
     dr_all = dr_natural.join(dr_ad, on=["NSC_CODE", "date"], how="outer") \
                        .join(dr_cyd, on=["NSC_CODE", "date"], how="outer") \
                        .join(dr_area, on=["NSC_CODE", "date"], how="outer") \
