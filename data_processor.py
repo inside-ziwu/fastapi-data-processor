@@ -528,20 +528,35 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 normalized_sheet_names = spending_sheet_names.replace("，", ",")
                 sheet_names = [s.strip() for s in normalized_sheet_names.split(",") if s.strip()]
             if sheet_names:
-                dfs = []
+                processed_dfs = []
                 for s in sheet_names:
                     try:
                         df_sheet = read_excel_polars(p, sheet_name=s)
-                        dfs.append(df_sheet)
+                        processed = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"])
+                        processed_dfs.append(processed)
                     except Exception as e:
-                        logger.warning(f"Spending_file sheet {s} not found: {e}")
+                        logger.warning(f"Spending_file sheet {s} processing failed: {e}")
                         continue
-                if not dfs:
-                    dfs = [read_excel_polars(p, sheet_name=0)]
-                df = pl.concat(dfs, how="vertical")
+                if processed_dfs:
+                    df = pl.concat(processed_dfs, how="vertical")
+                else:
+                    df_sheet = read_excel_polars(p, sheet_name=0)
+                    df = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"])
             else:
                 all_sheets = read_excel_polars(p, sheet_name=None)
-                df = pl.concat(list(all_sheets.values()), how="vertical")
+                processed_dfs = []
+                for sheet_name, df_sheet in all_sheets.items():
+                    try:
+                        processed = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"])
+                        processed_dfs.append(processed)
+                    except Exception as e:
+                        logger.warning(f"Spending_file sheet {sheet_name} processing failed: {e}")
+                        continue
+                if processed_dfs:
+                    df = pl.concat(processed_dfs, how="vertical")
+                else:
+                    df_sheet = read_excel_polars(p, sheet_name=0)
+                    df = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"])
         if df is not None:
             logger.debug(f"[spending] columns={df.columns}")
             dfs["spending"] = process_single_table(df, SPENDING_MAP, ["spending_net"])
