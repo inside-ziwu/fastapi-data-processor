@@ -717,9 +717,9 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     )
     # Step 5: Calculate Final Ratios (全部英文)
     def safe_div(num_expr, den_expr):
-        return pl.when((den_expr != 0) & den_expr.is_not_null() & num_expr.is_not_null())
-                  .then(num_expr / den_expr)
-                  .otherwise(None)
+        return pl.when((den_expr != 0) & den_expr.is_not_null() & num_expr.is_not_null()) \
+                .then(num_expr / den_expr) \
+                .otherwise(None)
     summary_df = summary_df.with_columns(
         safe_div(pl.col("spending_net_total"), (pl.col("natural_leads_total").fill_null(0) + pl.col("ad_leads_total").fill_null(0))).alias("total_cpl"),
         safe_div(pl.col("spending_net_total"), pl.col("paid_area_leads_total")).alias("paid_cpl"),
