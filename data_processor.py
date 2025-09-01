@@ -175,17 +175,25 @@ def df_pandas_to_polars(df: pd.DataFrame) -> pl.DataFrame:
 def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFrame:
     if colname not in df.columns:
         df = df.with_columns(pl.lit(None).alias(colname))
+    
     df = df.with_columns(pl.col(colname).cast(pl.Utf8))
+    
+    # 修复：保留原始值，不要过度清洗
     df = df.with_columns(
-        pl.col(colname)
-        .str.replace_all(r"[；，\|\u3001/\\]+", ",")
+        pl.when(pl.col(colname).str.contains(r"[；，\|\u3001/\\]"))
+        .then(pl.col(colname).str.replace_all(r"[；，\|\u3001/\\]+", ","))
+        .otherwise(pl.col(colname))
         .alias(colname)
     )
-    df = df.with_columns(pl.col(colname).str.split(",").alias("_nsc_list"))
-    df = df.explode("_nsc_list")
-    df = df.with_columns(
-        pl.col("_nsc_list").str.strip_chars().alias("NSC_CODE_CLEAN")
-    )
+    
+    # 修复：只分割真正的多值，保留单值
+    mask = pl.col(colname).str.contains(",")
+    multi_df = df.filter(mask).with_columns(pl.col(colname).str.split(",").alias("_nsc_list")).explode("_nsc_list")
+    single_df = df.filter(~mask).with_columns(pl.col(colname).alias("_nsc_list"))
+    
+    df = pl.concat([multi_df, single_df])
+    df = df.with_columns(pl.col("_nsc_list").str.strip_chars().alias("NSC_CODE_CLEAN"))
+    
     if colname in df.columns:
         df = df.drop([colname, "_nsc_list"])
     else:

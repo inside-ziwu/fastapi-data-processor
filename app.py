@@ -77,6 +77,10 @@ class ProcessRequest(BaseModel):
 
 @app.post("/process-files")
 async def process_files(request: Request, payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
+    # PROFILING: Start
+    request_start_time = time.time()
+    logger.info(f"PROFILING: Request received at {request_start_time}")
+
     if not auth_ok(x_api_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
     run_dir = os.path.join(TMP_ROOT, f"run_{int(time.time()*1000)}")
@@ -90,6 +94,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     provided = payload.dict()
     local_paths = {}
     logger.info(f"Starting file processing with payload: {list(provided.keys())}")
+    
+    download_start_time = time.time()
     for key in file_keys:
         val = provided.get(key)
         logger.info(f"DEBUG: {key} raw value = '{repr(val)}' (type: {type(val)})")
@@ -103,6 +109,11 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 raise HTTPException(status_code=500, detail=f"Failed to download {key}: {str(e)}")
         else:
             logger.info(f"❌ Skipping {key}: value is '{repr(val)}'")
+    
+    # PROFILING: After Downloads
+    download_end_time = time.time()
+    logger.info(f"PROFILING: File downloads finished. Total download time: {download_end_time - download_start_time:.2f} seconds.")
+
     logger.info(f"Valid files to process: {list(local_paths.keys())}")
     if not local_paths:
         shutil.rmtree(run_dir, ignore_errors=True)
@@ -110,7 +121,15 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     spending_sheet_names = provided.get("spending_sheet_names")
     try:
         logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
+        # PROFILING: Before Core Processing
+        core_processing_start_time = time.time()
         result_df = process_all_files(local_paths, spending_sheet_names=spending_sheet_names)
+        # PROFILING: After Core Processing
+        core_processing_end_time = time.time()
+        logger.info(f"PROFILING: Core processing finished. Total core processing time: {core_processing_end_time - core_processing_start_time:.2f} seconds.")
+
+        # PROFILING: Before Output Prep
+        output_prep_start_time = time.time()
 
         # --- UNIFIED FINAL LOGIC ---
         # 1. Get shape for size hint
@@ -157,6 +176,10 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         )
         logger.info(message)
 
+        # PROFILING: After Output Prep
+        output_prep_end_time = time.time()
+        logger.info(f"PROFILING: Output preparation finished. Total output prep time: {output_prep_end_time - output_prep_start_time:.2f} seconds.")
+
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}", exc_info=True)
         shutil.rmtree(run_dir, ignore_errors=True)
@@ -180,6 +203,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         url_standard = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_standard)}"
         url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
         logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
+        logger.info(f"PROFILING: Total request time before returning response: {time.time() - request_start_time:.2f} seconds.")
 
         return {
             "status": "ok",
@@ -199,6 +223,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             "results_preview": results_data_standard[:3],
             "feishu_data": feishu_output
         }
+        logger.info(f"PROFILING: Total request time before returning response: {time.time() - request_start_time:.2f} seconds.")
         return Response(content=json.dumps(final_response, ensure_ascii=False, default=json_date_serializer), media_type="application/json")
 
 from urllib.parse import urljoin, quote
