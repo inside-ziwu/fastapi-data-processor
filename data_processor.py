@@ -283,24 +283,18 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         for sheetname, pdf in all_sheets.items():
             orig_cols = list(map(str, pdf.columns))
             logger.debug(f"[MSG调试] sheet={sheetname}, columns={orig_cols}")
-            pk_matched = None
-            for pk in PRIMARY_KEYS:
-                if pk in pdf.columns:
-                    pk_matched = pk
-                    break
-            logger.debug(f"[MSG调试] sheet={sheetname}, pk_matched={pk_matched}")
 
-            sheet_status = {
-                "sheet": sheetname,
-                "orig_cols": orig_cols,
-                "pk_found": pk_matched or "",
-            }
+            PK_COLUMN = "主机厂经销商ID"
 
-            if pk_matched is None:
-                sheet_report.append(sheet_status)
+            if PK_COLUMN not in pdf.columns:
+                sheet_report.append({
+                    "sheet": sheetname,
+                    "orig_cols": orig_cols,
+                    "pk_found": "未找到必需主键",
+                })
                 err_msg = (
-                    f"MSG sheet 缺少主键列。sheet='{sheetname}' "
-                    f"需要列之一={PRIMARY_KEYS}，实际列={orig_cols}"
+                    f"MSG sheet 格式无效。sheet='{sheetname}' "
+                    f"缺少必需的主键列: '{PK_COLUMN}'。实际列: {orig_cols}"
                 )
                 logger.error(err_msg)
                 raise ValueError(err_msg)
@@ -309,7 +303,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             pdf_local["日期"] = sheetname
 
             rename_map = {
-                pk_matched: "NSC_CODE",
+                PK_COLUMN: "NSC_CODE",
                 "日期": "date",
                 "进入私信客户数": "enter_private_count",
                 "进入私信客户": "enter_private_count",
@@ -319,12 +313,10 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 "私信留资": "private_leads_count",
             }
             rename_map_eff = {k: v for k, v in rename_map.items() if k in pdf_local.columns}
-            logger.debug(f"[MSG调试] sheet={sheetname}, rename_map_eff={rename_map_eff}")
             pdf_local = pdf_local.rename(columns=rename_map_eff)
 
             df = df_pandas_to_polars(pdf_local)
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
-            assert "NSC_CODE" in df.columns, f"[严格] NSC_CODE 不存在。sheet='{sheetname}', cols={df.columns}"
 
             df = normalize_nsc_col(df, "NSC_CODE")
             df = ensure_date_column(df, "date")
@@ -333,7 +325,12 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             df = df.select(keep)
 
             per_sheet_frames.append(df)
-            sheet_status["kept_cols"] = keep
+            sheet_status = {
+                "sheet": sheetname,
+                "orig_cols": orig_cols,
+                "pk_found": PK_COLUMN,
+                "kept_cols": keep
+            }
             sheet_report.append(sheet_status)
 
         if not per_sheet_frames:
