@@ -171,11 +171,18 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(final_response, f, ensure_ascii=False, indent=2, default=json_date_serializer)
     
+    # Construct the full downloadable URL
+    base_url = str(request.base_url)
+    download_endpoint = "get-result-file"
+    # Use urljoin to handle potential trailing slashes in base_url
+    full_url = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path)}"
+
+    logger.info(f"Returning downloadable URL: {full_url}")
+    
     # The function now ALWAYS returns the path and does not delete the run_dir.
-    return {"status":"ok", "message": message, "result_path":out_path, "results_preview": final_response["data"][:3]}
+    return {"status":"ok", "message": message, "result_path": full_url, "results_preview": final_response["data"][:3]}
 
-from fastapi.responses import FileResponse
-
+from urllib.parse import urljoin, quote
 from fastapi.responses import FileResponse
 
 @app.get("/health")
