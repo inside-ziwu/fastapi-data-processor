@@ -26,9 +26,9 @@ LIVE_MAP = {
 }
 MSG_MAP = {
     "主机厂经销商ID": "NSC_CODE", "日期": "date",
-    "进入私信客户数": "enter_private_count", "进入私信客户": "enter_private_count",
-    "主动咨询客户数": "private_open_count", "主动咨询客户": "private_open_count",
-    "私信留资客户数": "private_leads_count", "私信留资": "private_leads_count"
+    "进入私信客户数": "enter_private_count",
+    "主动咨询客户数": "private_open_count",
+    "私信留资客户数": "private_leads_count"
 }
 ACCOUNT_BI_MAP = {
     "主机厂经销商id列表": "NSC_CODE", "日期": "date", "直播间表单提交商机量": "live_leads", "短-播放量": "short_video_plays"
@@ -227,21 +227,24 @@ def process_dr_table(df):
     df = rename_columns_loose(df, DR_MAP)
     df = normalize_nsc_col(df, "NSC_CODE")
     df = ensure_date_column(df, "date")
-    dr_natural = df.filter(pl.col("leads_type") == "自然").group_by(["NSC_CODE", "date"]).count().rename({"count": "自然线索"})
-    dr_ad = df.filter(pl.col("leads_type") == "广告").group_by(["NSC_CODE", "date"]).count().rename({"count": "广告线索"})
-    dr_cyd = df.filter(
-        (pl.col("leads_type") == "广告") &
-        (pl.col("mkt_second_channel_name").is_in(["抖音车云店_BMW_本市_LS直发", "抖音车云店_LS直发"]))
-    ).group_by(["NSC_CODE", "date"]).count().rename({"count": "车云店付费线索"})
-    dr_area = df.filter(
-        (pl.col("leads_type") == "广告") &
-        (pl.col("mkt_second_channel_name") == "抖音车云店_BMW_总部BDT_LS直发")
-    ).group_by(["NSC_CODE", "date"]).count().rename({"count": "区域付费线索"})
-    dr_local = df.filter(pl.col("send2dealer_id").cast(pl.Utf8) == pl.col("NSC_CODE")).group_by(["NSC_CODE", "date"]).count().rename({"count": "本地线索量"})
-    dr_all = dr_natural.join(dr_ad, on=["NSC_CODE", "date"], how="outer") \
-                       .join(dr_cyd, on=["NSC_CODE", "date"], how="outer") \
-                       .join(dr_area, on=["NSC_CODE", "date"], how="outer") \
-                       .join(dr_local, on=["NSC_CODE", "date"], how="outer")
+
+    # A single group_by with conditional aggregations is far more efficient
+    # and robust than creating 5 separate dataframes and joining them.
+    dr_all = df.group_by("NSC_CODE", "date").agg(
+        pl.col("leads_type").filter(pl.col("leads_type") == "自然").count().alias("自然线索"),
+        pl.col("leads_type").filter(pl.col("leads_type") == "广告").count().alias("广告线索"),
+        pl.col("leads_type").filter(
+            (pl.col("leads_type") == "广告") &
+            (pl.col("mkt_second_channel_name").is_in(["抖音车云店_BMW_本市_LS直发", "抖音车云店_LS直发"]))
+        ).count().alias("车云店付费线索"),
+        pl.col("leads_type").filter(
+            (pl.col("leads_type") == "广告") &
+            (pl.col("mkt_second_channel_name") == "抖音车云店_BMW_总部BDT_LS直发")
+        ).count().alias("区域付费线索"),
+        pl.col("send2dealer_id").filter(
+            pl.col("send2dealer_id").cast(pl.Utf8) == pl.col("NSC_CODE")
+        ).count().alias("本地线索量")
+    )
     return dr_all
 
 def process_account_base(all_sheets):
