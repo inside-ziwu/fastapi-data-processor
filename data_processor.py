@@ -429,7 +429,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         sum_cols = ["enter_private_count","private_open_count","private_leads_count"]
         for col in sum_cols:
             if col in df.columns:
-                df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False).fill_null(0))
+                df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False).fill_null(0).fill_nan(0))
         agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols if c in df.columns]
         if agg_exprs:
             df = df.group_by(group_cols).agg(agg_exprs)
@@ -525,6 +525,11 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if "NSC_CODE" not in v.columns:
             logger.error(f"[keys] {k} 没有 NSC_CODE，实际列: {v.columns}")
         if "NSC_CODE" in v.columns and "date" in v.columns:
+            # --- KEYS PROBE ---
+            logger.debug(f"[KEYS PROBE] Inspecting key source df: '{k}'")
+            logger.debug(f"[KEYS PROBE] Schema for '{k}': {v.schema}")
+            logger.debug(f"[KEYS PROBE] Head of '{k}':\n{v.select(['NSC_CODE', 'date']).head()}")
+            # --- END KEYS PROBE ---
             keys.append(v.select(["NSC_CODE", "date"]).unique())
     logger.debug(f"[keys] keys count={len(keys)}")
     if not keys:
