@@ -25,7 +25,7 @@ LIVE_MAP = {
     "小风车点击次数（不含小雪花）": "small_wheel_clicks"
 }
 MSG_MAP = {
-    "主机厂经销商ID": "NSC_CODE", "经销商ID": "NSC_CODE", "主机ID": "NSC_CODE", "日期": "date",
+    "主机厂经销商ID": "NSC_CODE", "日期": "date",
     "进入私信客户数": "enter_private_count", "进入私信客户": "enter_private_count",
     "主动咨询客户数": "private_open_count", "主动咨询客户": "private_open_count",
     "私信留资客户数": "private_leads_count", "私信留资": "private_leads_count"
@@ -134,9 +134,28 @@ def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFra
 
 def ensure_date_column(pl_df: pl.DataFrame, colname: str = "date") -> pl.DataFrame:
     if colname not in pl_df.columns:
-        pl_df = pl_df.with_columns(pl.lit(None).alias(colname))
+        return pl_df.with_columns(pl.lit(None, dtype=pl.Date).alias(colname))
+
+    # List of formats to try, from most to least common in this project
+    formats_to_try = [
+        "%Y-%m-%d",
+        "%Y/%m/%d %H:%M",
+        "%Y/%m/%d",
+    ]
+
+    # Coalesce allows us to try parsing with one format, and if it fails (produces null),
+    # try the next format in the list.
+    parser_expressions = [
+        pl.col(colname).str.strptime(pl.Datetime, format=fmt, strict=False)
+        for fmt in formats_to_try
+    ]
+
+    # We also include the original string as a fallback in case all parsing fails
+    # and to preserve original values that are not dates.
     pl_df = pl_df.with_columns(
-        pl.col(colname).str.slice(0, 10).str.strptime(pl.Date, strict=False)
+        pl.coalesce(parser_expressions)
+        .cast(pl.Date)
+        .alias(colname)
     )
     return pl_df
 
@@ -168,7 +187,7 @@ def process_single_table(df, mapping, sum_cols=None):
             f"  - 原始列名: {orig_cols}\n"
             f"  - 重命名后列名: {renamed_cols}\n"
             f"  - 映射命中报告: {hit_report}\n"
-            "请确认主键源字段（例如：主机厂经销商ID/经销商ID/主机ID）是否在 mapping 中，"
+            "请确认主键源字段（例如：主机厂经销商ID）是否在 mapping 中，"
             "且与实际表头中文部分完全一致。"
         )
         logger.error(err_msg)
@@ -279,7 +298,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         p = local_paths["msg_excel_file"]
         all_sheets = read_excel_as_pandas(p, sheet_name=None)
 
-        PRIMARY_KEYS = ["主机厂经销商ID", "经销商ID", "主机ID"]
+        PRIMARY_KEYS = ["主机厂经销商ID"]
 
         per_sheet_frames = []
         sheet_report = []
