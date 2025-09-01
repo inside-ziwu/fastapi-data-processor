@@ -165,7 +165,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
-    if payload.save_to_disk:
+    logger.info(f"DEBUG: save_to_disk value = {repr(payload.save_to_disk)}, type = {type(payload.save_to_disk)}")
+    if payload.save_to_disk is True or str(payload.save_to_disk).lower() == 'true':
         out_path = os.path.join(run_dir, "result.json")
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(final_response, f, ensure_ascii=False, indent=2, default=json_date_serializer)
