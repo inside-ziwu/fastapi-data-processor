@@ -3,6 +3,7 @@ import shutil
 import logging
 from typing import Optional, Dict
 import polars as pl
+import pandas as pd
 import re
 import json
 
