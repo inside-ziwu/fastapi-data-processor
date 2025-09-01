@@ -529,6 +529,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if "NSC_CODE" in v.columns and "date" in v.columns:
             # --- KEYS PROBE ---
             logger.debug(f"[KEYS PROBE] Inspecting key source df: '{k}'")
+            logger.debug(f"[COLUMN PROBE] Raw column names for '{k}': {repr(v.columns)}")
             logger.debug(f"[KEYS PROBE] Schema for '{k}': {v.schema}")
             logger.debug(f"[KEYS PROBE] Head of '{k}':\n{v.select(['NSC_CODE', 'date']).head()}")
             # --- END KEYS PROBE ---
