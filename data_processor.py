@@ -488,6 +488,15 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         logger.debug(f"[account_base join后] base.columns={base.columns}")
 
     # --- FINAL ANALYSIS LOGIC --- #
+    # CRITICAL FIX: Filter out rows with null dates and fill nulls in pivot index keys.
+    logger.info("开始最终分析前的数据清洗...")
+    base = base.filter(pl.col("date").is_not_null())
+    
+    id_cols_to_fill = ["level", "store_name"]
+    for col in id_cols_to_fill:
+        if col in base.columns:
+            base = base.with_columns(pl.col(col).fill_null("未知"))
+    logger.info("数据清洗完成")
     logger.info("开始进行T/T-1分析...")
     
     # Step 1: Data Preparation
