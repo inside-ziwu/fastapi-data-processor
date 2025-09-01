@@ -407,10 +407,18 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     # 3. msg_excel_file
     if "msg_excel_file" in local_paths:
         p = local_paths["msg_excel_file"]
-        all_sheets = read_excel_polars(p, sheet_name=None)
+        df_sheets = read_excel_polars(p, sheet_name=None)
         per_sheet_frames = []
         sheet_report = []
-        for sheetname, df in all_sheets.items():
+        
+        # 处理dict或DataFrame的情况
+        if isinstance(df_sheets, dict):
+            sheets_data = df_sheets.items()
+        else:
+            # 单sheet情况
+            sheets_data = [("sheet1", df_sheets)]
+            
+        for sheetname, df in sheets_data:
             orig_cols = list(map(str, df.columns))
             logger.debug(f"[MSG调试] sheet={sheetname}, columns={orig_cols}")
             PK_COLUMN = "主机厂经销商ID"
