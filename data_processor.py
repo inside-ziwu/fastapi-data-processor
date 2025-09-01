@@ -437,7 +437,8 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         elif '.xlsx' in p.lower() or '.xls' in p.lower():
             sheet_names = None
             if spending_sheet_names:
-                sheet_names = [s.strip() for s in spending_sheet_names.split(",") if s.strip()]
+                normalized_sheet_names = spending_sheet_names.replace("，", ",")
+                sheet_names = [s.strip() for s in normalized_sheet_names.split(",") if s.strip()]
             if sheet_names:
                 pdfs = []
                 for s in sheet_names:
