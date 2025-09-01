@@ -478,15 +478,29 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         logger.info(f"[MSG合并后] 列名: {df.columns}")
         if df.height > 0:
             logger.info(f"[MSG数据预览]\n{df.head(5)}")
-            # 显示数值统计 - 先确保是数值类型再求和
+            # 强制转换字符串为数值类型
+            str_to_num_cols = ["enter_private_count","private_open_count","private_leads_count"]
+            for col in str_to_num_cols:
+                if col in df.columns:
+                    # 先转换为字符串，再转换为数值，处理空值
+                    df = df.with_columns(
+                        pl.col(col)
+                        .cast(pl.Utf8)  # 确保是字符串
+                        .str.strip_chars()  # 去除空格
+                        .str.replace_all("[^0-9.]", "")  # 只保留数字和小数点
+                        .cast(pl.Float64, strict=False)  # 转换为浮点数
+                        .fill_null(0)  # 空值填0
+                        .fill_nan(0)   # NaN填0
+                        .alias(col)
+                    )
+            
+            # 显示数值统计
             numeric_cols = ["enter_private_count","private_open_count","private_leads_count"]
             for col in numeric_cols:
                 if col in df.columns:
-                    # 先转换为数值类型
-                    df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False).fill_null(0).fill_nan(0).alias(col))
                     total = df[col].sum()
                     non_null = df[col].is_not_null().sum()
-                    logger.info(f"[MSG统计] {col}: 总和={total}, 非空值={non_null}, 空值={(df.height - non_null)}")
+                    logger.info(f"[MSG统计] {col}: 总和={total}, 非空值={non_null}, 空值={(df.height - non_null)}, 类型={df[col].dtype}")
         group_cols = ["NSC_CODE", "date"]
         sum_cols = ["enter_private_count","private_open_count","private_leads_count"]
         for col in sum_cols:
@@ -749,6 +763,10 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     )
     # Step 5: Calculate Final Ratios (全部英文)
     def safe_div(num_expr, den_expr):
+        # 处理Python整数和Polars表达式的混合情况
+        num_expr = pl.lit(num_expr) if not hasattr(num_expr, 'is_not_null') else num_expr
+        den_expr = pl.lit(den_expr) if not hasattr(den_expr, 'is_not_null') else den_expr
+        
         return pl.when((den_expr != 0) & den_expr.is_not_null() & num_expr.is_not_null()) \
                 .then(num_expr / den_expr) \
                 .otherwise(None)
