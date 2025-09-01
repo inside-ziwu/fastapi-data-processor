@@ -3,7 +3,6 @@ import shutil
 import logging
 from typing import Optional, Dict
 import polars as pl
-import pandas as pd
 import re
 import json
 
@@ -164,13 +163,9 @@ def rename_columns_loose(pl_df: pl.DataFrame, mapping: Dict[str, str]) -> pl.Dat
 def read_csv_polars(path: str) -> pl.DataFrame:
     return pl.read_csv(path, try_parse_dates=False, low_memory=False)
 
-def read_excel_as_pandas(path: str, sheet_name=None) -> pd.DataFrame:
-    return pd.read_excel(path, sheet_name=sheet_name, engine="openpyxl")
+def read_excel_polars(path: str, sheet_name=None) -> pl.DataFrame:
+    return pl.read_excel(path, sheet_name=sheet_name)
 
-def df_pandas_to_polars(df: pd.DataFrame) -> pl.DataFrame:
-    for col in df.columns:
-        df[col] = df[col].astype(str)
-    return pl.from_pandas(df)
 
 def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFrame:
     if colname not in df.columns:
@@ -317,13 +312,13 @@ def process_account_base(all_sheets):
     level_sheet_keys = ["NSC_id", "第二期层级"]
     store_sheet_keys = ["NSC Code", "抖音id"]
 
-    for sheetname, pdf in all_sheets.items():
-        df_cols = pdf.columns
+    for sheetname, df_sheet in all_sheets.items():
+        df_cols = df_sheet.columns
         
         # Check if it's the level sheet
         if all(key in df_cols for key in level_sheet_keys):
             logger.info(f"[ACC_BASE] Identified level sheet: {sheetname}")
-            level_df = df_pandas_to_polars(pdf).select(
+            level_df = df_sheet.select(
                 pl.col("NSC_id").alias("NSC_CODE"),
                 pl.col("第二期层级").alias("level")
             )
@@ -331,7 +326,7 @@ def process_account_base(all_sheets):
         # Check if it's the store name sheet
         elif all(key in df_cols for key in store_sheet_keys):
             logger.info(f"[ACC_BASE] Identified store_name sheet: {sheetname}")
-            store_name_df = df_pandas_to_polars(pdf).select(
+            store_name_df = df_sheet.select(
                 pl.col("NSC Code").alias("NSC_CODE"),
                 pl.col("抖音id").alias("store_name")
             )
@@ -366,8 +361,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if '.csv' in p.lower() or '.txt' in p.lower():
             df = read_csv_polars(p)
         elif '.xlsx' in p.lower() or '.xls' in p.lower():
-            pdf = read_excel_as_pandas(p, sheet_name=0)
-            df = df_pandas_to_polars(pdf)
+            df = read_excel_polars(p, sheet_name=0)
         if df is not None:
             logger.debug(f"[video] columns={df.columns}")
             dfs["video"] = process_single_table(df, VIDEO_MAP, ["anchor_exposure","component_clicks","short_video_count","short_video_leads"])
@@ -378,22 +372,21 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if '.csv' in p.lower() or '.txt' in p.lower():
             df = read_csv_polars(p)
         elif '.xlsx' in p.lower() or '.xls' in p.lower():
-            pdf = read_excel_as_pandas(p, sheet_name=0)
-            df = df_pandas_to_polars(pdf)
+            df = read_excel_polars(p, sheet_name=0)
         if df is not None:
             logger.debug(f"[live] columns={df.columns}")
             dfs["live"] = process_single_table(df, LIVE_MAP, ["over25_min_live_mins","live_effective_hours","effective_live_sessions","exposures","viewers","small_wheel_clicks"])
     # 3. msg_excel_file
     if "msg_excel_file" in local_paths:
         p = local_paths["msg_excel_file"]
-        all_sheets = read_excel_as_pandas(p, sheet_name=None)
+        all_sheets = read_excel_polars(p, sheet_name=None)
         per_sheet_frames = []
         sheet_report = []
-        for sheetname, pdf in all_sheets.items():
-            orig_cols = list(map(str, pdf.columns))
+        for sheetname, df in all_sheets.items():
+            orig_cols = list(map(str, df.columns))
             logger.debug(f"[MSG调试] sheet={sheetname}, columns={orig_cols}")
             PK_COLUMN = "主机厂经销商ID"
-            if PK_COLUMN not in pdf.columns:
+            if PK_COLUMN not in df.columns:
                 sheet_report.append({
                     "sheet": sheetname,
                     "orig_cols": orig_cols,
@@ -405,8 +398,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 )
                 logger.error(err_msg)
                 raise ValueError(err_msg)
-            pdf_local = pdf.copy()
-            pdf_local["日期"] = sheetname
+            df = df.with_columns(pl.lit(sheetname).alias("日期"))
             rename_map = {
                 PK_COLUMN: "NSC_CODE",
                 "日期": "date",
@@ -414,9 +406,8 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 "主动咨询客户数": "private_open_count",
                 "私信留资客户数": "private_leads_count",
             }
-            rename_map_eff = {k: v for k, v in rename_map.items() if k in pdf_local.columns}
-            pdf_local = pdf_local.rename(columns=rename_map_eff)
-            df = df_pandas_to_polars(pdf_local)
+            rename_map_eff = {k: v for k, v in rename_map.items() if k in df.columns}
+            df = df.rename(rename_map_eff)
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
             df = normalize_nsc_col(df, "NSC_CODE")
             df = ensure_date_column(df, "date")
@@ -458,8 +449,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if '.csv' in p.lower() or '.txt' in p.lower():
             df = read_csv_polars(p)
         elif '.xlsx' in p.lower() or '.xls' in p.lower():
-            pdf = read_excel_as_pandas(p, sheet_name=0)
-            df = df_pandas_to_polars(pdf)
+            df = read_excel_polars(p, sheet_name=0)
         if df is not None:
             logger.debug(f"[ACC_BI PROBE] Initial columns: {df.columns}")
             logger.debug(f"[ACC_BI PROBE] Initial head:\n{df.head()}")
@@ -472,8 +462,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if '.csv' in p.lower() or '.txt' in p.lower():
             df = read_csv_polars(p)
         elif '.xlsx' in p.lower() or '.xls' in p.lower():
-            pdf = read_excel_as_pandas(p, sheet_name=0)
-            df = df_pandas_to_polars(pdf)
+            df = read_excel_polars(p, sheet_name=0)
         if df is not None:
             logger.debug(f"[leads] columns={df.columns}")
             dfs["leads"] = process_single_table(df, LEADS_MAP, ["small_wheel_leads"])
@@ -503,21 +492,20 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 normalized_sheet_names = spending_sheet_names.replace("，", ",")
                 sheet_names = [s.strip() for s in normalized_sheet_names.split(",") if s.strip()]
             if sheet_names:
-                pdfs = []
+                dfs = []
                 for s in sheet_names:
                     try:
-                        pdf = read_excel_as_pandas(p, sheet_name=s)
-                        pdfs.append(pdf)
+                        df_sheet = read_excel_polars(p, sheet_name=s)
+                        dfs.append(df_sheet)
                     except Exception as e:
                         logger.warning(f"Spending_file sheet {s} not found: {e}")
                         continue
-                if not pdfs:
-                    pdfs = [read_excel_as_pandas(p, sheet_name=0)]
-                big_pdf = pd.concat(pdfs, ignore_index=True)
+                if not dfs:
+                    dfs = [read_excel_polars(p, sheet_name=0)]
+                df = pl.concat(dfs, how="vertical")
             else:
-                all_sheets = read_excel_as_pandas(p, sheet_name=None)
-                big_pdf = pd.concat(all_sheets.values(), ignore_index=True)
-            df = df_pandas_to_polars(big_pdf)
+                all_sheets = read_excel_polars(p, sheet_name=None)
+                df = pl.concat(list(all_sheets.values()), how="vertical")
         if df is not None:
             logger.debug(f"[spending] columns={df.columns}")
             dfs["spending"] = process_single_table(df, SPENDING_MAP, ["spending_net"])
@@ -525,7 +513,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     account_base = None
     if "account_base_file" in local_paths:
         p = local_paths["account_base_file"]
-        all_sheets = read_excel_as_pandas(p, sheet_name=None)
+        all_sheets = read_excel_polars(p, sheet_name=None)
         account_base = process_account_base(all_sheets)
     if not dfs:
         raise ValueError("No dataframes were processed. Check file inputs and names.")
@@ -538,8 +526,14 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     for k, v in dfs.items():
         if "NSC_CODE" in v.columns and "date" in v.columns:
             logger.debug(f"Extracting keys from '{k}'")
-            # Select key columns, drop any nulls, and convert to list of dicts for iteration
-            keys_from_df = v.select(["NSC_CODE", "date"]).drop_nulls().to_dicts()
+            # 严格过滤：只保留有值的NSC_CODE和有效date
+            keys_from_df = v.select(["NSC_CODE", "date"]).filter(
+                pl.col("NSC_CODE").is_not_null() & 
+                pl.col("NSC_CODE") != "" & 
+                pl.col("NSC_CODE") != "--" &
+                pl.col("NSC_CODE").str.strip_chars() != "" &
+                pl.col("date").is_not_null()
+            ).to_dicts()
             for row in keys_from_df:
                 # 3. Add tuple to set
                 unique_keys_set.add( (row['NSC_CODE'], row['date']) )
