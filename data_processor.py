@@ -368,6 +368,12 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         logger.debug(f"[MSG合并后] columns={df.columns}")
         group_cols = ["NSC_CODE", "date"]
         sum_cols = ["enter_private_count","private_open_count","private_leads_count"]
+
+        # Cast columns to be summed to numeric to avoid type errors
+        for col in sum_cols:
+            if col in df.columns:
+                df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False).fill_null(0))
+
         agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols if c in df.columns]
         if agg_exprs:
             df = df.group_by(group_cols).agg(agg_exprs)
