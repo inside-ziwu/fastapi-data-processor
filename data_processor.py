@@ -220,6 +220,12 @@ def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFra
 def ensure_date_column(pl_df: pl.DataFrame, colname: str = "date") -> pl.DataFrame:
     if colname not in pl_df.columns:
         return pl_df.with_columns(pl.lit(None, dtype=pl.Date).alias(colname))
+    
+    # 如果已经是date/datetime类型，直接转换
+    if pl_df[colname].dtype in [pl.Date, pl.Datetime]:
+        return pl_df.with_columns(pl.col(colname).cast(pl.Date).alias(colname))
+    
+    # 如果是字符串类型，尝试解析
     formats_to_try = [
         "%Y-%m-%d",
         "%Y/%m/%d %H:%M",
