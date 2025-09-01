@@ -209,48 +209,89 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
     logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
 
-    # 智能分页：任一上限触发（400条或1.5MB）
+    # 按NSC完整分组的分页逻辑
     total_records = len(results_data_standard)
     
-    # 计算1.5MB对应的记录数
-    if total_records > 0:
-        sample_size = min(10, total_records)
-        json_string_for_page_calc = json.dumps(results_data_standard[:sample_size], default=json_date_serializer)
-        avg_record_size = len(json_string_for_page_calc.encode('utf-8')) / sample_size
-        max_records_by_size = int((1.5 * 1024 * 1024) / avg_record_size) if avg_record_size > 0 else 400
+    if total_records == 0:
+        feishu_pages = []
     else:
-        max_records_by_size = 400
-    
-    # 取400条和1.5MB限制的较小值
-    page_size = min(400, max_records_by_size, total_records)
-    page_size = max(1, page_size)  # 确保至少1条
-    
-    total_pages = (total_records + page_size - 1) // page_size
-    
-    feishu_pages = []
-    for page_num in range(total_pages):
-        start_idx = page_num * page_size
-        end_idx = min(start_idx + page_size, total_records)
+        # 按NSC_CODE分组数据
+        df = pl.DataFrame(results_data_standard)
+        nsc_groups = {}
+        for record in results_data_standard:
+            nsc_code = record.get('NSC_CODE', 'unknown')
+            if nsc_code not in nsc_groups:
+                nsc_groups[nsc_code] = []
+            nsc_groups[nsc_code].append(record)
         
-        page_records = results_data_standard[start_idx:end_idx]
-        feishu_page_records = []
+        # 计算1.5MB对应的记录数
+        if total_records > 0:
+            sample_size = min(5, total_records)
+            sample_data = results_data_standard[:sample_size]
+            json_string_for_page_calc = json.dumps(sample_data, default=json_date_serializer)
+            avg_record_size = len(json_string_for_page_calc.encode('utf-8')) / sample_size
+            max_records_by_size = int((1.5 * 1024 * 1024) / avg_record_size) if avg_record_size > 0 else 400
+        else:
+            max_records_by_size = 400
         
-        for row_dict in page_records:
-            fields_str = json.dumps(row_dict, ensure_ascii=False, default=json_date_serializer)
-            feishu_page_records.append({"fields": fields_str})
+        max_records_per_page = min(400, max_records_by_size)
         
-        # 计算实际页大小
-        actual_page_size = len(json.dumps(page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
+        # 按NSC完整分组进行分页
+        feishu_pages = []
+        current_page_records = []
+        current_page_size = 0
+        page_num = 1
         
-        feishu_page = {
-            "page": page_num + 1,
-            "total_pages": total_pages,
-            "total_records": total_records,
-            "page_size": len(page_records),
-            "actual_size_mb": round(actual_page_size, 2),
-            "records": feishu_page_records
-        }
-        feishu_pages.append(feishu_page)
+        for nsc_code, records in nsc_groups.items():
+            # 计算这组NSC的大小
+            group_json = json.dumps(records, default=json_date_serializer)
+            group_size = len(group_json.encode('utf-8'))
+            group_count = len(records)
+            
+            # 检查是否超过限制，如果会超过则创建新页
+            if (current_page_size + group_size > 1.5 * 1024 * 1024 or 
+                len(current_page_records) + group_count > max_records_per_page):
+                
+                if current_page_records:  # 如果当前页有数据
+                    actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
+                    feishu_page_records = [{"fields": json.dumps(row, ensure_ascii=False, default=json_date_serializer)} for row in current_page_records]
+                    
+                    feishu_page = {
+                        "page": page_num,
+                        "total_pages": 0,  # 稍后更新
+                        "total_records": total_records,
+                        "page_size": len(current_page_records),
+                        "actual_size_mb": round(actual_page_size, 2),
+                        "records": feishu_page_records
+                    }
+                    feishu_pages.append(feishu_page)
+                    page_num += 1
+                    current_page_records = []
+                    current_page_size = 0
+            
+            # 添加当前NSC组到当前页
+            current_page_records.extend(records)
+            current_page_size += group_size
+        
+        # 处理最后一页
+        if current_page_records:
+            actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
+            feishu_page_records = [{"fields": json.dumps(row, ensure_ascii=False, default=json_date_serializer)} for row in current_page_records]
+            
+            feishu_page = {
+                "page": page_num,
+                "total_pages": len(feishu_pages) + 1,
+                "total_records": total_records,
+                "page_size": len(current_page_records),
+                "actual_size_mb": round(actual_page_size, 2),
+                "records": feishu_page_records
+            }
+            feishu_pages.append(feishu_page)
+        
+        # 更新总页数
+        total_pages = len(feishu_pages)
+        for page in feishu_pages:
+            page["total_pages"] = total_pages
 
     final_response = {
         "status": "ok",
