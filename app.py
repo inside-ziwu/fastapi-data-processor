@@ -305,7 +305,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         },
         "feishu_format": {
             "pages": len(feishu_pages),
-            "page_size": page_size,
+            "page_size": len(feishu_pages[0]["records"]) if feishu_pages else 0,
             "all_pages": feishu_pages
         },
         "results_preview": results_data_standard[:3]
