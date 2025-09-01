@@ -332,8 +332,16 @@ def process_account_base(all_sheets):
     level_sheet_keys = ["NSC_id", "第二期层级"]
     store_sheet_keys = ["NSC Code", "抖音id"]
 
-    for sheetname, df_sheet in all_sheets.items():
-        df_cols = df_sheet.columns
+    # 处理dict或DataFrame的情况
+    if isinstance(all_sheets, dict):
+        # 多sheet情况（dict格式）
+        sheets_data = all_sheets.items()
+    else:
+        # 单sheet情况（DataFrame格式）
+        sheets_data = [("sheet1", all_sheets)]
+
+    for sheetname, df_sheet in sheets_data:
+        df_cols = list(df_sheet.columns) if hasattr(df_sheet, 'columns') else []
         
         # Check if it's the level sheet
         if all(key in df_cols for key in level_sheet_keys):
