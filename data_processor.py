@@ -459,16 +459,23 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             # 先使用MSG_MAP进行列映射
             df = rename_columns_loose(df, MSG_MAP)
             
-            # 将sheetname作为日期列（每个sheet名就是日期）
+            # MSG文件：每个sheet的title就是日期，直接使用sheetname作为日期
             date_str = str(sheetname)
             try:
-                # 直接解析为日期
                 from datetime import datetime
-                date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                
+                # 处理不同日期格式
+                if "-" in date_str:
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                elif len(date_str) == 8 and date_str.isdigit():
+                    date_obj = datetime.strptime(date_str, "%Y%m%d").date()
+                else:
+                    raise ValueError
+                    
                 df = df.with_columns(pl.lit(date_obj).alias("date"))
-                logger.debug(f"[MSG日期] 使用sheetname日期: {date_str}")
+                logger.debug(f"[MSG日期] 使用sheet标题作为日期: {date_obj}")
             except ValueError:
-                logger.error(f"[MSG日期] sheetname '{date_str}' 不是有效日期格式")
+                logger.error(f"[MSG日期] sheet标题 '{date_str}' 不是有效日期格式")
                 df = df.with_columns(pl.lit(None, dtype=pl.Date).alias("date"))
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
             df = normalize_nsc_col(df, "NSC_CODE")
