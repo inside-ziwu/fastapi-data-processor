@@ -69,20 +69,26 @@ def split_chinese_english(s: str):
     return parts
 
 def field_match(src: str, col: str) -> bool:
-    src_parts = split_chinese_english(src)
-    col_parts = split_chinese_english(col)
+    # Normalize the entire strings first to handle spaces and symbol variations globally.
+    src_norm = normalize_symbol(src)
+    col_norm = normalize_symbol(col)
+
+    # After normalization, split them into parts.
+    src_parts = split_chinese_english(src_norm)
+    col_parts = split_chinese_english(col_norm)
+
     logger.debug(f"field_match: src='{src}', col='{col}', src_parts={src_parts}, col_parts={col_parts}")
+
     if len(src_parts) != len(col_parts):
         return False
+
     for s, c in zip(src_parts, col_parts):
-        if re.search(r'[\u4e00-\u9fff]', s):  # 中文片段
-            if s != c:
-                logger.debug(f"中文不匹配: '{s}' != '{c}'")
-                return False
-        else:  # 英文/符号片段
-            if normalize_symbol(s).lower() != normalize_symbol(c).lower():
-                logger.debug(f"英文/符号不匹配: '{normalize_symbol(s).lower()}' != '{normalize_symbol(c).lower()}'")
-                return False
+        # For non-Chinese parts, the comparison should be case-insensitive.
+        # For Chinese parts, it remains a direct comparison.
+        if s.lower() != c.lower():
+            logger.debug(f"片段不匹配: '{s.lower()}' != '{c.lower()}'")
+            return False
+            
     return True
 
 def rename_columns_loose(pl_df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
