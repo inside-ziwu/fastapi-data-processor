@@ -282,7 +282,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         df = None
         if p.lower().endswith(('.csv', '.txt')):
             df = read_csv_polars(p)
-        elif p.lower().endswith(('.xlsx', '.xls')):
+        elif '.xlsx' in p.lower() or '.xls' in p.lower():
             pdf = read_excel_as_pandas(p, sheet_name=0)
             df = df_pandas_to_polars(pdf)
         if df is not None:
@@ -295,7 +295,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         df = None
         if p.lower().endswith(('.csv', '.txt')):
             df = read_csv_polars(p)
-        elif p.lower().endswith(('.xlsx', '.xls')):
+        elif '.xlsx' in p.lower() or '.xls' in p.lower():
             pdf = read_excel_as_pandas(p, sheet_name=0)
             df = df_pandas_to_polars(pdf)
         if df is not None:
@@ -392,7 +392,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         df = None
         if p.lower().endswith(('.csv', '.txt')):
             df = read_csv_polars(p)
-        elif p.lower().endswith(('.xlsx', '.xls')):
+        elif '.xlsx' in p.lower() or '.xls' in p.lower():
             pdf = read_excel_as_pandas(p, sheet_name=0)
             df = df_pandas_to_polars(pdf)
         if df is not None:
@@ -405,7 +405,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         df = None
         if p.lower().endswith(('.csv', '.txt')):
             df = read_csv_polars(p)
-        elif p.lower().endswith(('.xlsx', '.xls')):
+        elif '.xlsx' in p.lower() or '.xls' in p.lower():
             pdf = read_excel_as_pandas(p, sheet_name=0)
             df = df_pandas_to_polars(pdf)
         if df is not None:
@@ -433,7 +433,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         df = None
         if p.lower().endswith(('.csv', '.txt')):
             df = read_csv_polars(p)
-        elif p.lower().endswith(('.xlsx', '.xls')):
+        elif '.xlsx' in p.lower() or '.xls' in p.lower():
             sheet_names = None
             if spending_sheet_names:
                 sheet_names = [s.strip() for s in spending_sheet_names.split(",") if s.strip()]
