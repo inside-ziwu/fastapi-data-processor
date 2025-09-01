@@ -459,14 +459,28 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             # 先使用MSG_MAP进行列映射
             df = rename_columns_loose(df, MSG_MAP)
             
-            # 如果date列不存在，使用sheetname作为日期（直接转换为Date类型）
-            if "date" not in df.columns:
+            # 将sheetname作为日期（每个sheet代表一个日期）
+            import re
+            date_str = str(sheetname)
+            
+            # 尝试匹配 YYYY-MM-DD 格式
+            date_match = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', date_str)
+            if date_match:
+                year, month, day = date_match.groups()
+                formatted_date = f"{year}-{int(month):02d}-{int(day):02d}"
+                date_value = pl.lit(formatted_date).str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
+                df = df.with_columns(date_value.alias("date"))
+                logger.debug(f"[MSG日期] 从sheetname '{sheetname}' 提取日期: {formatted_date}")
+            else:
+                # 尝试其他格式
                 try:
-                    date_value = pl.lit(sheetname).str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
+                    date_value = pl.lit(date_str).str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
                     df = df.with_columns(date_value.alias("date"))
+                    logger.debug(f"[MSG日期] 直接解析sheetname: {date_str}")
                 except:
-                    # 如果解析失败，使用当前日期作为fallback
+                    # 作为最后手段，使用当前日期
                     df = df.with_columns(pl.lit(None, dtype=pl.Date).alias("date"))
+                    logger.warning(f"[MSG日期] 无法从sheetname '{sheetname}' 提取日期")
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
             df = normalize_nsc_col(df, "NSC_CODE")
             df = ensure_date_column(df, "date")
