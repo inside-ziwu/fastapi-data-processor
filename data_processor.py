@@ -459,28 +459,17 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             # 先使用MSG_MAP进行列映射
             df = rename_columns_loose(df, MSG_MAP)
             
-            # 将sheetname作为日期（每个sheet代表一个日期）
-            import re
+            # 将sheetname作为日期列（每个sheet名就是日期）
             date_str = str(sheetname)
-            
-            # 尝试匹配 YYYY-MM-DD 格式
-            date_match = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', date_str)
-            if date_match:
-                year, month, day = date_match.groups()
-                formatted_date = f"{year}-{int(month):02d}-{int(day):02d}"
-                date_value = pl.lit(formatted_date).str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
-                df = df.with_columns(date_value.alias("date"))
-                logger.debug(f"[MSG日期] 从sheetname '{sheetname}' 提取日期: {formatted_date}")
-            else:
-                # 尝试其他格式
-                try:
-                    date_value = pl.lit(date_str).str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
-                    df = df.with_columns(date_value.alias("date"))
-                    logger.debug(f"[MSG日期] 直接解析sheetname: {date_str}")
-                except:
-                    # 作为最后手段，使用当前日期
-                    df = df.with_columns(pl.lit(None, dtype=pl.Date).alias("date"))
-                    logger.warning(f"[MSG日期] 无法从sheetname '{sheetname}' 提取日期")
+            try:
+                # 直接解析为日期
+                from datetime import datetime
+                date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                df = df.with_columns(pl.lit(date_obj).alias("date"))
+                logger.debug(f"[MSG日期] 使用sheetname日期: {date_str}")
+            except ValueError:
+                logger.error(f"[MSG日期] sheetname '{date_str}' 不是有效日期格式")
+                df = df.with_columns(pl.lit(None, dtype=pl.Date).alias("date"))
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
             df = normalize_nsc_col(df, "NSC_CODE")
             df = ensure_date_column(df, "date")
