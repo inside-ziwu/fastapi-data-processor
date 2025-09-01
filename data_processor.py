@@ -237,7 +237,7 @@ def process_dr_table(df):
         (pl.col("leads_type") == "广告") &
         (pl.col("mkt_second_channel_name") == "抖音车云店_BMW_总部BDT_LS直发")
     ).group_by(["NSC_CODE", "date"]).count().rename({"count": "区域付费线索"})
-    dr_local = df.filter(pl.col("send2dealer_id") == pl.col("NSC_CODE")).group_by(["NSC_CODE", "date"]).count().rename({"count": "本地线索量"})
+    dr_local = df.filter(pl.col("send2dealer_id").cast(pl.Utf8) == pl.col("NSC_CODE")).group_by(["NSC_CODE", "date"]).count().rename({"count": "本地线索量"})
     dr_all = dr_natural.join(dr_ad, on=["NSC_CODE", "date"], how="outer") \
                        .join(dr_cyd, on=["NSC_CODE", "date"], how="outer") \
                        .join(dr_area, on=["NSC_CODE", "date"], how="outer") \
