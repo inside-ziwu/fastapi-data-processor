@@ -541,8 +541,8 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     account_base = None
     if "account_base_file" in local_paths:
         p = local_paths["account_base_file"]
-        all_sheets = read_excel_polars(p, sheet_name=None)
-        account_base = process_account_base(all_sheets)
+        df_base = read_excel_polars(p, sheet_name=None)
+        account_base = process_account_base(df_base)
     if not dfs:
         raise ValueError("No dataframes were processed. Check file inputs and names.")
     logger.info("Building base keys using pure Python to bypass Polars concat bug.")
