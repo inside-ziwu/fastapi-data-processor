@@ -454,8 +454,16 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 )
                 logger.error(err_msg)
                 raise ValueError(err_msg)
-            df = df.with_columns(pl.lit(sheetname).alias("日期"))
-            # Use MSG_MAP for column mapping
+            # 检查是否有日期列，如果没有则创建默认日期
+            if "日期" in df.columns:
+                # 使用原有的日期列
+                pass
+            else:
+                # 创建默认日期（当前日期）
+                logger.warning("[MSG] 未找到日期列，使用当前日期作为默认日期")
+                df = df.with_columns(pl.lit(pl.today()).alias("日期"))
+            
+            # 使用MSG_MAP进行列映射
             df = rename_columns_loose(df, MSG_MAP)
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
             df = normalize_nsc_col(df, "NSC_CODE")
