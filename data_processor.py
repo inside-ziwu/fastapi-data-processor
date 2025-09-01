@@ -235,6 +235,7 @@ def ensure_date_column(pl_df: pl.DataFrame, colname: str = "date") -> pl.DataFra
         return pl_df.with_columns(pl.col(colname).cast(pl.Date).alias(colname))
     
     # 如果是字符串类型，尝试解析
+    logger.debug(f"[日期调试] 字符串值示例: {pl_df[colname].head(3)}")
     formats_to_try = [
         "%Y-%m-%d",
         "%Y/%m/%d %H:%M",
@@ -249,6 +250,7 @@ def ensure_date_column(pl_df: pl.DataFrame, colname: str = "date") -> pl.DataFra
         .cast(pl.Date)
         .alias(colname)
     )
+    logger.debug(f"[日期调试] 转换后: {pl_df[colname].head(3)}")
     return pl_df
 
 def try_cast_numeric(pl_df: pl.DataFrame, cols):
@@ -457,9 +459,14 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             # 先使用MSG_MAP进行列映射
             df = rename_columns_loose(df, MSG_MAP)
             
-            # 如果date列不存在，使用sheetname作为日期
+            # 如果date列不存在，使用sheetname作为日期（直接转换为Date类型）
             if "date" not in df.columns:
-                df = df.with_columns(pl.lit(sheetname).alias("date"))
+                try:
+                    date_value = pl.lit(sheetname).str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
+                    df = df.with_columns(date_value.alias("date"))
+                except:
+                    # 如果解析失败，使用当前日期作为fallback
+                    df = df.with_columns(pl.lit(None, dtype=pl.Date).alias("date"))
             logger.debug(f"[MSG调试] sheet={sheetname}, polars columns={df.columns}")
             df = normalize_nsc_col(df, "NSC_CODE")
             df = ensure_date_column(df, "date")
