@@ -270,9 +270,18 @@ def process_single_table(df, mapping, sum_cols=None):
     return df
 
 def process_dr_table(df):
+    logger.debug(f"[DR PROBE] Initial columns: {df.columns}")
+    logger.debug(f"[DR PROBE] Initial head:\n{df.head()}")
     df = rename_columns_loose(df, DR_MAP)
+    logger.debug(f"[DR PROBE] Columns after rename: {df.columns}")
     df = normalize_nsc_col(df, "NSC_CODE")
     df = ensure_date_column(df, "date")
+    
+    if "leads_type" in df.columns:
+        logger.debug(f"[DR PROBE] Unique 'leads_type' values: {df.get_column('leads_type').unique().to_list()}")
+    if "mkt_second_channel_name" in df.columns:
+        logger.debug(f"[DR PROBE] Unique 'mkt_second_channel_name' values: {df.get_column('mkt_second_channel_name').unique().to_list()}")
+
     dr_all = df.group_by("NSC_CODE", "date").agg(
         pl.col("leads_type").filter(pl.col("leads_type") == "自然").count().alias("natural_leads"),
         pl.col("leads_type").filter(pl.col("leads_type") == "广告").count().alias("ad_leads"),
@@ -288,6 +297,7 @@ def process_dr_table(df):
             pl.col("send2dealer_id").cast(pl.Utf8) == pl.col("NSC_CODE")
         ).count().alias("local_leads")
     )
+    logger.debug(f"[DR PROBE] Final aggregated DR data:\n{dr_all.head()}")
     return dr_all
 
 def process_account_base(all_sheets):
@@ -295,10 +305,19 @@ def process_account_base(all_sheets):
     for sheetname, pdf in all_sheets.items():
         df = df_pandas_to_polars(pdf)
         df = rename_columns_loose(df, ACCOUNT_BASE_MAP)
+        logger.debug(f"[ACC_BASE PROBE] Sheet '{sheetname}', columns after rename: {df.columns}")
         if "level" in df.columns and "NSC_CODE" in df.columns:
             level_df = df.select(["NSC_CODE", "level"])
         if "store_name" in df.columns and "NSC_CODE" in df.columns:
             store_name_df = df.select(["NSC_CODE", "store_name"])
+            
+    logger.debug(f"[ACC_BASE PROBE] level_df is None: {level_df is None}")
+    if level_df is not None:
+        logger.debug(f"[ACC_BASE PROBE] level_df head:\n{level_df.head()}")
+    logger.debug(f"[ACC_BASE PROBE] store_name_df is None: {store_name_df is None}")
+    if store_name_df is not None:
+        logger.debug(f"[ACC_BASE PROBE] store_name_df head:\n{store_name_df.head()}")
+
     if level_df is not None or store_name_df is not None:
         if level_df is None:
             merged = store_name_df.with_columns(pl.lit(None).alias("level"))
@@ -306,6 +325,8 @@ def process_account_base(all_sheets):
             merged = level_df.with_columns(pl.lit(None).alias("store_name"))
         else:
             merged = level_df.join(store_name_df, on="NSC_CODE", how="outer")
+        
+        logger.debug(f"[ACC_BASE PROBE] Final merged account_base data:\n{merged.head()}")
         return merged
     return None
 
@@ -414,8 +435,10 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             pdf = read_excel_as_pandas(p, sheet_name=0)
             df = df_pandas_to_polars(pdf)
         if df is not None:
-            logger.debug(f"[account_bi] columns={df.columns}")
+            logger.debug(f"[ACC_BI PROBE] Initial columns: {df.columns}")
+            logger.debug(f"[ACC_BI PROBE] Initial head:\n{df.head()}")
             dfs["account_bi"] = process_single_table(df, ACCOUNT_BI_MAP, ["live_leads","short_video_plays"])
+            logger.debug(f"[ACC_BI PROBE] Processed account_bi data:\n{dfs['account_bi'].head()}")
     # 5. leads_file
     if "leads_file" in local_paths:
         p = local_paths["leads_file"]
