@@ -356,7 +356,16 @@ def process_account_base(all_sheets):
         sheets_data = [("sheet1", all_sheets)]
 
     for sheetname, df_sheet in sheets_data:
-        df_sheet = pl.from_pandas(df_sheet) if hasattr(df_sheet, 'dtypes') else df_sheet
+        # 处理DataFrame类型：可能是pandas或polars
+        if hasattr(df_sheet, 'dtypes') and str(type(df_sheet)).find('pandas') != -1:
+            # pandas DataFrame
+            df_sheet = pl.from_pandas(df_sheet)
+        elif not hasattr(df_sheet, 'schema'):
+            # 已经是polars DataFrame或需要转换
+            try:
+                df_sheet = pl.DataFrame(df_sheet)
+            except:
+                pass  # 已经是polars DataFrame
         df_cols = list(df_sheet.columns) if hasattr(df_sheet, 'columns') else []
         
         # Use loose matching for column names
@@ -465,7 +474,17 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             logger.error("[MSG] per_sheet_frames 为空，未生成 msg df")
             raise ValueError("[MSG] per_sheet_frames 为空，未生成 msg df")
         df = pl.concat(per_sheet_frames, how="vertical")
-        logger.debug(f"[MSG合并后] columns={df.columns}")
+        logger.info(f"[MSG合并完成] 总行数: {df.height}, 总列数: {len(df.columns)}")
+        logger.info(f"[MSG合并后] 列名: {df.columns}")
+        if df.height > 0:
+            logger.info(f"[MSG数据预览]\n{df.head(5)}")
+            # 显示数值统计
+            numeric_cols = ["enter_private_count","private_open_count","private_leads_count"]
+            for col in numeric_cols:
+                if col in df.columns:
+                    total = df[col].sum()
+                    non_null = df[col].is_not_null().sum()
+                    logger.info(f"[MSG统计] {col}: 总和={total}, 非空值={non_null}, 空值={(df.height - non_null)}")
         group_cols = ["NSC_CODE", "date"]
         sum_cols = ["enter_private_count","private_open_count","private_leads_count"]
         for col in sum_cols:
@@ -476,6 +495,15 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             df = df.group_by(group_cols).agg(agg_exprs)
         else:
             df = df.unique(subset=group_cols)
+        logger.info(f"[MSG聚合完成] 聚合后行数: {df.height}, 聚合后列数: {len(df.columns)}")
+        logger.info(f"[MSG聚合后] 列名: {df.columns}")
+        if df.height > 0:
+            logger.info(f"[MSG聚合数据预览]\n{df.head(5)}")
+            # 显示聚合后统计
+            for col in sum_cols:
+                if col in df.columns:
+                    total = df[col].sum()
+                    logger.info(f"[MSG聚合统计] {col}: 总和={total}")
         logger.debug(f"[MSG聚合后] columns={df.columns}")
         if "NSC_CODE" not in df.columns:
             logger.error(f"[MSG聚合后] 没有 NSC_CODE，实际列: {df.columns}")
