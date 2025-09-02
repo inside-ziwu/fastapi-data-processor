@@ -396,7 +396,7 @@ def process_account_base(all_sheets):
     logger.debug(f"[ACC_BASE PROBE] Final merged account_base data:\n{merged.head() if merged is not None else 'None'}")
     return merged
 
-def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optional[str] = None) -> pl.DataFrame:
+def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optional[str] = None, dimension: str = "NSC_CODE") -> pl.DataFrame:
     logger.info(f"Entering process_all_files with {len(local_paths)} files")
     dfs = {}
     # 1. video_excel_file
@@ -756,10 +756,28 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         'natural_leads', 'ad_leads', 'paid_leads', 'area_leads', 'local_leads', 'spending_net'
     ]
     agg_cols_exist = [c for c in agg_cols if c in base.columns]
-    id_cols = ["NSC_CODE", "level", "store_name"]
-    id_cols_exist = [c for c in id_cols if c in base.columns]
+    # 根据dimension参数确定聚合维度
+    valid_dimensions = ["NSC_CODE", "level"]
+    if dimension not in valid_dimensions:
+        logger.warning(f"未知维度: {dimension}，使用默认NSC_CODE")
+        dimension = "NSC_CODE"
+    
+    logger.info(f"使用聚合维度: {dimension}")
+    
+    # 动态构建聚合维度列表
+    group_by_cols = [dimension]
+    if dimension == "NSC_CODE":
+        # NSC_CODE维度时，保留level和store_name作为额外信息
+        group_by_cols.extend(["level", "store_name"])
+    elif dimension == "level":
+        # level维度时，仅按level聚合
+        pass
+    
+    # 过滤掉不存在的列
+    group_by_cols = [c for c in group_by_cols if c in base.columns]
+    
     summary_df = base.pivot(
-        index=id_cols_exist,
+        index=group_by_cols,
         columns="period",
         values=agg_cols_exist,
         aggregate_function="sum"
@@ -902,7 +920,36 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 .fill_nan(None)
                 .alias(col_name)
             )
-    # 输出中英文对照表
+    # 创建反向映射（英文->中文）
+    EN_TO_CN_MAP = {v: k for k, v in FIELD_EN_MAP.items()}
+    
+    # 添加level和store_name的映射
+    EN_TO_CN_MAP.update({
+        "NSC_CODE": "主机厂经销商ID",
+        "level": "层级",
+        "store_name": "门店名"
+    })
+    
+    # 创建变量类型映射
+    TYPE_MAPPING = {}
+    for col in final_df.columns:
+        if col in EN_TO_CN_MAP:
+            cn_name = EN_TO_CN_MAP[col]
+            dtype = str(final_df[col].dtype)
+            if "float" in dtype:
+                type_desc = "数值型"
+            elif "int" in dtype:
+                type_desc = "整数型"
+            elif "str" in dtype or "utf8" in dtype:
+                type_desc = "文本型"
+            elif "date" in dtype:
+                type_desc = "日期型"
+            else:
+                type_desc = "其他"
+            TYPE_MAPPING[cn_name] = type_desc
+    
+    # 输出中英文对照表和类型说明
     print("字段中英文对照表如下：")
     print(json.dumps(FIELD_EN_MAP, ensure_ascii=False, indent=2))
-    return final_df
+    
+    return final_df, EN_TO_CN_MAP, TYPE_MAPPING
