@@ -6,7 +6,9 @@ import time
 import logging
 from typing import Optional, Dict
 from fastapi import FastAPI, Body, HTTPException, Header, Response, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import requests
 from datetime import datetime, date
 
@@ -360,8 +362,13 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     final_response = {
         "code": 200,
         "msg": f"处理完成：{num_rows}行数据，{round(data_size_mb, 2)}MB，{len(feishu_pages)}页",
-        "standard_json_url": url_standard,
-        "feishu_data": feishu_records
+        "data": {
+            "records": feishu_records,  # 飞书格式：外层records，里层fields
+            "standard_json_url": url_standard,
+            "total_records": num_rows,
+            "data_size_mb": round(data_size_mb, 2),
+            "total_pages": len(feishu_pages)
+        }
     }
     
     # 如果save_to_disk为false，才清理临时目录
@@ -376,18 +383,70 @@ from fastapi.responses import FileResponse
 
 @app.get("/health")
 def health():
-    return {"status":"ok","time": datetime.utcnow().isoformat()}
+    return {
+        "code": 200,
+        "msg": "服务运行正常",
+        "data": {
+            "status": "ok",
+            "time": datetime.utcnow().isoformat()
+        }
+    }
+
+# 全局异常处理器，确保所有错误响应符合Coze插件格式
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "code": exc.status_code,
+            "msg": str(exc.detail),
+            "data": {}
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": 500,
+            "msg": f"服务器内部错误: {str(exc)}",
+            "data": {}
+        }
+    )
 
 @app.get("/get-result-file")
 async def get_result_file(file_path: str, x_api_key: Optional[str] = Header(None)):
     if not auth_ok(x_api_key):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        return JSONResponse(
+            status_code=401,
+            content={
+                "code": 401,
+                "msg": "Unauthorized",
+                "data": {}
+            }
+        )
     
     # Security check: ensure the path is within the allowed directory
     if not os.path.abspath(file_path).startswith(os.path.abspath(TMP_ROOT)):
-        raise HTTPException(status_code=403, detail="Access denied.")
+        return JSONResponse(
+            status_code=403,
+            content={
+                "code": 403,
+                "msg": "Access denied",
+                "data": {}
+            }
+        )
 
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found.")
+        return JSONResponse(
+            status_code=404,
+            content={
+                "code": 404,
+                "msg": "File not found",
+                "data": {}
+            }
+        )
 
     return FileResponse(path=file_path, media_type='application/octet-stream', filename=os.path.basename(file_path))
