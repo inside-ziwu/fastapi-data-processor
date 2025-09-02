@@ -326,7 +326,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             "field_mapping": en_to_cn_map,
             "field_types": type_mapping
         },
-        "results_preview": results_data_chinese[:3]
+        "results_preview": results_data_standard[:3]
     }
     
     # 如果save_to_disk为false，才清理临时目录
