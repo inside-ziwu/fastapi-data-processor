@@ -154,26 +154,50 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 inf_count += result_df[col_name].is_infinite().sum()
         cleaned_count = nan_count + inf_count
 
-        # 3. Clean the dataframe
+        # 3. Clean the dataframe - 彻底清理所有null值
         for col_name in result_df.columns:
-            if result_df[col_name].dtype in [pl.Float32, pl.Float64]:
+            col_type = result_df[col_name].dtype
+            if col_type in [pl.Float32, pl.Float64]:
+                # 处理浮点数：NaN, Inf, -Inf → 0
                 result_df = result_df.with_columns(
-                    pl.when(pl.col(col_name).is_infinite())
-                    .then(None)
-                    .otherwise(pl.col(col_name))
-                    .fill_nan(None)
+                    pl.when(pl.col(col_name).is_nan() | pl.col(col_name).is_infinite() | pl.col(col_name).is_null())
+                    .then(0.0)
+                    .otherwise(pl.col(col_name).round(6))
                     .alias(col_name)
+                )
+            elif col_type in [pl.Int32, pl.Int64]:
+                # 处理整数null → 0
+                result_df = result_df.with_columns(
+                    pl.col(col_name).fill_null(0).alias(col_name)
+                )
+            elif col_type == pl.Utf8:
+                # 处理字符串null → 空字符串
+                result_df = result_df.with_columns(
+                    pl.col(col_name).fill_null("").alias(col_name)
+                )
+            else:
+                # 其他类型统一处理
+                result_df = result_df.with_columns(
+                    pl.col(col_name).fill_null(0).alias(col_name)
                 )
 
         # 4. Create standard and Feishu data formats
         results_data_standard = result_df.to_dicts()  # 标准JSON保持英文
         
-        # 飞书格式使用中文字段名
+        # 飞书格式使用中文字段名 - 确保无null值
         results_data_chinese = []
         for row in results_data_standard:
             chinese_row = {}
             for en_key, value in row.items():
                 cn_key = en_to_cn_map.get(en_key, en_key)
+                # 确保value不是None/null
+                if value is None:
+                    if any(keyword in cn_key for keyword in ['率', '占比']):
+                        value = 0.0
+                    elif any(keyword in cn_key for keyword in ['量', '数', '时长', '消耗', 'CPL', '场观', '曝光', '点击']):
+                        value = 0
+                    else:
+                        value = 0
                 chinese_row[cn_key] = value
             results_data_chinese.append(chinese_row)
         
@@ -314,6 +338,19 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         total_pages = len(feishu_pages)
         for page in feishu_pages:
             page["total_pages"] = total_pages
+            
+        # 最终检查：确保所有飞书记录中无null值
+        for page in feishu_pages:
+            for record in page["records"]:
+                for key, value in record["fields"].items():
+                    if value is None:
+                        # 基于字段名确定默认值
+                        if any(keyword in key for keyword in ['率', '占比']):
+                            record["fields"][key] = 0.0
+                        elif any(keyword in key for keyword in ['量', '数', '时长', '消耗', 'CPL', '场观', '曝光', '点击', '线索']):
+                            record["fields"][key] = 0
+                        else:
+                            record["fields"][key] = 0
 
     feishu_records = []
     for page in feishu_pages:
