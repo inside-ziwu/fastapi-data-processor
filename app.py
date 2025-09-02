@@ -245,9 +245,10 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         
         # 飞书格式使用中文字段名 - 确保无null值
         results_data_chinese = []
-        for row in results_data_standard:
+        for record in results_data_standard:
+            fields = record.get("fields", {})
             chinese_row = {}
-            for en_key, value in row.items():
+            for en_key, value in fields.items():
                 cn_key = en_to_cn_map.get(en_key, en_key)
                 # 确保value不是None/null
                 if value is None:
@@ -258,11 +259,9 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                     else:
                         value = 0
                 chinese_row[cn_key] = value
-            results_data_chinese.append(chinese_row)
+            results_data_chinese.append({"fields": chinese_row})
         
-        feishu_records = []
-        for chinese_row in results_data_chinese:
-            feishu_records.append({"fields": chinese_row})
+        feishu_records = results_data_chinese  # 已经是正确格式
         feishu_output = {
             "records": feishu_records,
             "field_mapping": en_to_cn_map,
@@ -334,7 +333,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         # 边界情况：如果数据小于400条且小于1.8MB，不分割
         if total_records <= 400 and full_size_mb <= 1.8:
             # 不分页，完整数据作为一页
-            feishu_page_records = [{"fields": row} for row in results_data_chinese]
+            feishu_page_records = results_data_chinese  # 已经是正确格式
             feishu_page = {
                 "page": 1,
                 "total_pages": 1,
@@ -367,7 +366,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                     
                     if current_page_records:
                         actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
-                        feishu_page_records = [{"fields": row} for row in current_page_records]
+                        feishu_page_records = current_page_records  # 已经是正确格式
                         
                         feishu_page = {
                             "page": page_num,
@@ -389,7 +388,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             # 处理最后一页
             if current_page_records:
                 actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
-                feishu_page_records = [{"fields": row} for row in current_page_records]
+                feishu_page_records = current_page_records  # 已经是正确格式
                 
                 feishu_page = {
                     "page": page_num,
