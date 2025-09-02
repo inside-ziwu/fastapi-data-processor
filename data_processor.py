@@ -827,12 +827,14 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     ]
     agg_cols_exist = [c for c in agg_cols if c in base.columns]
     # 根据dimension参数确定聚合维度
-    valid_dimensions = ["NSC_CODE", "level"]
+    valid_dimensions = ["NSC_CODE", "层级"]
     if dimension not in valid_dimensions:
         logger.warning(f"未知维度: {dimension}，使用默认NSC_CODE")
         dimension = "NSC_CODE"
     
     logger.info(f"使用聚合维度: {dimension}")
+    logger.info(f"实际group_by_cols: {group_by_cols}")
+    logger.info(f"base列: {base.columns[:5]}")
     
     # 动态构建聚合维度列表 - 使用实际字段名
     field_mapping = {
