@@ -356,17 +356,3 @@ async def get_result_file(file_path: str, x_api_key: Optional[str] = Header(None
         raise HTTPException(status_code=404, detail="File not found.")
 
     return FileResponse(path=file_path, media_type='application/octet-stream', filename=os.path.basename(file_path))
-
-@app.get("/get-result-file")
-async def get_result_file(file_path: str, x_api_key: Optional[str] = Header(None)):
-    if not auth_ok(x_api_key):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    
-    # Security check: ensure the path is within the allowed directory
-    if not os.path.abspath(file_path).startswith(os.path.abspath(TMP_ROOT)):
-        raise HTTPException(status_code=403, detail="Access denied.")
-
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found.")
-
-    return FileResponse(path=file_path, media_type='application/octet-stream', filename=os.path.basename(file_path))
