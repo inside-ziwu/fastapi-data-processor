@@ -356,15 +356,11 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     for page in feishu_pages:
         feishu_records.extend(page["records"])
     
+    # 精简输出满足Coze插件要求
     final_response = {
         "standard_json_url": url_standard,
-        "feishu_records": feishu_records,
-        "meta": {
-            "total_size_mb": round(data_size_mb, 2),
-            "total_rows": num_rows,
-            "total_pages": len(feishu_pages),
-            "page_size": len(feishu_pages[0]["records"]) if feishu_pages else 0
-        }
+        "feishu_data": feishu_records,
+        "msg": f"处理完成：{num_rows}行数据，{round(data_size_mb, 2)}MB，{len(feishu_pages)}页"
     }
     
     # 如果save_to_disk为false，才清理临时目录
