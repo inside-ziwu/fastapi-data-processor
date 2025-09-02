@@ -191,8 +191,18 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
             # PROFILING: Before Core Processing
             core_processing_start_time = time.time()
+            
+            loop = asyncio.get_running_loop()
+            
             try:
-                result_df, en_to_cn_map, type_mapping = process_all_files(local_paths, spending_sheet_names=spending_sheet_names, dimension=dimension)
+                # Run the synchronous, CPU-bound function in a thread pool
+                result_df, en_to_cn_map, type_mapping = await loop.run_in_executor(
+                    None,  # Use the default executor
+                    process_all_files,
+                    local_paths,
+                    spending_sheet_names,
+                    dimension
+                )
             except Exception as e:
                 logger.error(f"Core processing failed: {str(e)}", exc_info=True)
                 raise
