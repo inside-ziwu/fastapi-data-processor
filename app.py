@@ -308,18 +308,18 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
     logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
 
-    # 按维度完整分组的分页逻辑
+    # 飞书格式分页逻辑 - 边界情况不分割完整数据
     total_records = len(results_data_chinese)
     
     if total_records == 0:
         feishu_pages = []
     else:
         # 按维度分组数据
-        # 修正：确保使用正确的中文键
         if dimension == "level":
             dimension_key = "层级"
-        else:  # 默认 NSC_CODE
+        else:
             dimension_key = "主机厂经销商ID"
+        
         groups = {}
         for record in results_data_chinese:
             key = record.get(dimension_key, 'unknown')
@@ -327,74 +327,85 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 groups[key] = []
             groups[key].append(record)
         
-        # 计算1.5MB对应的记录数
-        if total_records > 0:
-            sample_size = min(5, total_records)
-            sample_data = results_data_standard[:sample_size]
-            json_string_for_page_calc = json.dumps(sample_data, default=json_date_serializer)
-            avg_record_size = len(json_string_for_page_calc.encode('utf-8')) / sample_size
-            max_records_by_size = int((1.5 * 1024 * 1024) / avg_record_size) if avg_record_size > 0 else 400
-        else:
-            max_records_by_size = 400
+        # 计算实际数据大小
+        full_json = json.dumps(results_data_chinese, default=json_date_serializer)
+        full_size_bytes = len(full_json.encode('utf-8'))
+        full_size_mb = full_size_bytes / (1024 * 1024)
         
-        max_records_per_page = min(400, max_records_by_size)
-        
-        # 按NSC完整分组进行分页
-        feishu_pages = []
-        current_page_records = []
-        current_page_size = 0
-        page_num = 1
-        
-        for key, records in groups.items():
-            # 计算这组NSC的大小
-            group_json = json.dumps(records, default=json_date_serializer)
-            group_size = len(group_json.encode('utf-8'))
-            group_count = len(records)
-            
-            # 检查是否超过限制，如果会超过则创建新页
-            if (current_page_size + group_size > 1.5 * 1024 * 1024 or 
-                len(current_page_records) + group_count > max_records_per_page):
-                
-                if current_page_records:  # 如果当前页有数据
-                    actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
-                    feishu_page_records = [{"fields": row} for row in current_page_records]
-                    
-                    feishu_page = {
-                        "page": page_num,
-                        "total_pages": 0,  # 稍后更新
-                        "total_records": total_records,
-                        "page_size": len(current_page_records),
-                        "actual_size_mb": round(actual_page_size, 2),
-                        "records": feishu_page_records
-                    }
-                    feishu_pages.append(feishu_page)
-                    page_num += 1
-                    current_page_records = []
-                    current_page_size = 0
-            
-            # 添加当前组到当前页
-            current_page_records.extend(records)
-            current_page_size += group_size
-        
-        # 处理最后一页
-        if current_page_records:
-            actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
-            feishu_page_records = [{"fields": row} for row in current_page_records]
-            
+        # 边界情况：如果数据小于400条且小于1.8MB，不分割
+        if total_records <= 400 and full_size_mb <= 1.8:
+            # 不分页，完整数据作为一页
+            feishu_page_records = [{"fields": row} for row in results_data_chinese]
             feishu_page = {
-                "page": page_num,
-                "total_pages": len(feishu_pages) + 1,
+                "page": 1,
+                "total_pages": 1,
                 "total_records": total_records,
-                "page_size": len(current_page_records),
-                "actual_size_mb": round(actual_page_size, 2),
+                "page_size": total_records,
+                "actual_size_mb": round(full_size_mb, 2),
                 "records": feishu_page_records
             }
-            feishu_pages.append(feishu_page)
-        
-        # 更新总页数
-        total_pages = len(feishu_pages)
-        for page in feishu_pages:
-            page["total_pages"] = total_pages
+            feishu_pages = [feishu_page]
+        else:
+            # 需要分页，按维度完整分组
+            # 计算分页限制
+            avg_record_size = full_size_bytes / total_records if total_records > 0 else 0
+            max_records_by_size = int((1.8 * 1024 * 1024) / avg_record_size) if avg_record_size > 0 else 400
+            max_records_per_page = min(400, max_records_by_size)
+            
+            feishu_pages = []
+            current_page_records = []
+            current_page_size = 0
+            page_num = 1
+            
+            for key, records in groups.items():
+                group_json = json.dumps(records, default=json_date_serializer)
+                group_size = len(group_json.encode('utf-8'))
+                group_count = len(records)
+                
+                # 检查是否超过限制
+                if (current_page_size + group_size > 1.8 * 1024 * 1024 or 
+                    len(current_page_records) + group_count > max_records_per_page):
+                    
+                    if current_page_records:
+                        actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
+                        feishu_page_records = [{"fields": row} for row in current_page_records]
+                        
+                        feishu_page = {
+                            "page": page_num,
+                            "total_pages": 0,  # 稍后更新
+                            "total_records": total_records,
+                            "page_size": len(current_page_records),
+                            "actual_size_mb": round(actual_page_size, 2),
+                            "records": feishu_page_records
+                        }
+                        feishu_pages.append(feishu_page)
+                        page_num += 1
+                        current_page_records = []
+                        current_page_size = 0
+                
+                # 添加当前组
+                current_page_records.extend(records)
+                current_page_size += group_size
+            
+            # 处理最后一页
+            if current_page_records:
+                actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
+                feishu_page_records = [{"fields": row} for row in current_page_records]
+                
+                feishu_page = {
+                    "page": page_num,
+                    "total_pages": len(feishu_pages) + 1,
+                    "total_records": total_records,
+                    "page_size": len(current_page_records),
+                    "actual_size_mb": round(actual_page_size, 2),
+                    "records": feishu_page_records
+                }
+                feishu_pages.append(feishu_page)
+            
+            # 更新总页数
+            total_pages = len(feishu_pages)
+            for page in feishu_pages:
+                page["total_pages"] = total_pages
             
         # 最终检查：确保所有飞书记录中无null值
         for page in feishu_pages:
@@ -409,27 +420,61 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                         else:
                             record["fields"][key] = 0
 
-    # 智能分页逻辑已应用：按1.5MB或400条记录限制
-    # Coze插件标准格式 - 包含分页结果
-    if num_rows > 0:
-        # 收集所有分页数据
-        paginated_records = []
-        for page in feishu_pages:
-            if page["records"]:  # 确保有数据
-                paginated_records.extend(page["records"])
-        
-        final_response = {
-            "code": 200,
-            "msg": f"处理完成：{num_rows}行数据，{round(data_size_mb, 2)}MB，分页{len(feishu_pages)}页",
-            "records": paginated_records  # 已按1.5MB或400条限制分页
-        }
-    else:
-        # 错误情况格式
-        final_response = {
-            "code": 500,
-            "msg": "数据为空或无有效数据",
-            "records": []
-        }
+    # 标准JSON下载 - 完整数据不分页
+    standard_json_data = {
+        "message": f"处理完成：{num_rows}行数据，{round(data_size_mb, 2)}MB",
+        "total_records": num_rows,
+        "data": results_data_standard  # 标准JSON格式，完整数据
+    }
+    
+    # 飞书格式 - 分页结构，每页独立
+    feishu_pages_clean = []
+    for page in feishu_pages:
+        if page["records"]:  # 确保有数据
+            feishu_page = {
+                "page": page["page"],
+                "total_pages": page["total_pages"],
+                "total_records": page["total_records"],
+                "page_size": page["page_size"],
+                "records": page["records"]  # 已经是飞书格式：{"fields": {...}}
+            }
+            feishu_pages_clean.append(feishu_page)
+    
+    # Coze插件主响应 - 符合Coze.cn规范
+    coze_records = []
+    if feishu_pages:
+        # 使用飞书格式的records数组，但不包含分页信息
+        coze_records = feishu_pages[0]["records"] if feishu_pages else []
+    
+    # 构建Coze.cn插件标准响应格式
+    final_response = {
+        "code": 200,
+        "msg": f"处理完成：{num_rows}行数据，{round(data_size_mb, 2)}MB",
+        "records": coze_records  # 飞书格式的records数组，支持下游循环节点
+    }
+    
+    # 保存标准JSON和飞书格式文件
+    out_path_standard = os.path.join(run_dir, "result.json")
+    with open(out_path_standard, "w", encoding="utf-8") as f:
+        json.dump(standard_json_data, f, ensure_ascii=False, indent=2, default=json_date_serializer)
+
+    # 保存飞书分页数据
+    out_path_feishu = os.path.join(run_dir, "feishu_pages.json")
+    with open(out_path_feishu, "w", encoding="utf-8") as f:
+        json.dump(feishu_pages, f, ensure_ascii=False, indent=2, default=json_date_serializer)
+
+    # 构造下载URL
+    from urllib.parse import urljoin, quote
+    base_url = str(request.base_url)
+    download_endpoint = "get-result-file"
+    url_standard = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_standard)}"
+    url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
+    
+    # 在响应中添加下载链接
+    final_response["download_urls"] = {
+        "standard_json": url_standard,
+        "feishu_pages": url_feishu
+    }
     
     # 如果save_to_disk为false，才清理临时目录
     if not save_to_disk:
