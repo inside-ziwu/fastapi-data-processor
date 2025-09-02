@@ -354,22 +354,27 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                         else:
                             record["fields"][key] = 0
 
-    feishu_records = []
-    for page in feishu_pages:
-        feishu_records.extend(page["records"])
-    
-    # 标准Coze插件格式
-    final_response = {
-        "code": 200,
-        "msg": f"处理完成：{num_rows}行数据，{round(data_size_mb, 2)}MB，{len(feishu_pages)}页",
-        "data": {
-            "records": feishu_records,  # 飞书格式：外层records，里层fields
-            "standard_json_url": url_standard,
-            "total_records": num_rows,
-            "data_size_mb": round(data_size_mb, 2),
-            "total_pages": len(feishu_pages)
+    # 智能分页逻辑已应用：按1.5MB或400条记录限制
+    # Coze插件标准格式 - 包含分页结果
+    if num_rows > 0:
+        # 收集所有分页数据
+        paginated_records = []
+        for page in feishu_pages:
+            if page["records"]:  # 确保有数据
+                paginated_records.extend(page["records"])
+        
+        final_response = {
+            "code": 200,
+            "msg": f"处理完成：{num_rows}行数据，{round(data_size_mb, 2)}MB，分页{len(feishu_pages)}页",
+            "records": paginated_records  # 已按1.5MB或400条限制分页
         }
-    }
+    else:
+        # 错误情况格式
+        final_response = {
+            "code": 500,
+            "msg": "数据为空或无有效数据",
+            "records": []
+        }
     
     # 如果save_to_disk为false，才清理临时目录
     if not save_to_disk:
@@ -386,10 +391,12 @@ def health():
     return {
         "code": 200,
         "msg": "服务运行正常",
-        "data": {
-            "status": "ok",
-            "time": datetime.utcnow().isoformat()
-        }
+        "records": [
+            {
+                "status": "ok",
+                "time": datetime.utcnow().isoformat()
+            }
+        ]
     }
 
 # 全局异常处理器，确保所有错误响应符合Coze插件格式
@@ -400,7 +407,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         content={
             "code": exc.status_code,
             "msg": str(exc.detail),
-            "data": {}
+            "records": []
         }
     )
 
@@ -411,8 +418,8 @@ async def general_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={
             "code": 500,
-            "msg": f"服务器内部错误: {str(exc)}",
-            "data": {}
+            "msg": f"处理失败: {str(exc)}",
+            "records": []
         }
     )
 
@@ -424,7 +431,7 @@ async def get_result_file(file_path: str, x_api_key: Optional[str] = Header(None
             content={
                 "code": 401,
                 "msg": "Unauthorized",
-                "data": {}
+                "records": []
             }
         )
     
@@ -435,7 +442,7 @@ async def get_result_file(file_path: str, x_api_key: Optional[str] = Header(None
             content={
                 "code": 403,
                 "msg": "Access denied",
-                "data": {}
+                "records": []
             }
         )
 
@@ -445,7 +452,7 @@ async def get_result_file(file_path: str, x_api_key: Optional[str] = Header(None
             content={
                 "code": 404,
                 "msg": "File not found",
-                "data": {}
+                "records": []
             }
         )
 
