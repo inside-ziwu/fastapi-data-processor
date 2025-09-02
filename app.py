@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 from datetime import datetime, date
 
 def json_date_serializer(obj):
@@ -35,9 +37,24 @@ def auth_ok(x_api_key: Optional[str]):
         return True
     return x_api_key == API_KEY
 
+def create_robust_session():
+    """创建健壮的HTTP会话"""
+    session = requests.Session()
+    retry = Retry(
+        total=3,  # 最多重试3次
+        backoff_factor=1,  # 退避因子：1s, 2s, 4s
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
 def download_to_file(url_or_path: str, target_dir: str) -> str:
+    """防卡死的流式下载"""
     os.makedirs(target_dir, exist_ok=True)
-    logger.info(f"Processing URL/path: {url_or_path}")
+    
+    # 本地文件处理
     if url_or_path.startswith("file://") or os.path.exists(url_or_path):
         if url_or_path.startswith("file://"):
             local_src = url_or_path[len("file://"):]
@@ -47,22 +64,60 @@ def download_to_file(url_or_path: str, target_dir: str) -> str:
             raise FileNotFoundError(f"Local file not found: {local_src}")
         dest = os.path.join(target_dir, os.path.basename(local_src))
         shutil.copy(local_src, dest)
-        logger.info(f"Copied local file from {local_src} to {dest}")
+        logger.info(f"本地文件复制完成: {dest} ({os.path.getsize(dest)} bytes)")
         return dest
-    resp = requests.get(url_or_path, stream=True, timeout=120)
-    if resp.status_code != 200:
-        logger.error(f"Failed to download {url_or_path}: HTTP {resp.status_code}")
-        raise HTTPException(status_code=502, detail=f"Failed to download {url_or_path}: {resp.status_code}")
+    
+    # 远程下载防卡死
+    session = create_robust_session()
     fname = url_or_path.split("/")[-1].split("?")[0] or f"file_{int(time.time())}"
     dest = os.path.join(target_dir, fname)
-    logger.info(f"Saving downloaded file to: {dest}")
-    with open(dest, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=4*1024*1024):
-            if chunk:
-                f.write(chunk)
-    file_size = os.path.getsize(dest)
-    logger.info(f"Successfully downloaded {fname} ({file_size} bytes)")
-    return dest
+    
+    try:
+        start_time = time.time()
+        with session.get(url_or_path, stream=True, timeout=(30, 60)) as resp:
+            resp.raise_for_status()
+            
+            content_length = int(resp.headers.get('content-length', 0))
+            logger.info(f"开始下载: {fname} (大小: {content_length/1024/1024:.2f}MB)")
+            
+            downloaded = 0
+            last_log_time = time.time()
+            
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1024*1024):  # 1MB分块
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # 每5秒报告一次进度
+                        current_time = time.time()
+                        if current_time - last_log_time > 5:
+                            if content_length > 0:
+                                progress = (downloaded / content_length) * 100
+                                speed = downloaded / (current_time - start_time) / 1024 / 1024  # MB/s
+                                logger.info(f"下载进度: {fname} - {progress:.1f}% ({speed:.2f}MB/s)")
+                            else:
+                                logger.info(f"下载中: {fname} - {downloaded/1024/1024:.2f}MB")
+                            last_log_time = current_time
+            
+            file_size = os.path.getsize(dest)
+            total_time = time.time() - start_time
+            speed = file_size / total_time / 1024 / 1024
+            
+            logger.info(f"下载完成: {fname} - {file_size/1024/1024:.2f}MB in {total_time:.1f}s ({speed:.2f}MB/s)")
+            return dest
+            
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail=f"下载超时: {url_or_path}")
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(status_code=502, detail=f"连接失败: {url_or_path}")
+    except requests.exceptions.HTTPError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"HTTP错误: {e}")
+    except Exception as e:
+        # 清理失败的文件
+        if os.path.exists(dest):
+            os.remove(dest)
+        raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
 
 class ProcessRequest(BaseModel):
     video_excel_file: Optional[str] = None
