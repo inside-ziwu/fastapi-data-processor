@@ -309,24 +309,14 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             page["total_pages"] = total_pages
 
     final_response = {
-        "status": "ok",
-        "message": message,
-        "total_time_seconds": round(time.time() - request_start_time, 2),
-        "total_rows": num_rows,
-        "total_size_mb": round(data_size_mb, 2),
-        "result_path": {
-            "standard_json": url_standard,
-            "feishu_import_json": url_feishu
-        },
-        "dimension_used": dimension,
-        "feishu_format": {
-            "pages": len(feishu_pages),
-            "page_size": len(feishu_pages[0]["records"]) if feishu_pages else 0,
-            "all_pages": feishu_pages,
-            "field_mapping": en_to_cn_map,
-            "field_types": type_mapping
-        },
-        "results_preview": results_data_standard[:3]
+        "standard_json_url": url_standard,
+        "feishu_data": {
+            "pages": feishu_pages,
+            "total_size_mb": round(data_size_mb, 2),
+            "total_rows": num_rows,
+            "total_pages": len(feishu_pages),
+            "page_size": len(feishu_pages[0]["records"]) if feishu_pages else 0
+        }
     }
     
     # 如果save_to_disk为false，才清理临时目录
