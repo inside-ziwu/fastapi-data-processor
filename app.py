@@ -470,18 +470,18 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     
     # 直接构建飞书格式数组 - 消除所有分页和URL中间层
     feishu_records = []
-    for row in results_data_chinese:
+    for row in results_data_standard:  # 使用标准英文key数据
         # 确保所有值为有效类型，消除null
         clean_row = {}
         for key, value in row.items():
             if value is None:
-                # 基于字段名确定默认值
-                if any(kw in str(key) for kw in ['率', '占比']):
+                # 基于英文字段名确定默认值
+                key_lower = str(key).lower()
+                if key_lower.endswith(('_rate', '_ratio')):
                     clean_row[key] = 0.0
-                elif any(kw in str(key) for kw in ['量', '数', '时长', '消耗', 'CPL', '场观', '曝光', '点击', '线索']):
-                    clean_row[key] = 0
+                # text-like columns are pre-filled with "unknown" in data_processor, so other Nones should be numeric
                 else:
-                    clean_row[key] = ""
+                    clean_row[key] = 0
             else:
                 clean_row[key] = value
         feishu_records.append({"fields": clean_row})
