@@ -813,16 +813,19 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     ]
     agg_cols_exist = [c for c in agg_cols if c in base.columns]
     # 根据dimension参数确定聚合维度
-    # 清理dimension参数
+    # 清理dimension参数 - 严格处理
+    original_dimension = dimension
     if isinstance(dimension, str):
         dimension = dimension.strip()
-        # 处理中文输入的情况
-        if dimension == "层级":
+        logger.info(f"清理前dimension: '{dimension}'")
+        
+        # 精确匹配逻辑
+        if dimension == "层级" or dimension.lower() == "level":
             dimension = "level"
-        elif dimension.lower() == "level":
-            dimension = "level"
+            logger.info("检测到level维度")
         elif dimension == "NSC_CODE" or dimension.lower() == "nsc_code":
             dimension = "NSC_CODE"
+            logger.info("检测到NSC_CODE维度")
         else:
             logger.warning(f"未知维度: '{dimension}'，使用默认NSC_CODE")
             dimension = "NSC_CODE"
@@ -832,8 +835,12 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         logger.warning(f"未知维度类型: {type(dimension)}，使用默认NSC_CODE")
         dimension = "NSC_CODE"
     
-    logger.info(f"使用聚合维度: {dimension} (原始参数值)")
+    logger.info(f"维度清理结果: 原始='{original_dimension}' -> 处理后='{dimension}'")
+    
+    logger.info(f"使用聚合维度: '{dimension}' (原始参数值)")
     logger.info(f"dimension参数类型: {type(dimension)}")
+    logger.info(f"维度判断结果: dimension == 'level' -> {dimension == 'level'}")
+    logger.info(f"维度判断结果: dimension == 'NSC_CODE' -> {dimension == 'NSC_CODE'}")
     
     # 动态构建聚合维度列表 - 使用实际字段名
     if dimension == "NSC_CODE":
