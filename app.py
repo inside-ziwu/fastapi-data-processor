@@ -12,7 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 def json_date_serializer(obj):
     """JSON serializer for objects not serializable by default json code"""
@@ -131,7 +131,6 @@ class ProcessRequest(BaseModel):
     Spending_file: Optional[str] = None
     spending_sheet_names: Optional[str] = None
     dimension: Optional[str] = None  # 新增：聚合维度，支持 NSC_CODE 或 level
-    save_to_disk: Optional[bool] = False
 
 @app.post("/process-files")
 async def process_files(request: Request, payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
@@ -288,9 +287,6 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
-# 设置save_to_disk默认为true
-    save_to_disk = provided.get("save_to_disk", True)
-    
     # 始终保存文件（默认行为）
     out_path_standard = os.path.join(run_dir, "result.json")
     with open(out_path_standard, "w", encoding="utf-8") as f:
