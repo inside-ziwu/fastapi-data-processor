@@ -161,10 +161,10 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                     .alias(col_name)
                 )
 
-        # 4. Create standard and Feishu data formats with Chinese variable names
-        results_data_standard = result_df.to_dicts()
+        # 4. Create standard and Feishu data formats
+        results_data_standard = result_df.to_dicts()  # 标准JSON保持英文
         
-        # 转换为中文字段名
+        # 飞书格式使用中文字段名
         results_data_chinese = []
         for row in results_data_standard:
             chinese_row = {}
