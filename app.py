@@ -121,6 +121,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         raise HTTPException(status_code=400, detail="No valid file URLs provided. Please provide at least one file URL.")
     spending_sheet_names = provided.get("spending_sheet_names")
     dimension = provided.get("dimension", "NSC_CODE")
+    logger.info(f"从请求中提取的dimension参数: '{dimension}' (类型: {type(dimension)})")
     try:
         logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
         # PROFILING: Before Core Processing
