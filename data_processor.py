@@ -765,32 +765,36 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 null_count = df[col].is_null().sum()
                 logger.info(f"[数据验证] {name}.{col}: 总和={total}, 空值={null_count}")
 
-    # 4. Create the base DataFrame from the clean Python set and sort it
-    base = pl.DataFrame(
-        list(unique_keys_set),
-        schema={'NSC_CODE': pl.Utf8, 'date': pl.Date},
-        orient="row"
-    ).sort(["NSC_CODE", "date"])
-    logger.debug(f"[最终合并] base.columns={base.columns}")
+    # 根据维度优化聚合策略
+    if dimension == "level":
+        # level维度：直接按level聚合，避免NSC_CODE膨胀
+        logger.info("level维度：直接按层级聚合")
+        
+        # level维度时，先按level分组，避免NSC笛卡尔积
+        level_base = base.select(["level", "date"] + agg_cols_exist).filter(
+            pl.col("level").is_not_null() & (pl.col("level") != "") & (pl.col("level") != "unknown")
+        ).group_by("level", "date").agg([
+            pl.col(c).sum() for c in agg_cols_exist if c in base.columns
+        ])
+        base = level_base
+        
+    else:
+        # NSC_CODE维度：保持原有逻辑
+        logger.info("NSC_CODE维度：保持原有逻辑")
+        # 4. Create the base DataFrame from the clean Python set and sort it
+        base = pl.DataFrame(
+            list(unique_keys_set),
+            schema={'NSC_CODE': pl.Utf8, 'date': pl.Date},
+            orient="row"
+        ).sort(["NSC_CODE", "date"])
 
-    # --- JOIN PROBE ---
-    logger.debug(f"[JOIN PROBE] Schema of base df: {base.schema}")
-    logger.debug(f"[JOIN PROBE] Head of base df:\n{base.head()}")
-    if "dr" in dfs:
-        logger.debug(f"[JOIN PROBE] Schema of dfs['dr']: {dfs['dr'].schema}")
-        logger.debug(f"[JOIN PROBE] Head of dfs['dr']:\n{dfs['dr'].head()}")
-    # --- END JOIN PROBE ---
-
-    for name, df in dfs.items():
-        logger.debug(f"[join] {name} columns={df.columns}")
-        if "date" in df.columns:
-            base = base.join(df, on=["NSC_CODE", "date"], how="left")
-        else:
-            base = base.join(df, on="NSC_CODE", how="left")
-        logger.debug(f"[join后] base.columns={base.columns}")
-    if account_base is not None:
-        base = base.join(account_base, on="NSC_CODE", how="left")
-        logger.debug(f"[account_base join后] base.columns={base.columns}")
+        for name, df in dfs.items():
+            if "date" in df.columns:
+                base = base.join(df, on=["NSC_CODE", "date"], how="left")
+            else:
+                base = base.join(df, on="NSC_CODE", how="left")
+        if account_base is not None:
+            base = base.join(account_base, on="NSC_CODE", how="left")
     # --- FINAL ANALYSIS LOGIC --- #
     logger.info("开始最终分析前的数据清洗...")
     base = base.filter(pl.col("date").is_not_null())
