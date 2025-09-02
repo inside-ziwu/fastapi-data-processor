@@ -931,9 +931,14 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         safe_div(pl.col("private_leads_count_t"), pl.col("enter_private_count_t")).alias("private_conversion_rate_t"),
         safe_div(pl.col("private_leads_count_t_minus_1"), pl.col("enter_private_count_t_minus_1")).alias("private_conversion_rate_t_minus_1"),
     )
-    # Step 6: Final Selection (全部英文)
-    final_columns = [
-        "NSC_CODE", "level", "store_name",
+    # 根据维度动态选择最终字段
+    final_columns = []
+    if dimension == "NSC_CODE":
+        final_columns.extend(["NSC_CODE", "level", "store_name"])
+    elif dimension == "level":
+        final_columns.append("level")
+    
+    final_columns.extend([
         "natural_leads_total", "natural_leads_t", "natural_leads_t_minus_1",
         "ad_leads_total", "ad_leads_t", "ad_leads_t_minus_1",
         "spending_net_total", "spending_net_t", "spending_net_t_minus_1",
@@ -974,7 +979,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         "private_open_rate", "private_open_rate_t", "private_open_rate_t_minus_1",
         "private_leads_rate", "private_leads_rate_t", "private_leads_rate_t_minus_1",
         "private_conversion_rate", "private_conversion_rate_t", "private_conversion_rate_t_minus_1"
-    ]
+    ])
     final_columns_exist = [c for c in final_columns if c in summary_df.columns]
     final_df = summary_df.select(final_columns_exist)
     for col_name in final_df.columns:
