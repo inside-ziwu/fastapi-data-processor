@@ -192,19 +192,18 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             # PROFILING: Before Core Processing
             core_processing_start_time = time.time()
             try:
-                result_response, en_to_cn_map, type_mapping = process_all_files(local_paths, spending_sheet_names=spending_sheet_names, dimension=dimension)
+                result_df, en_to_cn_map, type_mapping = process_all_files(local_paths, spending_sheet_names=spending_sheet_names, dimension=dimension)
             except Exception as e:
                 logger.error(f"Core processing failed: {str(e)}", exc_info=True)
                 raise
             # PROFILING: After Core Processing
             core_processing_end_time = time.time()
             logger.info(f"PROFILING: Core processing finished. Total core processing time: {core_processing_end_time - core_processing_start_time:.2f} seconds.")
-            result_data = result_response.get("records", [])
-            return result_data, en_to_cn_map, type_mapping
+            return result_df, en_to_cn_map, type_mapping
         
         # 执行带超时的核心处理
         try:
-            result_data, en_to_cn_map, type_mapping = await asyncio.wait_for(
+            result_df, en_to_cn_map, type_mapping = await asyncio.wait_for(
                 core_processing_task(), 
                 timeout=TOTAL_TIMEOUT - (time.time() - request_start_time)
             )
@@ -222,33 +221,52 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
 
         # --- UNIFIED FINAL LOGIC ---
         # 1. Get shape for size hint
-        feishu_records = result_data
-        num_rows = len(feishu_records)
-        num_cols = len(feishu_records[0].get("fields", {})) if feishu_records else 0
+        num_rows, num_cols = result_df.shape
 
-        # 2. Clean the data in place - 处理feishu_records中的null值
-        cleaned_count = 0
-        for record in feishu_records:
-            fields = record.get("fields", {})
-            for key, value in fields.items():
-                if value is None or str(value).lower() in ['nan', 'inf', '-inf', 'null', 'none']:
-                    if isinstance(value, (int, float)):
-                        fields[key] = 0
-                    elif isinstance(value, str):
-                        fields[key] = ""
-                    else:
-                        fields[key] = 0
-                    cleaned_count += 1
+        # 2. Count non-compliant floats before cleaning
+        nan_count = 0
+        inf_count = 0
+        for col_name in result_df.columns:
+            if result_df[col_name].dtype in [pl.Float32, pl.Float64]:
+                nan_count += result_df[col_name].is_nan().sum()
+                inf_count += result_df[col_name].is_infinite().sum()
+        cleaned_count = nan_count + inf_count
 
-        # 3. Create standard and Feishu data formats
-        results_data_standard = feishu_records
+        # 3. Clean the dataframe - 彻底清理所有null值
+        for col_name in result_df.columns:
+            col_type = result_df[col_name].dtype
+            if col_type in [pl.Float32, pl.Float64]:
+                # 处理浮点数：NaN, Inf, -Inf → 0
+                result_df = result_df.with_columns(
+                    pl.when(pl.col(col_name).is_nan() | pl.col(col_name).is_infinite() | pl.col(col_name).is_null())
+                    .then(0.0)
+                    .otherwise(pl.col(col_name).round(6))
+                    .alias(col_name)
+                )
+            elif col_type in [pl.Int32, pl.Int64]:
+                # 处理整数null → 0
+                result_df = result_df.with_columns(
+                    pl.col(col_name).fill_null(0).alias(col_name)
+                )
+            elif col_type == pl.Utf8:
+                # 处理字符串null → 空字符串
+                result_df = result_df.with_columns(
+                    pl.col(col_name).fill_null("").alias(col_name)
+                )
+            else:
+                # 其他类型统一处理
+                result_df = result_df.with_columns(
+                    pl.col(col_name).fill_null(0).alias(col_name)
+                )
+
+        # 4. Create standard and Feishu data formats
+        results_data_standard = result_df.to_dicts()  # 标准JSON保持英文
         
         # 飞书格式使用中文字段名 - 确保无null值
         results_data_chinese = []
-        for record in results_data_standard:
-            fields = record.get("fields", {})
+        for row in results_data_standard:
             chinese_row = {}
-            for en_key, value in fields.items():
+            for en_key, value in row.items():
                 cn_key = en_to_cn_map.get(en_key, en_key)
                 # 确保value不是None/null
                 if value is None:
@@ -259,9 +277,11 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                     else:
                         value = 0
                 chinese_row[cn_key] = value
-            results_data_chinese.append({"fields": chinese_row})
+            results_data_chinese.append(chinese_row)
         
-        feishu_records = results_data_chinese  # 已经是正确格式
+        feishu_records = []
+        for chinese_row in results_data_chinese:
+            feishu_records.append({"fields": chinese_row})
         feishu_output = {
             "records": feishu_records,
             "field_mapping": en_to_cn_map,
@@ -333,7 +353,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         # 边界情况：如果数据小于400条且小于1.8MB，不分割
         if total_records <= 400 and full_size_mb <= 1.8:
             # 不分页，完整数据作为一页
-            feishu_page_records = results_data_chinese  # 已经是正确格式
+            feishu_page_records = [{"fields": row} for row in results_data_chinese]
             feishu_page = {
                 "page": 1,
                 "total_pages": 1,
@@ -366,7 +386,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                     
                     if current_page_records:
                         actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
-                        feishu_page_records = current_page_records  # 已经是正确格式
+                        feishu_page_records = [{"fields": row} for row in current_page_records]
                         
                         feishu_page = {
                             "page": page_num,
@@ -388,7 +408,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             # 处理最后一页
             if current_page_records:
                 actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
-                feishu_page_records = current_page_records  # 已经是正确格式
+                feishu_page_records = [{"fields": row} for row in current_page_records]
                 
                 feishu_page = {
                     "page": page_num,
