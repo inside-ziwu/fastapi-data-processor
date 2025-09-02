@@ -833,21 +833,17 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         dimension = "NSC_CODE"
     
     logger.info(f"使用聚合维度: {dimension}")
-    logger.info(f"实际group_by_cols: {group_by_cols}")
-    logger.info(f"base列: {base.columns[:5]}")
     
     # 动态构建聚合维度列表 - 使用实际字段名
-    field_mapping = {
-        "NSC_CODE": "NSC_CODE",
-        "level": "层级"  # 关键：level维度使用中文字段名
-    }
-    
     if dimension == "NSC_CODE":
-        # NSC_CODE维度时，保留level和store_name作为额外信息
         group_by_cols = ["NSC_CODE", "level", "store_name"]
-    elif dimension == "level":
-        # level维度时，仅按层级聚合，不包含NSC_CODE和store_name
+    elif dimension == "层级":
         group_by_cols = ["层级"]
+    else:
+        group_by_cols = ["NSC_CODE", "level", "store_name"]
+    
+    logger.info(f"实际group_by_cols: {group_by_cols}")
+    logger.info(f"base列: {base.columns[:5] if hasattr(base, 'columns') else '无列信息'}")
     
     # 过滤掉不存在的列
     group_by_cols = [c for c in group_by_cols if c in base.columns]
