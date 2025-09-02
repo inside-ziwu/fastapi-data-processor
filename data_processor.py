@@ -813,12 +813,27 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     ]
     agg_cols_exist = [c for c in agg_cols if c in base.columns]
     # 根据dimension参数确定聚合维度
-    valid_dimensions = ["NSC_CODE", "level"]
-    if dimension not in valid_dimensions:
-        logger.warning(f"未知维度: {dimension}，使用默认NSC_CODE")
+    # 清理dimension参数
+    if isinstance(dimension, str):
+        dimension = dimension.strip()
+        # 处理中文输入的情况
+        if dimension == "层级":
+            dimension = "level"
+        elif dimension.lower() == "level":
+            dimension = "level"
+        elif dimension == "NSC_CODE" or dimension.lower() == "nsc_code":
+            dimension = "NSC_CODE"
+        else:
+            logger.warning(f"未知维度: '{dimension}'，使用默认NSC_CODE")
+            dimension = "NSC_CODE"
+    elif dimension is None:
+        dimension = "NSC_CODE"
+    else:
+        logger.warning(f"未知维度类型: {type(dimension)}，使用默认NSC_CODE")
         dimension = "NSC_CODE"
     
-    logger.info(f"使用聚合维度: {dimension}")
+    logger.info(f"使用聚合维度: {dimension} (原始参数值)")
+    logger.info(f"dimension参数类型: {type(dimension)}")
     
     # 动态构建聚合维度列表 - 使用实际字段名
     if dimension == "NSC_CODE":
@@ -829,17 +844,28 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         group_by_cols = ["NSC_CODE", "level", "store_name"]
     
     logger.info(f"实际group_by_cols: {group_by_cols}")
-    logger.info(f"base列: {base.columns[:5] if hasattr(base, 'columns') else '无列信息'}")
+    logger.info(f"base列: {list(base.columns)[:5] if hasattr(base, 'columns') else '无列信息'}")
     
     # 过滤掉不存在的列
     group_by_cols = [c for c in group_by_cols if c in base.columns]
     
-    summary_df = base.pivot(
-        index=group_by_cols,
-        columns="period",
-        values=agg_cols_exist,
-        aggregate_function="sum"
-    )
+    # 确保level维度正确聚合
+    if dimension == "level":
+        logger.info("level维度：按level聚合所有数据")
+        summary_df = base.pivot(
+            index=group_by_cols,
+            columns="period",
+            values=agg_cols_exist,
+            aggregate_function="sum"
+        )
+        logger.info(f"level维度聚合后行数: {len(summary_df)}")
+    else:
+        summary_df = base.pivot(
+            index=group_by_cols,
+            columns="period",
+            values=agg_cols_exist,
+            aggregate_function="sum"
+        )
     # Step 3: Calculate Totals
     for col in agg_cols_exist:
         summary_df = summary_df.with_columns(
@@ -985,6 +1011,9 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             )
     # 创建反向映射（英文->中文）
     EN_TO_CN_MAP = {v: k for k, v in FIELD_EN_MAP.items()}
+    
+    # 确保level字段正确映射到中文
+    EN_TO_CN_MAP["level"] = "层级"
     
     # 创建变量类型映射
     TYPE_MAPPING = {}
