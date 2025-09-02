@@ -179,8 +179,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         
         feishu_records = []
         for chinese_row in results_data_chinese:
-            fields_str = json.dumps(chinese_row, ensure_ascii=False, default=json_date_serializer)
-            feishu_records.append({"fields": fields_str})
+            feishu_records.append({"fields": chinese_row})
         feishu_output = {
             "records": feishu_records,
             "field_mapping": en_to_cn_map,
@@ -277,7 +276,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 
                 if current_page_records:  # 如果当前页有数据
                     actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
-                    feishu_page_records = [{"fields": json.dumps(row, ensure_ascii=False, default=json_date_serializer)} for row in current_page_records]
+                    feishu_page_records = [{"fields": row} for row in current_page_records]
                     
                     feishu_page = {
                         "page": page_num,
@@ -299,7 +298,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         # 处理最后一页
         if current_page_records:
             actual_page_size = len(json.dumps(current_page_records, default=json_date_serializer).encode('utf-8')) / (1024 * 1024)
-            feishu_page_records = [{"fields": json.dumps(row, ensure_ascii=False, default=json_date_serializer)} for row in current_page_records]
+            feishu_page_records = [{"fields": row} for row in current_page_records]
             
             feishu_page = {
                 "page": page_num,
@@ -317,11 +316,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             page["total_pages"] = total_pages
 
     feishu_records = []
-    for page_num, page in enumerate(feishu_pages, 1):
-        for idx, record in enumerate(page["records"], 1):
-            record["page"] = page_num
-            record["index"] = idx
-            feishu_records.append(record)
+    for page in feishu_pages:
+        feishu_records.extend(page["records"])
     
     final_response = {
         "standard_json_url": url_standard,
