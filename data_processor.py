@@ -322,7 +322,61 @@ def try_cast_numeric(pl_df: pl.DataFrame, cols):
             )
     return pl_df
 
-def process_single_table(df, mapping, sum_cols=None):
+def format_extracted_fields(pl_df: pl.DataFrame, file_type: str) -> pl.DataFrame:
+    """在提取字段时立即进行格式化"""
+    
+    # 定义各文件类型的格式化规则
+    format_rules = {
+        "video": {
+            "anchor_exposure": {"decimals": 0},
+            "component_clicks": {"decimals": 0},
+            "short_video_count": {"decimals": 0},
+            "short_video_leads": {"decimals": 0}
+        },
+        "live": {
+            "over25_min_live_mins": {"decimals": 1},
+            "live_effective_hours": {"decimals": 1},
+            "effective_live_sessions": {"decimals": 0},
+            "exposures": {"decimals": 0},
+            "viewers": {"decimals": 0},
+            "small_wheel_clicks": {"decimals": 0}
+        },
+        "msg": {
+            "enter_private_count": {"decimals": 0},
+            "private_open_count": {"decimals": 0},
+            "private_leads_count": {"decimals": 0}
+        },
+        "account_bi": {
+            "live_leads": {"decimals": 0},
+            "short_video_plays": {"decimals": 0}
+        },
+        "leads": {
+            "small_wheel_leads": {"decimals": 0}
+        },
+        "spending": {
+            "spending_net": {"decimals": 2}
+        }
+    }
+    
+    rules = format_rules.get(file_type, {})
+    
+    for col, rule in rules.items():
+        if col in pl_df.columns:
+            decimals = rule["decimals"]
+            if decimals == 0:
+                # 转为整数
+                pl_df = pl_df.with_columns(
+                    pl.col(col).round(0).cast(pl.Int64).fill_null(0).alias(col)
+                )
+            else:
+                # 保留指定小数位
+                pl_df = pl_df.with_columns(
+                    pl.col(col).round(decimals).alias(col)
+                )
+    
+    return pl_df
+
+def process_single_table(df, mapping, sum_cols=None, file_type=None):
     orig_cols = list(df.columns)
     logger.debug(f"[process_single_table] 原始列名: {orig_cols}")
     df = rename_columns_loose(df, mapping)
@@ -363,6 +417,9 @@ def process_single_table(df, mapping, sum_cols=None):
         raise ValueError("[process_single_table] ensure_date_column 之后未发现 date 列。")
     if sum_cols:
         df = try_cast_numeric(df, sum_cols)
+        # 在提取字段时立即进行格式化
+        if file_type:
+            df = format_extracted_fields(df, file_type)
     group_cols = ["NSC_CODE", "date"]
     agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols] if sum_cols else []
     if agg_exprs:
@@ -475,7 +532,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             df = read_excel_polars(p, sheet_name=0)
         if df is not None:
             logger.debug(f"[video] columns={df.columns}")
-            dfs["video"] = process_single_table(df, VIDEO_MAP, ["anchor_exposure","component_clicks","short_video_count","short_video_leads"])
+            dfs["video"] = process_single_table(df, VIDEO_MAP, ["anchor_exposure","component_clicks","short_video_count","short_video_leads"], "video")
     # 2. live_bi_file
     if "live_bi_file" in local_paths:
         p = local_paths["live_bi_file"]
@@ -486,7 +543,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             df = read_excel_polars(p, sheet_name=0)
         if df is not None:
             logger.debug(f"[live] columns={df.columns}")
-            dfs["live"] = process_single_table(df, LIVE_MAP, ["over25_min_live_mins","live_effective_hours","effective_live_sessions","exposures","viewers","small_wheel_clicks"])
+            dfs["live"] = process_single_table(df, LIVE_MAP, ["over25_min_live_mins","live_effective_hours","effective_live_sessions","exposures","viewers","small_wheel_clicks"], "live")
     # 3. msg_excel_file
     if "msg_excel_file" in local_paths:
         p = local_paths["msg_excel_file"]
@@ -591,6 +648,10 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         for col in sum_cols:
             if col in df.columns:
                 df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False).fill_null(0).fill_nan(0))
+        
+        # 在提取字段时立即进行格式化
+        df = format_extracted_fields(df, "msg")
+        
         agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols if c in df.columns]
         if agg_exprs:
             df = df.group_by(group_cols).agg(agg_exprs)
@@ -624,7 +685,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
         if df is not None:
             logger.debug(f"[ACC_BI PROBE] Initial columns: {df.columns}")
             logger.debug(f"[ACC_BI PROBE] Initial head:\n{df.head()}")
-            dfs["account_bi"] = process_single_table(df, ACCOUNT_BI_MAP, ["live_leads","short_video_plays"])
+            dfs["account_bi"] = process_single_table(df, ACCOUNT_BI_MAP, ["live_leads","short_video_plays"], "account_bi")
             logger.debug(f"[ACC_BI PROBE] Processed account_bi data:\n{dfs['account_bi'].head()}")
     # 5. leads_file
     if "leads_file" in local_paths:
@@ -636,7 +697,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             df = read_excel_polars(p, sheet_name=0)
         if df is not None:
             logger.debug(f"[leads] columns={df.columns}")
-            dfs["leads"] = process_single_table(df, LEADS_MAP, ["small_wheel_leads"])
+            dfs["leads"] = process_single_table(df, LEADS_MAP, ["small_wheel_leads"], "leads")
     # 6. DR1_file, DR2_file
     dr_frames = []
     for key in ["DR1_file", "DR2_file"]:
@@ -667,7 +728,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 for s in sheet_names:
                     try:
                         df_sheet = read_excel_polars(p, sheet_name=s)
-                        processed = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"])
+                        processed = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"], "spending")
                         processed_dfs.append(processed)
                     except Exception as e:
                         logger.warning(f"Spending_file sheet {s} processing failed: {e}")
@@ -676,13 +737,13 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                     df = pl.concat(processed_dfs, how="vertical")
                 else:
                     df_sheet = read_excel_polars(p, sheet_name=0)
-                    df = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"])
+                    df = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"], "spending")
             else:
                 all_sheets = read_excel_polars(p, sheet_name=None)
                 processed_dfs = []
                 for sheet_name, df_sheet in all_sheets.items():
                     try:
-                        processed = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"])
+                        processed = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"], "spending")
                         processed_dfs.append(processed)
                     except Exception as e:
                         logger.warning(f"Spending_file sheet {sheet_name} processing failed: {e}")
@@ -691,7 +752,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                     df = pl.concat(processed_dfs, how="vertical")
                 else:
                     df_sheet = read_excel_polars(p, sheet_name=0)
-                    df = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"])
+                    df = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"], "spending")
         if df is not None:
             logger.debug(f"[spending] columns={df.columns}")
             dfs["spending"] = process_single_table(df, SPENDING_MAP, ["spending_net"])
