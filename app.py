@@ -308,7 +308,12 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         for page in feishu_pages:
             page["total_pages"] = total_pages
 
-    feishu_records = [page["records"] for page in feishu_pages] if feishu_pages else []
+    feishu_records = []
+    for page_num, page in enumerate(feishu_pages, 1):
+        for idx, record in enumerate(page["records"], 1):
+            record["page"] = page_num
+            record["index"] = idx
+            feishu_records.append(record)
     
     final_response = {
         "standard_json_url": url_standard,
