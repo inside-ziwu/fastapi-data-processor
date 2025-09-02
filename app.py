@@ -134,9 +134,13 @@ class ProcessRequest(BaseModel):
 
 @app.post("/process-files")
 async def process_files(request: Request, payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
-    # PROFILING: Start
+    import asyncio
+    from concurrent.futures import TimeoutError as AsyncTimeoutError
+    
+    # 6分钟强制超时设置（360秒）
+    TOTAL_TIMEOUT = 360
     request_start_time = time.time()
-    logger.info(f"PROFILING: Request received at {request_start_time}")
+    logger.info(f"PROFILING: Request received at {request_start_time}, timeout={TOTAL_TIMEOUT}s")
 
     if not auth_ok(x_api_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -182,17 +186,35 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     logger.info(f"维度验证: dimension == '层级' -> {dimension == '层级'}")
     logger.info(f"维度验证: dimension == 'level' -> {dimension == 'level'}")
     try:
-        logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
-        # PROFILING: Before Core Processing
-        core_processing_start_time = time.time()
+        # 使用超时包装的核心处理
+        async def core_processing_task():
+            logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
+            # PROFILING: Before Core Processing
+            core_processing_start_time = time.time()
+            try:
+                result_df, en_to_cn_map, type_mapping = process_all_files(local_paths, spending_sheet_names=spending_sheet_names, dimension=dimension)
+            except Exception as e:
+                logger.error(f"Core processing failed: {str(e)}", exc_info=True)
+                raise
+            # PROFILING: After Core Processing
+            core_processing_end_time = time.time()
+            logger.info(f"PROFILING: Core processing finished. Total core processing time: {core_processing_end_time - core_processing_start_time:.2f} seconds.")
+            return result_df, en_to_cn_map, type_mapping
+        
+        # 执行带超时的核心处理
         try:
-            result_df, en_to_cn_map, type_mapping = process_all_files(local_paths, spending_sheet_names=spending_sheet_names, dimension=dimension)
-        except Exception as e:
-            logger.error(f"Core processing failed: {str(e)}", exc_info=True)
-            raise
-        # PROFILING: After Core Processing
-        core_processing_end_time = time.time()
-        logger.info(f"PROFILING: Core processing finished. Total core processing time: {core_processing_end_time - core_processing_start_time:.2f} seconds.")
+            result_df, en_to_cn_map, type_mapping = await asyncio.wait_for(
+                core_processing_task(), 
+                timeout=TOTAL_TIMEOUT - (time.time() - request_start_time)
+            )
+        except AsyncTimeoutError:
+            elapsed = time.time() - request_start_time
+            logger.error(f"Processing timeout after {elapsed:.2f}s, max allowed: {TOTAL_TIMEOUT}s")
+            shutil.rmtree(run_dir, ignore_errors=True)
+            raise HTTPException(
+                status_code=504, 
+                detail=f"处理超时，任务在{elapsed:.1f}秒后未完成（最大允许{TOTAL_TIMEOUT}秒）"
+            )
 
         # PROFILING: Before Output Prep
         output_prep_start_time = time.time()
@@ -436,43 +458,33 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             }
             feishu_pages_clean.append(feishu_page)
     
-    # Coze插件主响应 - 符合Coze.cn规范
-    # 返回所有记录的扁平数组，支持COZE循环节点处理完整数据
-    coze_records = []
-    for page in feishu_pages:
-        coze_records.extend(page["records"])
-    
-    # 构建Coze.cn插件标准响应格式
+    # 直接构建飞书格式数组 - 消除所有分页和URL中间层
+    feishu_records = []
+    for row in results_data_chinese:
+        # 确保所有值为有效类型，消除null
+        clean_row = {}
+        for key, value in row.items():
+            if value is None:
+                # 基于字段名确定默认值
+                if any(kw in str(key) for kw in ['率', '占比']):
+                    clean_row[key] = 0.0
+                elif any(kw in str(key) for kw in ['量', '数', '时长', '消耗', 'CPL', '场观', '曝光', '点击', '线索']):
+                    clean_row[key] = 0
+                else:
+                    clean_row[key] = ""
+            else:
+                clean_row[key] = value
+        feishu_records.append({"fields": clean_row})
+
+    # 直接返回完整数据数组 - 符合Coze.cn规范，支持下游循环节点
     final_response = {
         "code": 200,
         "msg": f"处理完成：{num_rows}行数据，{round(data_size_mb, 2)}MB",
-        "records": coze_records  # 飞书格式的records数组，支持下游循环节点
+        "records": feishu_records  # 直接返回所有记录，无分页无URL
     }
     
-    # 保存标准JSON和飞书格式文件
-    out_path_standard = os.path.join(run_dir, "result.json")
-    with open(out_path_standard, "w", encoding="utf-8") as f:
-        json.dump(standard_json_data, f, ensure_ascii=False, indent=2, default=json_date_serializer)
-
-    # 保存飞书分页数据
-    out_path_feishu = os.path.join(run_dir, "feishu_pages.json")
-    with open(out_path_feishu, "w", encoding="utf-8") as f:
-        json.dump(feishu_pages, f, ensure_ascii=False, indent=2, default=json_date_serializer)
-
-    # 构造下载URL
-    from urllib.parse import urljoin, quote
-    base_url = str(request.base_url)
-    download_endpoint = "get-result-file"
-    url_standard = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_standard)}"
-    url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
-    
-    # 在响应中添加下载链接
-    final_response["download_urls"] = {
-        "standard_json": url_standard,
-        "feishu_pages": url_feishu
-    }
-    
-    logger.info(f"PROFILING: Total request time before returning response: {time.time() - request_start_time:.2f} seconds.")
+    elapsed = time.time() - request_start_time
+    logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds.")
     return final_response
 
 @app.post("/cleanup")
