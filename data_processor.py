@@ -51,6 +51,9 @@ ACCOUNT_BASE_MAP = {"NSC_id": "NSC_CODE", "第二期层级": "level", "NSC Code"
 
 # 输出字段英文化映射（中英文对照表）
 FIELD_EN_MAP = {
+    "主机厂经销商ID": "NSC_CODE",
+    "层级": "level", 
+    "门店名": "store_name",
     "车云店+区域综合CPL": "total_cpl",
     "付费CPL（车云店+区域）": "paid_cpl",
     "本地线索占比": "local_leads_ratio",
@@ -922,13 +925,6 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
             )
     # 创建反向映射（英文->中文）
     EN_TO_CN_MAP = {v: k for k, v in FIELD_EN_MAP.items()}
-    
-    # 添加level和store_name的映射
-    EN_TO_CN_MAP.update({
-        "NSC_CODE": "主机厂经销商ID",
-        "level": "层级",
-        "store_name": "门店名"
-    })
     
     # 创建变量类型映射
     TYPE_MAPPING = {}
