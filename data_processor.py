@@ -1105,4 +1105,27 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     print("字段中英文对照表如下：")
     print(json.dumps(FIELD_EN_MAP, ensure_ascii=False, indent=2))
     
-    return final_df, EN_TO_CN_MAP, TYPE_MAPPING
+    # 转换为官方格式：records 数组，每个元素包含 fields 对象
+    records = []
+    
+    # 获取所有行数据
+    rows = final_df.to_dicts()
+    
+    for row in rows:
+        # 创建 fields 对象，使用中文键名
+        fields = {}
+        for en_key, value in row.items():
+            cn_key = EN_TO_CN_MAP.get(en_key, en_key)
+            # 确保值不为 None
+            if value is None:
+                if any(keyword in str(cn_key) for keyword in ['率', '占比']):
+                    value = 0.0
+                elif any(keyword in str(cn_key) for keyword in ['量', '数', '时长', '消耗', 'CPL', '场观', '曝光', '点击', '线索']):
+                    value = 0
+                else:
+                    value = ""
+            fields[cn_key] = value
+        
+        records.append({"fields": fields})
+    
+    return {"records": records}, EN_TO_CN_MAP, TYPE_MAPPING
