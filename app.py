@@ -231,7 +231,11 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         feishu_pages = []
     else:
         # 按维度分组数据
-        dimension_key = "主机厂经销商ID" if dimension == "NSC_CODE" else "层级"
+        # 修正：确保使用正确的中文键
+        if dimension == "level":
+            dimension_key = "层级"
+        else:  # 默认 NSC_CODE
+            dimension_key = "主机厂经销商ID"
         groups = {}
         for record in results_data_chinese:
             key = record.get(dimension_key, 'unknown')
