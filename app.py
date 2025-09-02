@@ -257,7 +257,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         current_page_size = 0
         page_num = 1
         
-        for nsc_code, records in nsc_groups.items():
+        for key, records in groups.items():
             # 计算这组NSC的大小
             group_json = json.dumps(records, default=json_date_serializer)
             group_size = len(group_json.encode('utf-8'))
@@ -284,7 +284,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                     current_page_records = []
                     current_page_size = 0
             
-            # 添加当前NSC组到当前页
+            # 添加当前组到当前页
             current_page_records.extend(records)
             current_page_size += group_size
         
