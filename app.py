@@ -73,7 +73,7 @@ class ProcessRequest(BaseModel):
     account_bi_file: Optional[str] = None
     Spending_file: Optional[str] = None
     spending_sheet_names: Optional[str] = None
-    dimension: Optional[str] = "NSC_CODE"  # 新增：聚合维度，支持 NSC_CODE 或 level
+    dimension: Optional[str] = None  # 新增：聚合维度，支持 NSC_CODE 或 level
     save_to_disk: Optional[bool] = False
 
 @app.post("/process-files")
@@ -120,8 +120,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="No valid file URLs provided. Please provide at least one file URL.")
     spending_sheet_names = provided.get("spending_sheet_names")
-    dimension_raw = provided.get("dimension", "NSC_CODE")
-    dimension = str(dimension_raw).strip() if dimension_raw is not None else "NSC_CODE"
+    dimension_raw = provided.get("dimension")
+    dimension = str(dimension_raw).strip() if dimension_raw is not None and str(dimension_raw).strip() != "" else "NSC_CODE"
     logger.info(f"从请求中提取的dimension参数: '{dimension}' (原始: '{dimension_raw}', 类型: {type(dimension_raw)})")
     logger.info(f"维度验证: dimension == '层级' -> {dimension == '层级'}")
     logger.info(f"维度验证: dimension == 'level' -> {dimension == 'level'}")
