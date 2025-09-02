@@ -472,12 +472,48 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         "feishu_pages": url_feishu
     }
     
-    # 如果save_to_disk为false，才清理临时目录
-    if not save_to_disk:
-        shutil.rmtree(run_dir, ignore_errors=True)
-    
     logger.info(f"PROFILING: Total request time before returning response: {time.time() - request_start_time:.2f} seconds.")
     return final_response
+
+@app.post("/cleanup")
+async def cleanup_old_runs(x_api_key: Optional[str] = Header(None)):
+    """Clean up old run directories that are older than 60 minutes."""
+    if not auth_ok(x_api_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    deleted_count = 0
+    kept_count = 0
+    errors = []
+    now = time.time()
+    sixty_minutes_ago = now - 3600
+
+    if not os.path.exists(TMP_ROOT):
+        msg = "Temporary directory does not exist, nothing to clean."
+        logger.info(msg)
+        return {"code": 200, "msg": msg}
+
+    for run_dir_name in os.listdir(TMP_ROOT):
+        run_dir_path = os.path.join(TMP_ROOT, run_dir_name)
+        if os.path.isdir(run_dir_path):
+            try:
+                mod_time = os.path.getmtime(run_dir_path)
+                if mod_time < sixty_minutes_ago:
+                    shutil.rmtree(run_dir_path)
+                    logger.info(f"Deleted old run directory: {run_dir_path}")
+                    deleted_count += 1
+                else:
+                    kept_count += 1
+            except Exception as e:
+                error_msg = f"Failed to process or delete {run_dir_path}: {str(e)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+    
+    msg = f"Cleanup complete. Deleted {deleted_count} old run(s), kept {kept_count} recent run(s)."
+    if errors:
+        msg += f" Encountered {len(errors)} error(s)."
+    
+    logger.info(msg)
+    return {"code": 200, "msg": msg, "errors": errors}
 
 from urllib.parse import urljoin, quote
 from fastapi.responses import FileResponse
