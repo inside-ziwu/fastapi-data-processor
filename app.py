@@ -174,8 +174,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             results_data_chinese.append(chinese_row)
         
         feishu_records = []
-        for row_dict in results_data_chinese:
-            fields_str = json.dumps(row_dict, ensure_ascii=False, default=json_date_serializer)
+        for chinese_row in results_data_chinese:
+            fields_str = json.dumps(chinese_row, ensure_ascii=False, default=json_date_serializer)
             feishu_records.append({"fields": fields_str})
         feishu_output = {
             "records": feishu_records,
