@@ -13,4 +13,4 @@ ENV TMP_ROOT /tmp/fastapi_data_proc
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["/bin/sh", "-c", "echo '--- Probing Environment ---'; echo '--- 1. Listing /usr/bin ---'; ls -l /usr/bin/crontab; echo '--- 2. Printing PATH ---'; echo $PATH; echo '--- 3. Printing current user ---'; whoami; echo '--- 4. Finding crontab executable ---'; find / -name crontab; echo '--- 5. Probe finished, sleeping ---'; sleep 300"]
