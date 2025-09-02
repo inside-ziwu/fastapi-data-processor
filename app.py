@@ -437,10 +437,10 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             feishu_pages_clean.append(feishu_page)
     
     # Coze插件主响应 - 符合Coze.cn规范
+    # 返回所有记录的扁平数组，支持COZE循环节点处理完整数据
     coze_records = []
-    if feishu_pages:
-        # 使用飞书格式的records数组，但不包含分页信息
-        coze_records = feishu_pages[0]["records"] if feishu_pages else []
+    for page in feishu_pages:
+        coze_records.extend(page["records"])
     
     # 构建Coze.cn插件标准响应格式
     final_response = {
