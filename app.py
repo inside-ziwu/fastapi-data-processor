@@ -73,6 +73,7 @@ class ProcessRequest(BaseModel):
     account_bi_file: Optional[str] = None
     Spending_file: Optional[str] = None
     spending_sheet_names: Optional[str] = None
+    dimension: Optional[str] = "NSC_CODE"  # 新增：聚合维度，支持 NSC_CODE 或 level
     save_to_disk: Optional[bool] = False
 
 @app.post("/process-files")
@@ -119,12 +120,13 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="No valid file URLs provided. Please provide at least one file URL.")
     spending_sheet_names = provided.get("spending_sheet_names")
+    dimension = provided.get("dimension", "NSC_CODE")
     try:
         logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
         # PROFILING: Before Core Processing
         core_processing_start_time = time.time()
         try:
-            result_df = process_all_files(local_paths, spending_sheet_names=spending_sheet_names)
+            result_df, en_to_cn_map, type_mapping = process_all_files(local_paths, spending_sheet_names=spending_sheet_names, dimension=dimension)
         except Exception as e:
             logger.error(f"Core processing failed: {str(e)}", exc_info=True)
             raise
@@ -159,14 +161,27 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                     .alias(col_name)
                 )
 
-        # 4. Create standard and Feishu data formats
+        # 4. Create standard and Feishu data formats with Chinese variable names
         results_data_standard = result_df.to_dicts()
         
+        # 转换为中文字段名
+        results_data_chinese = []
+        for row in results_data_standard:
+            chinese_row = {}
+            for en_key, value in row.items():
+                cn_key = en_to_cn_map.get(en_key, en_key)
+                chinese_row[cn_key] = value
+            results_data_chinese.append(chinese_row)
+        
         feishu_records = []
-        for row_dict in results_data_standard:
+        for row_dict in results_data_chinese:
             fields_str = json.dumps(row_dict, ensure_ascii=False, default=json_date_serializer)
             feishu_records.append({"fields": fields_str})
-        feishu_output = {"records": feishu_records}
+        feishu_output = {
+            "records": feishu_records,
+            "field_mapping": en_to_cn_map,
+            "field_types": type_mapping
+        }
 
         # 5. Calculate final size and construct message
         json_string_for_size_calc = json.dumps(results_data_standard, default=json_date_serializer)
@@ -209,20 +224,20 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
     logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
 
-    # 按NSC完整分组的分页逻辑
-    total_records = len(results_data_standard)
+    # 按维度完整分组的分页逻辑
+    total_records = len(results_data_chinese)
     
     if total_records == 0:
         feishu_pages = []
     else:
-        # 按NSC_CODE分组数据
-        df = pl.DataFrame(results_data_standard)
-        nsc_groups = {}
-        for record in results_data_standard:
-            nsc_code = record.get('NSC_CODE', 'unknown')
-            if nsc_code not in nsc_groups:
-                nsc_groups[nsc_code] = []
-            nsc_groups[nsc_code].append(record)
+        # 按维度分组数据
+        dimension_key = "主机厂经销商ID" if dimension == "NSC_CODE" else "层级"
+        groups = {}
+        for record in results_data_chinese:
+            key = record.get(dimension_key, 'unknown')
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(record)
         
         # 计算1.5MB对应的记录数
         if total_records > 0:
@@ -303,12 +318,15 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             "standard_json": url_standard,
             "feishu_import_json": url_feishu
         },
+        "dimension_used": dimension,
         "feishu_format": {
             "pages": len(feishu_pages),
             "page_size": len(feishu_pages[0]["records"]) if feishu_pages else 0,
-            "all_pages": feishu_pages
+            "all_pages": feishu_pages,
+            "field_mapping": en_to_cn_map,
+            "field_types": type_mapping
         },
-        "results_preview": results_data_standard[:3]
+        "results_preview": results_data_chinese[:3]
     }
     
     # 如果save_to_disk为false，才清理临时目录
