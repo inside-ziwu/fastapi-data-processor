@@ -337,10 +337,14 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
 
     # 直接返回完整数据数组 - 符合Coze.cn规范，支持下游循环节点
+    final_records = []
+    for row in results_data_standard:
+        final_records.append({"fields": row})
+
     final_response = {
         "code": 200,
         "msg": message,
-        "records": results_data_standard
+        "records": final_records
     }
 
     elapsed = time.time() - request_start_time

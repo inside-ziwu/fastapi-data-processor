@@ -29,21 +29,21 @@ def handler(args):
         api_response = resp.json()
 
         # 直接返回Coze格式，无需二次请求
-        return [{
+        return {
             "code": api_response.get("code", 200),
             "msg": api_response.get("msg", ""),
             "records": api_response.get("records", [])
-        }]
+        }
 
     except requests.exceptions.HTTPError as e:
-        return [{
+        return {
             "code": e.response.status_code,
             "msg": f"处理失败: {e.response.text}",
             "records": []
-        }]
+        }
     except Exception as e:
-        return [{
+        return {
             "code": 500,
             "msg": str(e),
             "records": []
-        }]
+        }
