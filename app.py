@@ -22,6 +22,7 @@ def json_date_serializer(obj):
 import polars as pl
 
 from data_processor import process_all_files
+from feishu_writer import FeishuWriter
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -336,34 +337,12 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
     logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
 
-# 返回对象数组格式，每个对象包含字符串字段，一次性返回所有数据
-    # 将数据转换为JSON字符串数组，每个字符串是一个完整的对象
-    string_records = []
-    for row in results_data_standard:
-        # 将对象转换为JSON字符串
-        row_json = json.dumps(row, ensure_ascii=False, default=json_date_serializer)
-        string_records.append(row_json)
-
-# 单次返回完整数据，不限制2MB
-    total_size = sum(len(record.encode('utf-8')) for record in string_records)
-    message = f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，数据大小约 {total_size / (1024 * 1024):.2f} MB"
-
-    # 返回完整数据，让循环节点处理
-    elapsed = time.time() - request_start_time
-    logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Total records: {len(string_records)}, Total bytes: {total_size}")
+    # 用于API返回的最终结果
+    string_records = [json.dumps(row, ensure_ascii=False, default=json_date_serializer) for row in results_data_standard]
     
-    # 飞书写入（COZE插件参数 - 使用dict获取）
-    import logging
-    feishu_logger = logging.getLogger("feishu")
-    
-    # 直接处理原始JSON数据
+    # 飞书写入逻辑
     request_body = await request.json()
-    feishu_enabled = request_body.get("feishu_enabled", False)
-    
-    feishu_logger.info(f"[调试] 收到feishu_enabled: {feishu_enabled}")
-    feishu_logger.info(f"[调试] 完整请求体: {request_body}")
-    
-    if feishu_enabled:
+    if request_body.get("feishu_enabled", False):
         feishu_config = {
             "enabled": True,
             "app_id": request_body.get("feishu_app_id", ""),
@@ -371,16 +350,29 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             "app_token": request_body.get("feishu_app_token", ""),
             "table_id": request_body.get("feishu_table_id", "")
         }
-        feishu_logger.info("[飞书] 检测到写入请求，开始处理")
-        from feishu_writer import FeishuWriter
+        logger.info("[飞书] 检测到写入请求，开始处理。")
+        # 注意：这里传递的是带有中文键的 `results_data_chinese`
         writer = FeishuWriter(feishu_config)
-        await writer.write_records(string_records)
+        await writer.write_records(results_data_chinese)
     else:
-        feishu_logger.info("[飞书] 写入未启用，跳过飞书写入")
+        logger.info("[飞书] 写入未启用，跳过飞书写入。")
+
+    elapsed = time.time() - request_start_time
+    logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Returning {len(string_records)} records.")
+
+    # The original message is mostly correct, but let's ensure the size is based on the final string records.
+    final_size_bytes = sum(len(r.encode('utf-8')) for r in string_records)
+    final_size_mb = final_size_bytes / (1024 * 1024)
+    size_warning = " (超过1.5MB)" if final_size_mb > 1.5 else ""
+    final_message = (
+        f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，"
+        f"数据大小约 {final_size_mb:.2f} MB{size_warning}。"
+        f"清理了 {cleaned_count} 个无效数值。"
+    )
 
     return {
         "code": 200,
-        "msg": message,
+        "msg": final_message,
         "records": string_records
     }
 
