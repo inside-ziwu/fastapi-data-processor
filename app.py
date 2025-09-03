@@ -354,10 +354,16 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     
     # 飞书写入（COZE插件参数）
     feishu_config = payload.dict().get("feishu_config", {})
+    import logging
+    feishu_logger = logging.getLogger("feishu")
+    
     if feishu_config.get("enabled"):
         from feishu_writer import FeishuWriter
+        feishu_logger.info("[飞书] 检测到写入请求，开始处理")
         writer = FeishuWriter(feishu_config)
         await writer.write_records(string_records)
+    else:
+        feishu_logger.info("[飞书] 写入未启用，跳过飞书写入")
 
     return {
         "code": 200,
