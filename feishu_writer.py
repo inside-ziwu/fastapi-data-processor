@@ -1,10 +1,11 @@
 import httpx
 import asyncio
-import logging
 from typing import List, Dict
 from field_mapping import EN_TO_CN_MAP
+import logging
 
-logger = logging.getLogger(__name__)
+# 使用与data_processor.py相同的日志配置
+logger = logging.getLogger("feishu")
 
 class FeishuWriter:
     def __init__(self, config: dict):
