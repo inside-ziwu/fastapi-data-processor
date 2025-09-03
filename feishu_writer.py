@@ -1,5 +1,6 @@
 import httpx
 import asyncio
+import json
 from typing import List, Dict
 from field_mapping import EN_TO_CN_MAP
 import logging
@@ -50,35 +51,36 @@ class FeishuWriter:
                     cn_record[cn_key] = value
                 cn_records.append(cn_record)
             
-            # 调试：第一批前5条记录
-            if cn_records:
-                logger.info(f"[调试] 第一批前5条记录: {cn_records[:5]}")
+            # 调试：第一批前5条记录（仅在DEBUG级别显示）
+            if cn_records and logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"[调试] 第一批前5条记录: {cn_records[:5]}")
             
-            # 调试：检查字段类型和空值，以及数值范围
-            problematic_fields = []
-            for i, record in enumerate(cn_records):
-                for key, value in record.items():
-                    if value is None or value == "":
-                        logger.warning(f"[调试] 记录{i+1}字段{key}为空值")
-                        problematic_fields.append(key)
-                    elif isinstance(value, float):
-                        if str(value) == "nan" or str(value) == "NaN" or str(value) == "inf" or str(value) == "-inf":
-                            logger.warning(f"[调试] 记录{i+1}字段{key}为无效浮点数: {value}")
+            # 调试：检查字段类型和空值（仅在DEBUG级别显示）
+            if logger.isEnabledFor(logging.DEBUG):
+                problematic_fields = []
+                for i, record in enumerate(cn_records):
+                    for key, value in record.items():
+                        if value is None or value == "":
+                            logger.debug(f"[调试] 记录{i+1}字段{key}为空值")
                             problematic_fields.append(key)
-                        elif abs(value) > 1e15:  # 飞书可能限制大数值
-                            logger.warning(f"[调试] 记录{i+1}字段{key}数值过大: {value}")
+                        elif isinstance(value, float):
+                            if str(value) == "nan" or str(value) == "NaN" or str(value) == "inf" or str(value) == "-inf":
+                                logger.debug(f"[调试] 记录{i+1}字段{key}为无效浮点数: {value}")
+                                problematic_fields.append(key)
+                            elif abs(value) > 1e15:
+                                logger.debug(f"[调试] 记录{i+1}字段{key}数值过大: {value}")
+                                problematic_fields.append(key)
+                            elif abs(value) < 1e-15 and value != 0:
+                                logger.debug(f"[调试] 记录{i+1}字段{key}数值过小: {value}")
+                                problematic_fields.append(key)
+                        elif isinstance(value, str) and len(value) > 500:
+                            logger.debug(f"[调试] 记录{i+1}字段{key}文本过长: {len(value)}字符")
                             problematic_fields.append(key)
-                        elif abs(value) < 1e-15 and value != 0:  # 极小数值
-                            logger.warning(f"[调试] 记录{i+1}字段{key}数值过小: {value}")
-                            problematic_fields.append(key)
-                    elif isinstance(value, str) and len(value) > 500:  # 飞书文本字段长度限制
-                        logger.warning(f"[调试] 记录{i+1}字段{key}文本过长: {len(value)}字符")
-                        problematic_fields.append(key)
-            
-            if problematic_fields:
-                logger.warning(f"[调试] 发现问题字段: {set(problematic_fields)}")
-            else:
-                logger.info("[调试] 所有字段检查通过")
+                
+                if problematic_fields:
+                    logger.debug(f"[调试] 发现问题字段: {set(problematic_fields)}")
+                else:
+                    logger.debug("[调试] 所有字段检查通过")
             
             # 清理和格式化数据，处理飞书API限制
             cleaned_records = []
@@ -160,15 +162,95 @@ class FeishuWriter:
                             error_code = error_resp.get("code", "未知错误码")
                             
                             logger.error(f"[飞书] 第{i+1}批批量写入失败：{resp.status_code} - {error_code} - {error_msg}")
+                            logger.error(f"[飞书] 完整错误响应: {json.dumps(error_resp, ensure_ascii=False, indent=2)}")
+                            logger.error(f"[飞书] 请求payload结构: {json.dumps(payload, ensure_ascii=False)[:500]}...")
                             
-                            # 智能重试：逐条写入以跳过问题记录
+                            # 基于飞书API文档的结构化400错误处理
+                            if resp.status_code == 400:
+                                logger.error(f"[飞书] API格式错误，开始智能修复...")
+                                
+                                # 分析具体错误类型
+                                error_details = error_resp
+                                if isinstance(error_resp, dict) and "msg" in error_resp:
+                                    error_msg_lower = str(error_resp.get("msg", "")).lower()
+                                    
+                                    # 字段格式错误处理
+                                    if any(keyword in error_msg_lower for keyword in ["field", "column", "format", "type"]):
+                                        logger.info("[飞书] 检测到字段格式问题，执行自动修复")
+                                        
+                                        # 结构化数据清理
+                                        def clean_field_name(name: str) -> str:
+                                            """清理字段名，符合飞书要求"""
+                                            name = str(name).strip()
+                                            # 移除控制字符和特殊符号
+                                            name = ''.join(c for c in name if c.isprintable() and c not in '\n\r\t\\')
+                                            # 限制长度（飞书建议50字符以内）
+                                            return name[:50]
+                                        
+                                        def clean_field_value(value):
+                                            """清理字段值"""
+                                            if value is None or str(value).lower() in ['nan', 'none', 'null', '']:
+                                                return None
+                                            
+                                            if isinstance(value, float):
+                                                # 处理浮点特殊值
+                                                if str(value) in ['nan', 'inf', '-inf']:
+                                                    return None
+                                                # 限制精度避免科学计数法
+                                                return round(value, 6) if abs(value) < 1e15 else round(value, 2)
+                                            
+                                            if isinstance(value, str):
+                                                # 清理字符串
+                                                value = value.strip()
+                                                if len(value) > 500:  # 飞书文本字段限制
+                                                    value = value[:497] + "..."
+                                                return value
+                                            
+                                            return value
+                                        
+                                        # 应用清理
+                                        cleaned_chunk = []
+                                        for record in chunk:
+                                            cleaned_record = {}
+                                            for key, value in record.items():
+                                                clean_key = clean_field_name(key)
+                                                clean_value = clean_field_value(value)
+                                                if clean_key and clean_value is not None:
+                                                    cleaned_record[clean_key] = clean_value
+                                            
+                                            if cleaned_record:  # 非空记录
+                                                cleaned_chunk.append(cleaned_record)
+                                        
+                                        if cleaned_chunk:
+                                            logger.info(f"[飞书] 数据清理完成：{len(chunk)}→{len(cleaned_chunk)}条")
+                                            retry_payload = {"records": [{"fields": item} for item in cleaned_chunk]}
+                                            retry_resp = await client.post(self.base_url, json=retry_payload, headers=headers, timeout=30)
+                                            
+                                            if retry_resp.status_code == 200:
+                                                logger.info(f"[飞书] 清理后重试成功：{len(cleaned_chunk)}条")
+                                                success_count += len(cleaned_chunk)
+                                                continue
+                                            else:
+                                                retry_error = retry_resp.json()
+                                                logger.error(f"[飞书] 清理重试失败: {retry_error}")
+                                                
+                                    else:
+                                        logger.error(f"[飞书] 未知400错误类型: {error_msg_lower}")
+                                
+                                # 记录具体错误信息用于调试
+                                logger.error(f"[飞书] 错误详情: {json.dumps(error_details, ensure_ascii=False, indent=2)}")
+                            
+                            # 智能重试：逐条写入以跳过问题记录（优化日志输出）
                             chunk_success = 0
                             chunk_failed = 0
+                            error_summary = []
                             
                             for j, single_record in enumerate(chunk):
                                 # 再次验证单条记录不为空
                                 if not single_record:
-                                    logger.warning(f"[飞书] 跳过空记录 - 批次{i+1}索引{j}")
+                                    chunk_failed += 1
+                                    if j < 3:  # 前3个空记录显示详细信息
+                                        logger.warning(f"[飞书] 跳过空记录 - 批次{i+1}索引{j}")
                                     continue
                                     
                                 single_payload = {"records": [{"fields": single_record}]}
@@ -180,13 +262,24 @@ class FeishuWriter:
                                     else:
                                         chunk_failed += 1
                                         single_error = single_resp.json()
-                                        # 只记录关键错误信息，避免日志过多
-                                        if j < 5:  # 只显示前5个错误
-                                            logger.error(f"[飞书] 跳过问题记录 - 批次{i+1}索引{j}: {single_error.get('msg', '未知错误')}")
+                                        error_msg = single_error.get('msg', '未知错误')
+                                        error_summary.append(f"索引{j}: {error_msg}")
+                                        
+                                        # 只记录前10个错误详情，其余汇总
+                                        if j < 10:
+                                            logger.error(f"[飞书] 跳过问题记录 - 批次{i+1}索引{j}: {error_msg}")
                                 except Exception as single_e:
                                     chunk_failed += 1
-                                    if j < 5:
+                                    error_summary.append(f"索引{j}: {str(single_e)[:50]}")
+                                    if j < 10:
                                         logger.error(f"[飞书] 单条记录异常 - 批次{i+1}索引{j}: {str(single_e)[:100]}")
+                            
+                            # 汇总剩余错误
+                            if chunk_failed > 10:
+                                logger.error(f"[飞书] 批次{i+1}还有{chunk_failed-10}条记录错误（已显示前10个详情）")
+                            
+                            if error_summary:
+                                logger.info(f"[飞书] 批次{i+1}逐条重试完成：成功{chunk_success}条，跳过{chunk_failed}条")
                             
                             total_processed += len(chunk)
                             logger.info(f"[飞书] 第{i+1}批逐条重试完成：成功{chunk_success}条，跳过{chunk_failed}条")
