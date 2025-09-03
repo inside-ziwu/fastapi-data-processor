@@ -352,21 +352,24 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     elapsed = time.time() - request_start_time
     logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Total records: {len(string_records)}, Total bytes: {total_size}")
     
-    # 飞书写入（COZE插件参数 - 直接获取）
+    # 飞书写入（COZE插件参数 - 使用dict获取）
     import logging
     feishu_logger = logging.getLogger("feishu")
     
-    feishu_enabled = payload.feishu_enabled if hasattr(payload, 'feishu_enabled') else False
+    # 直接处理原始JSON数据
+    request_body = await request.json()
+    feishu_enabled = request_body.get("feishu_enabled", False)
     
     feishu_logger.info(f"[调试] 收到feishu_enabled: {feishu_enabled}")
+    feishu_logger.info(f"[调试] 完整请求体: {request_body}")
     
     if feishu_enabled:
         feishu_config = {
             "enabled": True,
-            "app_id": payload.feishu_app_id,
-            "app_secret": payload.feishu_app_secret,
-            "app_token": payload.feishu_app_token,
-            "table_id": payload.feishu_table_id
+            "app_id": request_body.get("feishu_app_id", ""),
+            "app_secret": request_body.get("feishu_app_secret", ""),
+            "app_token": request_body.get("feishu_app_token", ""),
+            "table_id": request_body.get("feishu_table_id", "")
         }
         feishu_logger.info("[飞书] 检测到写入请求，开始处理")
         from feishu_writer import FeishuWriter
