@@ -82,14 +82,22 @@ class FeishuWriter:
             
             # 清理和格式化数据，处理飞书API限制
             cleaned_records = []
-            for record in cn_records:
+            empty_records_count = 0
+            
+            for record_index, record in enumerate(cn_records):
                 cleaned = {}
+                valid_field_count = 0
+                
                 for key, value in record.items():
+                    # 跳过空值，但保留有效值
                     if value is None or value == "" or str(value).lower() == "nan" or str(value) == "NaN":
-                        continue  # 跳过空值和NaN字段
+                        continue
                     
                     # 处理浮点数精度问题
                     if isinstance(value, float):
+                        # 处理特殊浮点值
+                        if str(value) == "nan" or str(value) == "NaN" or str(value) == "inf" or str(value) == "-inf":
+                            continue
                         # 限制小数位数，避免科学计数法
                         if abs(value) < 1e-10:  # 处理极小的数值
                             value = 0.0
@@ -98,65 +106,97 @@ class FeishuWriter:
                         else:
                             value = round(value, 6)  # 一般数值保留6位小数
                     
+                    # 处理文本长度限制
+                    if isinstance(value, str) and len(value) > 500:
+                        value = value[:497] + "..."
+                    
                     cleaned[key] = value
-                cleaned_records.append(cleaned)
+                    valid_field_count += 1
+                
+                # 确保记录不为空
+                if valid_field_count > 0:
+                    cleaned_records.append(cleaned)
+                else:
+                    empty_records_count += 1
+                    logger.warning(f"[调试] 记录{record_index+1}清理后为空，已跳过")
+            
+            if empty_records_count > 0:
+                logger.warning(f"[调试] 共跳过{empty_records_count}条空记录")
+            
+            if not cleaned_records:
+                logger.warning("[飞书] 所有记录清理后为空，无数据可写入")
+                return True
             
             chunks = [cleaned_records[i:i+480] for i in range(0, len(cleaned_records), 480)]
             logger.info(f"[飞书] 分{len(chunks)}批写入，每批{len(chunks[0]) if chunks else 0}条")
             
-            # 第2步：批量写入，带重试和详细错误处理
+# 第2步：批量写入，带智能重试和错误处理
             success_count = 0
+            total_processed = 0
+            
             async with httpx.AsyncClient() as client:
                 for i, chunk in enumerate(chunks):
                     payload = {"records": [{"fields": item} for item in chunk]}
                     
                     # 调试：检查payload结构
                     if i == 0:
-                        logger.info(f"[调试] 第{i+1}批payload结构: {payload['records'][:2] if payload['records'] else '空数据'}")
-                        # 检查第一条记录的字段类型
+                        logger.info(f"[调试] 第{i+1}批payload: {len(payload['records'])}条记录")
                         if payload['records']:
                             first_record = payload['records'][0]['fields']
-                            logger.info(f"[调试] 第一条记录字段类型: {[(k, type(v).__name__, str(v)[:50]) for k, v in first_record.items()]}")
+                            logger.info(f"[调试] 样本记录字段: {list(first_record.keys())[:10]}...")
                     
                     try:
                         resp = await client.post(self.base_url, json=payload, headers=headers, timeout=30)
                         
                         if resp.status_code == 200:
                             result = resp.json()
-                            added_count = result.get('data', {}).get('records', [])
-                            success_count += len(added_count)
-                            logger.info(f"[飞书] 第{i+1}批写入成功：{len(added_count)}/{len(chunk)}条")
+                            added_records = result.get('data', {}).get('records', [])
+                            success_count += len(added_records)
+                            logger.info(f"[飞书] 第{i+1}批批量写入成功：{len(added_records)}/{len(chunk)}条")
+                            total_processed += len(chunk)
                         else:
                             error_resp = resp.json()
                             error_msg = error_resp.get("msg", "未知错误")
                             error_code = error_resp.get("code", "未知错误码")
                             
-                            # 尝试逐条写入以定位问题记录
-                            logger.error(f"[飞书] 第{i+1}批批量写入失败：{resp.status_code} - 错误码{error_code} - {error_msg}")
+                            logger.error(f"[飞书] 第{i+1}批批量写入失败：{resp.status_code} - {error_code} - {error_msg}")
                             
-                            # 如果批量失败，尝试逐条写入并记录失败的具体记录
-                            failed_indices = []
+                            # 智能重试：逐条写入以跳过问题记录
+                            chunk_success = 0
+                            chunk_failed = 0
+                            
                             for j, single_record in enumerate(chunk):
+                                # 再次验证单条记录不为空
+                                if not single_record:
+                                    logger.warning(f"[飞书] 跳过空记录 - 批次{i+1}索引{j}")
+                                    continue
+                                    
                                 single_payload = {"records": [{"fields": single_record}]}
                                 try:
                                     single_resp = await client.post(self.base_url, json=single_payload, headers=headers, timeout=30)
                                     if single_resp.status_code == 200:
                                         success_count += 1
+                                        chunk_success += 1
                                     else:
-                                        failed_indices.append(j)
+                                        chunk_failed += 1
                                         single_error = single_resp.json()
-                                        logger.error(f"[飞书] 单条记录失败 - 记录索引{j}: {single_error}")
+                                        # 只记录关键错误信息，避免日志过多
+                                        if j < 5:  # 只显示前5个错误
+                                            logger.error(f"[飞书] 跳过问题记录 - 批次{i+1}索引{j}: {single_error.get('msg', '未知错误')}")
                                 except Exception as single_e:
-                                    failed_indices.append(j)
-                                    logger.error(f"[飞书] 单条记录异常 - 记录索引{j}: {single_e}")
+                                    chunk_failed += 1
+                                    if j < 5:
+                                        logger.error(f"[飞书] 单条记录异常 - 批次{i+1}索引{j}: {str(single_e)[:100]}")
                             
-                            logger.warning(f"[飞书] 第{i+1}批逐条写入完成：成功{len(chunk) - len(failed_indices)}/{len(chunk)}条")
+                            total_processed += len(chunk)
+                            logger.info(f"[飞书] 第{i+1}批逐条重试完成：成功{chunk_success}条，跳过{chunk_failed}条")
                             
                     except Exception as e:
-                        logger.error(f"[飞书] 第{i+1}批写入异常: {e}")
+                        logger.error(f"[飞书] 第{i+1}批写入异常: {str(e)[:200]}")
+                        total_processed += len(chunk)
                         
-            logger.info(f"[飞书] 写入完成：成功{success_count}/{len(cleaned_records)}条 (原始{len(records)}条，清理后{len(cleaned_records)}条)")
-            return success_count == len(records)
+            logger.info(f"[飞书] 写入总结：原始{len(records)}条 → 清理后{len(cleaned_records)}条 → 成功{success_count}条 → 失败{len(cleaned_records) - success_count}条")
+            return success_count > 0
             
         except httpx.HTTPStatusError as e:
             logger.error(f"[飞书] HTTP错误：{e.response.status_code} - {e.response.text}")
