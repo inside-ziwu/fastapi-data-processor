@@ -353,7 +353,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Total records: {len(string_records)}, Total bytes: {total_size}")
     
     # 飞书写入（COZE插件参数）
-    feishu_config = body.get("feishu_config", {})
+    feishu_config = payload.dict().get("feishu_config", {})
     if feishu_config.get("enabled"):
         from feishu_writer import FeishuWriter
         writer = FeishuWriter(feishu_config)
