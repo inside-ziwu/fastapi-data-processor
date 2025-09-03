@@ -3,7 +3,7 @@ import json
 
 def handler(args):
     """
-    Coze handler v6: 支持飞书多维表格写入
+    Coze handler v6: 支持飞书多维表格写入（新版认证方式）
     """
     input_obj = getattr(args, 'input', None)
     def get_input_arg(name):
@@ -19,18 +19,20 @@ def handler(args):
         if (v := get_input_arg(k))
     }
 
-    # 飞书配置参数
+    # 新版飞书配置参数
     feishu_enabled = getattr(input_obj, 'feishu_enabled', False)
+    feishu_app_id = getattr(input_obj, 'feishu_app_id', '')
+    feishu_app_secret = getattr(input_obj, 'feishu_app_secret', '')
     feishu_app_token = getattr(input_obj, 'feishu_app_token', '')
     feishu_table_id = getattr(input_obj, 'feishu_table_id', '')
-    feishu_token = getattr(input_obj, 'feishu_token', '')
     
     if feishu_enabled:
         data["feishu_config"] = {
             "enabled": True,
+            "app_id": feishu_app_id,
+            "app_secret": feishu_app_secret,
             "app_token": feishu_app_token,
-            "table_id": feishu_table_id,
-            "token": feishu_token
+            "table_id": feishu_table_id
         }
 
     api_url = "https://dtc.zeabur.app/process-files"
