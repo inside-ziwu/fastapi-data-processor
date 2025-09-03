@@ -336,23 +336,35 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
     logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
 
-    # 直接返回完整数据数组 - 符合Coze.cn规范，支持下游循环节点
-    # 返回字符串数组格式
-    final_records = []
+# 返回对象数组格式，每个对象包含字符串字段，一次性返回所有数据
+    # 将数据转换为JSON字符串数组，每个字符串是一个完整的对象
+    string_records = []
     for row in results_data_standard:
-        # 将每个数据行转换为JSON字符串
-        row_str = json.dumps(row, ensure_ascii=False, default=json_date_serializer)
-        final_records.append(row_str)
+        # 将对象转换为JSON字符串
+        row_json = json.dumps(row, ensure_ascii=False, default=json_date_serializer)
+        string_records.append(row_json)
 
-    final_response = {
-        "code": 200,
-        "msg": message,
-        "records": final_records
-    }
+    # 检查总大小是否超过2MB
+    total_size = sum(len(record.encode('utf-8')) for record in string_records)
+    
+    if total_size > 2 * 1024 * 1024:
+        # 如果超过2MB，截取部分数据
+        current_size = 0
+        limited_records = []
+        for record in string_records:
+            record_size = len(record.encode('utf-8'))
+            if current_size + record_size > 2 * 1024 * 1024:
+                break
+            limited_records.append(record)
+            current_size += record_size
+        
+        logger.warning(f"数据超过2MB限制，返回 {len(limited_records)}/{len(string_records)} 条记录")
+        string_records = limited_records
 
+    # 直接返回字符串数组，循环节点可以遍历每个JSON字符串
     elapsed = time.time() - request_start_time
-    logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds.")
-    return final_response
+    logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Array size: {len(string_records)}, Total bytes: {sum(len(r.encode('utf-8')) for r in string_records)}")
+    return string_records
 
 @app.post("/cleanup")
 async def cleanup_old_runs(x_api_key: Optional[str] = Header(None)):
