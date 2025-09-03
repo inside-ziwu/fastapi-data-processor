@@ -42,7 +42,7 @@ class FeishuWriter:
             return {}
 
         logger.info(f"[飞书] 开始获取表格 {self.table_id} 的 schema...")
-        schema_url = f"https://open.feishu.cn/open-apis/base/v1/apps/{self.app_token}/tables/{self.table_id}/fields"
+        schema_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self.app_token}/tables/{self.table_id}/fields"
         
         try:
             token = await self.get_tenant_token()
