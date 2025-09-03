@@ -4,6 +4,7 @@ import shutil
 import json
 import time
 import logging
+import asyncio
 from typing import Optional, Dict
 from fastapi import FastAPI, Body, HTTPException, Header, Response, Request
 from fastapi.responses import JSONResponse
@@ -76,6 +77,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Coze-Compatible Data Processor")
+
+# Global dictionary to track active tasks by user_id
+ACTIVE_TASKS: Dict[str, asyncio.Task] = {}
 
 TMP_ROOT = os.environ.get("TMP_ROOT", "/tmp/fastapi_data_proc")
 os.makedirs(TMP_ROOT, exist_ok=True)
@@ -183,9 +187,8 @@ class ProcessRequest(BaseModel):
 
 @app.post("/process-files")
 async def process_files(request: Request, payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
-    import asyncio
     from concurrent.futures import TimeoutError as AsyncTimeoutError
-    
+
     # 6分钟强制超时设置（360秒）
     TOTAL_TIMEOUT = 360
     request_start_time = time.time()
@@ -193,10 +196,28 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
 
     if not auth_ok(x_api_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
+
     run_dir = os.path.join(TMP_ROOT, f"run_{int(time.time()*1000)}")
     os.makedirs(run_dir, exist_ok=True)
+
     raw_body = await request.body()
     logger.info(f"RAW REQUEST BODY: {raw_body.decode()}")
+
+    # --- Task Cancellation Logic ---
+    user_id = None
+    try:
+        request_data = json.loads(raw_body)
+        user_id = request_data.get("user", {}).get("id")
+    except json.JSONDecodeError:
+        logger.warning("Could not parse user_id from request body for task cancellation.")
+
+    if user_id and user_id in ACTIVE_TASKS:
+        old_task = ACTIVE_TASKS.pop(user_id)
+        if not old_task.done():
+            old_task.cancel()
+            logger.warning(f"User {user_id} started a new request. Cancelling the previous one.")
+    # --- End Task Cancellation Logic ---
+
     file_keys = [
         "video_excel_file", "live_bi_file", "msg_excel_file", "DR1_file", "DR2_file",
         "account_base_file", "leads_file", "account_bi_file", "Spending_file"
@@ -260,20 +281,38 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             logger.info(f"PROFILING: Core processing finished. Total core processing time: {core_processing_end_time - core_processing_start_time:.2f} seconds.")
             return result_df, en_to_cn_map, type_mapping
         
-        # 执行带超时的核心处理
+        # --- Modified Task Execution with Cancellation ---
+        task_to_run = asyncio.create_task(core_processing_task())
+        if user_id:
+            ACTIVE_TASKS[user_id] = task_to_run
+
         try:
+            remaining_time = TOTAL_TIMEOUT - (time.time() - request_start_time)
+            if remaining_time <= 0:
+                raise AsyncTimeoutError()
+
             result_df, en_to_cn_map, type_mapping = await asyncio.wait_for(
-                core_processing_task(), 
-                timeout=TOTAL_TIMEOUT - (time.time() - request_start_time)
+                task_to_run,
+                timeout=remaining_time
             )
         except AsyncTimeoutError:
             elapsed = time.time() - request_start_time
             logger.error(f"Processing timeout after {elapsed:.2f}s, max allowed: {TOTAL_TIMEOUT}s")
             shutil.rmtree(run_dir, ignore_errors=True)
             raise HTTPException(
-                status_code=504, 
+                status_code=504,
                 detail=f"处理超时，任务在{elapsed:.1f}秒后未完成（最大允许{TOTAL_TIMEOUT}秒）"
             )
+        except asyncio.CancelledError:
+            elapsed = time.time() - request_start_time
+            logger.warning(f"Task for user {user_id} was cancelled after {elapsed:.2f}s, likely by a new request.")
+            shutil.rmtree(run_dir, ignore_errors=True)
+            raise HTTPException(status_code=499, detail="请求被新的请求覆盖 (Request superseded by a new one)")
+        finally:
+            # Clean up the task from the registry once it's done or cancelled
+            if user_id and user_id in ACTIVE_TASKS and ACTIVE_TASKS[user_id] is task_to_run:
+                del ACTIVE_TASKS[user_id]
+        # --- End Modified Task Execution ---
 
         # PROFILING: Before Output Prep
         output_prep_start_time = time.time()
