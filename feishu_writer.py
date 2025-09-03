@@ -50,7 +50,31 @@ class FeishuWriter:
                     cn_record[cn_key] = value
                 cn_records.append(cn_record)
             
-            chunks = [cn_records[i:i+480] for i in range(0, len(cn_records), 480)]
+            # 调试：第一批前5条记录
+            if cn_records:
+                logger.info(f"[调试] 第一批前5条记录: {cn_records[:5]}")
+            
+            # 调试：检查字段类型和空值
+            for i, record in enumerate(cn_records):
+                for key, value in record.items():
+                    if value is None or value == "":
+                        logger.warning(f"[调试] 记录{i+1}字段{key}为空值")
+                    elif isinstance(value, float) and (str(value) == "nan" or str(value) == "NaN"):
+                        logger.warning(f"[调试] 记录{i+1}字段{key}为NaN")
+                    elif str(value).lower() == "nan":
+                        logger.warning(f"[调试] 记录{i+1}字段{key}为字符串NaN")
+            
+            # 清理空值和NaN的临时解决方案
+            cleaned_records = []
+            for record in cn_records:
+                cleaned = {}
+                for key, value in record.items():
+                    if value is None or value == "" or str(value).lower() == "nan" or str(value) == "NaN":
+                        continue  # 跳过空值和NaN字段
+                    cleaned[key] = value
+                cleaned_records.append(cleaned)
+            
+            chunks = [cleaned_records[i:i+480] for i in range(0, len(cleaned_records), 480)]
             logger.info(f"[飞书] 分{len(chunks)}批写入，每批{len(chunks[0]) if chunks else 0}条")
             
             # 第2步：批量写入
@@ -58,16 +82,30 @@ class FeishuWriter:
             async with httpx.AsyncClient() as client:
                 for i, chunk in enumerate(chunks):
                     payload = {"records": [{"fields": item} for item in chunk]}
+                    
+                    # 调试：检查payload结构
+                    if i == 0:
+                        logger.info(f"[调试] 第{i+1}批payload结构: {payload['records'][:2] if payload['records'] else '空数据'}")
+                    
                     resp = await client.post(self.base_url, json=payload, headers=headers, timeout=30)
                     
                     if resp.status_code == 200:
                         success_count += len(chunk)
                         logger.info(f"[飞书] 第{i+1}批写入成功：{len(chunk)}条")
                     else:
-                        error_msg = resp.json().get("msg", "未知错误")
-                        logger.error(f"[飞书] 第{i+1}批写入失败：{resp.status_code} - {error_msg}")
+                        try:
+                            error_resp = resp.json()
+                            error_msg = error_resp.get("msg", "未知错误")
+                            error_code = error_resp.get("code", "未知错误码")
+                            logger.error(f"[飞书] 第{i+1}批写入失败：{resp.status_code} - 错误码{error_code} - {error_msg}")
+                            
+                            # 调试：失败时打印详细错误信息
+                            if "records" in error_resp:
+                                logger.error(f"[调试] 失败详情: {error_resp}")
+                        except Exception as e:
+                            logger.error(f"[飞书] 第{i+1}批写入失败：{resp.status_code} - 无法解析错误响应: {resp.text}")
                         
-            logger.info(f"[飞书] 写入完成：成功{success_count}/{len(records)}条")
+            logger.info(f"[飞书] 写入完成：成功{success_count}/{len(cleaned_records)}条 (原始{len(records)}条，清理后{len(cleaned_records)}条)")
             return success_count == len(records)
             
         except httpx.HTTPStatusError as e:
