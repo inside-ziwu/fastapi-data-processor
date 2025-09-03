@@ -3,7 +3,7 @@ import json
 
 def handler(args):
     """
-    Coze handler v6: 方案2实现 - 接收完整数据并按2M大小智能分块
+    Coze handler v6: 支持飞书多维表格写入
     """
     input_obj = getattr(args, 'input', None)
     def get_input_arg(name):
@@ -19,21 +19,30 @@ def handler(args):
         if (v := get_input_arg(k))
     }
 
+    # 飞书配置参数
+    feishu_enabled = getattr(input_obj, 'feishu_enabled', False)
+    feishu_app_token = getattr(input_obj, 'feishu_app_token', '')
+    feishu_table_id = getattr(input_obj, 'feishu_table_id', '')
+    feishu_token = getattr(input_obj, 'feishu_token', '')
+    
+    if feishu_enabled:
+        data["feishu_config"] = {
+            "enabled": True,
+            "app_token": feishu_app_token,
+            "table_id": feishu_table_id,
+            "token": feishu_token
+        }
+
     api_url = "https://dtc.zeabur.app/process-files"
     headers = {"Content-Type": "application/json", "x-api-key": "coze-api-key-2024"}
 
     try:
-        # 获取完整数据
         resp = requests.post(api_url, json=data, headers=headers, timeout=400)
         resp.raise_for_status()
         api_response = resp.json()
 
-        # 提取字符串数组
         string_records = api_response.get("records", [])
-        total_size = api_response.get("total_size", 0)
-        total_records = api_response.get("total_records", len(string_records))
-
-        # 直接返回完整数据，不限制2MB
+        
         return {
             "code": 200,
             "msg": f"处理完成，共{len(string_records)}条记录",
@@ -44,19 +53,11 @@ def handler(args):
         return {
             "code": e.response.status_code,
             "msg": f"处理失败: {e.response.text}",
-            "records": [],
-            "total_chunks": 1,
-            "current_chunk": 1,
-            "has_more": False,
-            "next_chunk": -1
+            "records": []
         }
     except Exception as e:
         return {
             "code": 500,
             "msg": str(e),
-            "records": [],
-            "total_chunks": 1,
-            "current_chunk": 1,
-            "has_more": False,
-            "next_chunk": -1
+            "records": []
         }

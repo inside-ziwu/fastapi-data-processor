@@ -351,6 +351,14 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     # 返回完整数据，让循环节点处理
     elapsed = time.time() - request_start_time
     logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Total records: {len(string_records)}, Total bytes: {total_size}")
+    
+    # 飞书写入（COZE插件参数）
+    feishu_config = body.get("feishu_config", {})
+    if feishu_config.get("enabled"):
+        from feishu_writer import FeishuWriter
+        writer = FeishuWriter(feishu_config)
+        await writer.write_records(string_records)
+
     return {
         "code": 200,
         "msg": message,
