@@ -337,9 +337,12 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
 
     # 直接返回完整数据数组 - 符合Coze.cn规范，支持下游循环节点
+    # 返回字符串数组格式
     final_records = []
     for row in results_data_standard:
-        final_records.append({"fields": row})
+        # 将每个数据行转换为JSON字符串
+        row_str = json.dumps(row, ensure_ascii=False, default=json_date_serializer)
+        final_records.append(row_str)
 
     final_response = {
         "code": 200,
