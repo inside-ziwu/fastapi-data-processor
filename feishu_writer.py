@@ -31,6 +31,74 @@ class FeishuWriter:
                 raise ValueError(f"获取token失败: {result.get('msg', '未知错误')}")
             return result["tenant_access_token"]
 
+    async def get_table_schema(self) -> Dict[str, Dict]:
+        """
+        获取并解析飞书多维表格的结构 (schema)。
+        返回一个简化的字典，键为字段名，值为包含类型和选项的字典。
+        例如: {'状态': {'type': 3, 'options': ['已完成', '进行中']}}
+        """
+        if not self.enabled:
+            logger.warning("[飞书] 功能未启用，无法获取schema。")
+            return {}
+
+        logger.info(f"[飞书] 开始获取表格 {self.table_id} 的 schema...")
+        schema_url = f"https://open.feishu.cn/open-apis/base/v1/apps/{self.app_token}/tables/{self.table_id}/fields"
+        
+        try:
+            token = await self.get_tenant_token()
+            headers = {"Authorization": f"Bearer {token}"}
+        except (httpx.HTTPError, ValueError) as e:
+            logger.error(f"[飞书] 获取token失败，无法获取schema: {e}")
+            return {}
+
+        simplified_schema = {}
+        page_token = None
+        
+        async with httpx.AsyncClient() as client:
+            while True:
+                params = {'page_size': 100}
+                if page_token:
+                    params['page_token'] = page_token
+                
+                try:
+                    resp = await client.get(schema_url, headers=headers, params=params, timeout=30)
+                    resp.raise_for_status()
+                    data = resp.json().get("data", {})
+                    
+                    items = data.get("items", [])
+                    if not items:
+                        logger.warning("[飞书] API返回的字段列表为空。")
+                        break
+
+                    for field in items:
+                        field_name = field.get("field_name")
+                        field_type = field.get("type")
+                        options = []
+                        
+                        # 3: 单选, 4: 多选
+                        if field_type in [3, 4]:
+                            options = [opt["name"] for opt in field.get("property", {}).get("options", [])]
+
+                        if field_name:
+                            simplified_schema[field_name] = {
+                                "type": field_type,
+                                "options": options
+                            }
+                    
+                    if data.get("has_more") and data.get("page_token"):
+                        page_token = data.get("page_token")
+                    else:
+                        break
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"[飞书] 获取schema API请求失败: {e.response.status_code} - {e.response.text}")
+                    return {} # 返回空字典表示失败
+                except Exception as e:
+                    logger.error(f"[飞书] 解析schema时发生未知错误: {e}")
+                    return {}
+
+        logger.info(f"[飞书] Schema获取成功，共解析 {len(simplified_schema)} 个字段。")
+        return simplified_schema
+
     async def write_records(self, records: List[Dict]) -> bool:
         """
         分批写入记录到飞书多维表格。
