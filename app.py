@@ -357,6 +357,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     import logging
     feishu_logger = logging.getLogger("feishu")
     
+    feishu_logger.info(f"[调试] 收到feishu_config: {feishu_config}")
+    
     if feishu_config.get("enabled"):
         from feishu_writer import FeishuWriter
         feishu_logger.info("[飞书] 检测到写入请求，开始处理")
