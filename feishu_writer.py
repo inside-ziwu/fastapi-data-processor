@@ -1,6 +1,7 @@
 import httpx
 import asyncio
 from typing import List, Dict
+from field_mapping import EN_TO_CN_MAP
 
 class FeishuWriter:
     def __init__(self, config: dict):
@@ -17,9 +18,19 @@ class FeishuWriter:
             return True
             
         try:
-            # 解析JSON字符串
+            # 解析JSON字符串并转换为中文字段
             data_records = [eval(r) if isinstance(r, str) else r for r in records]
-            chunks = [data_records[i:i+480] for i in range(0, len(data_records), 480)]
+            
+            # 英文字段转中文字段
+            cn_records = []
+            for record in data_records:
+                cn_record = {}
+                for en_key, value in record.items():
+                    cn_key = EN_TO_CN_MAP.get(en_key, en_key)  # 映射中文
+                    cn_record[cn_key] = value
+                cn_records.append(cn_record)
+            
+            chunks = [cn_records[i:i+480] for i in range(0, len(cn_records), 480)]
             
             async with httpx.AsyncClient() as client:
                 for chunk in chunks:
