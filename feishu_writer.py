@@ -33,71 +33,85 @@ class FeishuWriter:
 
     async def get_table_schema(self) -> Dict[str, Dict]:
         """
-        获取并解析飞书多维表格的结构 (schema)。
-        返回一个简化的字典，键为字段名，值为包含类型和选项的字典。
-        例如: {'状态': {'type': 3, 'options': ['已完成', '进行中']}}
+        获取并解析飞书多维表格的结构 (schema)，包含重试逻辑。
+        如果多次尝试后仍然失败，则会抛出异常。
         """
         if not self.enabled:
             logger.warning("[飞书] 功能未启用，无法获取schema。")
             return {}
 
-        logger.info(f"[飞书] 开始获取表格 {self.table_id} 的 schema...")
         schema_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self.app_token}/tables/{self.table_id}/fields"
         
-        try:
-            token = await self.get_tenant_token()
-            headers = {"Authorization": f"Bearer {token}"}
-        except (httpx.HTTPError, ValueError) as e:
-            logger.error(f"[飞书] 获取token失败，无法获取schema: {e}")
-            return {}
+        retries = 3
+        last_exception = None
 
-        simplified_schema = {}
-        page_token = None
-        
-        async with httpx.AsyncClient() as client:
-            while True:
-                params = {'page_size': 100}
-                if page_token:
-                    params['page_token'] = page_token
+        for attempt in range(retries):
+            try:
+                logger.info(f"[飞书] 开始获取表格 {self.table_id} 的 schema (尝试 {attempt + 1}/{retries})...")
+                token = await self.get_tenant_token()
+                headers = {"Authorization": f"Bearer {token}"}
+
+                simplified_schema = {}
+                page_token = None
                 
-                try:
-                    resp = await client.get(schema_url, headers=headers, params=params, timeout=30)
-                    resp.raise_for_status()
-                    data = resp.json().get("data", {})
-                    
-                    items = data.get("items", [])
-                    if not items:
-                        logger.warning("[飞书] API返回的字段列表为空。")
-                        break
-
-                    for field in items:
-                        field_name = field.get("field_name")
-                        field_type = field.get("type")
-                        options = []
+                async with httpx.AsyncClient() as client:
+                    while True:
+                        params = {'page_size': 100}
+                        if page_token:
+                            params['page_token'] = page_token
                         
-                        # 3: 单选, 4: 多选
-                        if field_type in [3, 4]:
-                            options = [opt["name"] for opt in field.get("property", {}).get("options", [])]
+                        resp = await client.get(schema_url, headers=headers, params=params, timeout=30)
+                        resp.raise_for_status()
+                        data = resp.json().get("data", {})
+                        
+                        items = data.get("items", [])
+                        if not items and not simplified_schema: # Only warn if it's the first empty response
+                            logger.warning("[飞书] API首次返回的字段列表为空。")
+                        
+                        for field in items:
+                            field_name = field.get("field_name")
+                            field_type = field.get("type")
+                            options = []
+                            
+                            if field_type in [3, 4]: # 3: 单选, 4: 多选
+                                options = [opt["name"] for opt in field.get("property", {}).get("options", [])]
 
-                        if field_name:
-                            simplified_schema[field_name] = {
-                                "type": field_type,
-                                "options": options
-                            }
-                    
-                    if data.get("has_more") and data.get("page_token"):
-                        page_token = data.get("page_token")
-                    else:
-                        break
-                except httpx.HTTPStatusError as e:
-                    logger.error(f"[飞书] 获取schema API请求失败: {e.response.status_code} - {e.response.text}")
-                    return {} # 返回空字典表示失败
-                except Exception as e:
-                    logger.error(f"[飞书] 解析schema时发生未知错误: {e}")
-                    return {}
+                            if field_name:
+                                simplified_schema[field_name] = {
+                                    "type": field_type,
+                                    "options": options
+                                }
+                        
+                        if data.get("has_more") and data.get("page_token"):
+                            page_token = data.get("page_token")
+                        else:
+                            break # Exit pagination loop on success
+                
+                logger.info(f"[飞书] Schema获取成功，共解析 {len(simplified_schema)} 个字段。")
+                return simplified_schema # Return on success
 
-        logger.info(f"[飞书] Schema获取成功，共解析 {len(simplified_schema)} 个字段。")
-        return simplified_schema
+            except httpx.HTTPStatusError as e:
+                last_exception = e
+                logger.warning(f"[飞书] 获取schema API请求失败: {e.response.status_code} - {e.response.text}")
+                if e.response.status_code == 404:
+                    logger.error("[飞书] 收到 404 错误，可能是 app_token 或 table_id 无效，不再重试。")
+                    break # Stop retrying on 404
+            except (httpx.RequestError, httpx.TimeoutException) as e:
+                last_exception = e
+                logger.warning(f"[飞书] 获取schema时发生网络错误: {e}")
+            except Exception as e:
+                last_exception = e
+                logger.error(f"[飞书] 解析schema时发生未知错误: {e}", exc_info=True)
+            
+            # If we are here, it means an exception occurred. Wait before retrying.
+            if attempt < retries - 1:
+                wait_time = 2 ** attempt
+                logger.info(f"[飞书] 将在 {wait_time} 秒后重试...")
+                await asyncio.sleep(wait_time)
+
+        # If loop finishes, all retries failed
+        logger.error(f"[飞书] 获取 schema 彻底失败，已重试 {retries} 次。")
+        raise RuntimeError(f"获取飞书表格结构失败: {last_exception}")
 
     async def write_records(self, records: List[Dict]) -> bool:
         """
