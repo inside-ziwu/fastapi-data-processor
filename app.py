@@ -344,19 +344,17 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         row_json = json.dumps(row, ensure_ascii=False, default=json_date_serializer)
         string_records.append(row_json)
 
-# 方案2：API直接返回完整数据，Coze插件负责分块处理
+# 单次返回完整数据，不限制2MB
     total_size = sum(len(record.encode('utf-8')) for record in string_records)
     message = f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，数据大小约 {total_size / (1024 * 1024):.2f} MB"
 
-    # 直接返回完整数据，让Coze插件处理分块
+    # 返回完整数据，让循环节点处理
     elapsed = time.time() - request_start_time
     logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Total records: {len(string_records)}, Total bytes: {total_size}")
     return {
         "code": 200,
         "msg": message,
-        "records": string_records,
-        "total_size": total_size,
-        "total_records": len(string_records)
+        "records": string_records
     }
 
 @app.post("/cleanup")
