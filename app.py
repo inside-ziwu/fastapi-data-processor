@@ -346,6 +346,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
 
     # 检查总大小是否超过2MB
     total_size = sum(len(record.encode('utf-8')) for record in string_records)
+    original_count = len(string_records)
     
     if total_size > 2 * 1024 * 1024:
         # 如果超过2MB，截取部分数据
@@ -358,13 +359,20 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             limited_records.append(record)
             current_size += record_size
         
-        logger.warning(f"数据超过2MB限制，返回 {len(limited_records)}/{len(string_records)} 条记录")
         string_records = limited_records
+        message = f"数据超过2MB限制，返回 {len(string_records)}/{original_count} 条记录"
+        logger.warning(message)
+    else:
+        message = f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，数据大小约 {total_size / (1024 * 1024):.2f} MB"
 
-    # 直接返回字符串数组，循环节点可以遍历每个JSON字符串
+    # 返回对象格式，符合Coze插件期望
     elapsed = time.time() - request_start_time
-    logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Array size: {len(string_records)}, Total bytes: {sum(len(r.encode('utf-8')) for r in string_records)}")
-    return string_records
+    logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Records: {len(string_records)}, Total bytes: {sum(len(r.encode('utf-8')) for r in string_records)}")
+    return {
+        "code": 200,
+        "msg": message,
+        "records": string_records
+    }
 
 @app.post("/cleanup")
 async def cleanup_old_runs(x_api_key: Optional[str] = Header(None)):

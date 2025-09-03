@@ -3,7 +3,7 @@ import json
 
 def handler(args):
     """
-    Coze handler v4: 适配直接返回字符串数组的新格式
+    Coze handler v5: 保持对象结构，records改为字符串数组
     """
     input_obj = getattr(args, 'input', None)
     def get_input_arg(name):
@@ -23,19 +23,46 @@ def handler(args):
     headers = {"Content-Type": "application/json", "x-api-key": "coze-api-key-2024"}
 
     try:
-        # 单次请求获取字符串数组（每个元素是JSON对象字符串）
+        # 单次请求获取数据
         resp = requests.post(api_url, json=data, headers=headers, timeout=400)
         resp.raise_for_status()
-        
-        # API现在直接返回字符串数组，无需解析
-        string_array = resp.json()
-        
-        # 直接返回字符串数组给循环节点
-        return string_array
+        api_response = resp.json()
+
+        # 检查API返回的是数组还是对象
+        if isinstance(api_response, list):
+            # API直接返回字符串数组
+            string_records = api_response
+        else:
+            # API返回对象，提取records并转换为字符串数组
+            records = api_response.get("records", [])
+            string_records = []
+            for record in records:
+                if isinstance(record, str):
+                    # 已经是字符串
+                    string_records.append(record)
+                elif isinstance(record, dict):
+                    # 转换为JSON字符串
+                    string_records.append(json.dumps(record, ensure_ascii=False))
+                else:
+                    # 其他类型强制转换
+                    string_records.append(str(record))
+
+        # 保持对象结构，records是字符串数组
+        return {
+            "code": api_response.get("code", 200) if isinstance(api_response, dict) else 200,
+            "msg": api_response.get("msg", "处理完成") if isinstance(api_response, dict) else "处理完成",
+            "records": string_records
+        }
 
     except requests.exceptions.HTTPError as e:
-        # 返回空数组作为错误处理
-        return []
+        return {
+            "code": e.response.status_code,
+            "msg": f"处理失败: {e.response.text}",
+            "records": []
+        }
     except Exception as e:
-        # 返回空数组作为错误处理
-        return []
+        return {
+            "code": 500,
+            "msg": str(e),
+            "records": []
+        }
