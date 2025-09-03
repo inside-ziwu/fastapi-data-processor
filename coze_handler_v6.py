@@ -19,7 +19,7 @@ def handler(args):
         if (v := get_input_arg(k))
     }
 
-    # 新版飞书配置参数
+    # 新版飞书配置参数（直接传递，不嵌套）
     feishu_enabled = getattr(input_obj, 'feishu_enabled', False)
     feishu_app_id = getattr(input_obj, 'feishu_app_id', '')
     feishu_app_secret = getattr(input_obj, 'feishu_app_secret', '')
@@ -27,13 +27,11 @@ def handler(args):
     feishu_table_id = getattr(input_obj, 'feishu_table_id', '')
     
     if feishu_enabled:
-        data["feishu_config"] = {
-            "enabled": True,
-            "app_id": feishu_app_id,
-            "app_secret": feishu_app_secret,
-            "app_token": feishu_app_token,
-            "table_id": feishu_table_id
-        }
+        data["feishu_enabled"] = True
+        data["feishu_app_id"] = feishu_app_id
+        data["feishu_app_secret"] = feishu_app_secret
+        data["feishu_app_token"] = feishu_app_token
+        data["feishu_table_id"] = feishu_table_id
 
     api_url = "https://dtc.zeabur.app/process-files"
     headers = {"Content-Type": "application/json", "x-api-key": "coze-api-key-2024"}

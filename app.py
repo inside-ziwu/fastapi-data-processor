@@ -352,16 +352,24 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     elapsed = time.time() - request_start_time
     logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Total records: {len(string_records)}, Total bytes: {total_size}")
     
-    # 飞书写入（COZE插件参数）
-    feishu_config = payload.dict().get("feishu_config", {})
+    # 飞书写入（COZE插件参数 - 直接获取）
     import logging
     feishu_logger = logging.getLogger("feishu")
     
-    feishu_logger.info(f"[调试] 收到feishu_config: {feishu_config}")
+    feishu_enabled = payload.feishu_enabled if hasattr(payload, 'feishu_enabled') else False
     
-    if feishu_config.get("enabled"):
-        from feishu_writer import FeishuWriter
+    feishu_logger.info(f"[调试] 收到feishu_enabled: {feishu_enabled}")
+    
+    if feishu_enabled:
+        feishu_config = {
+            "enabled": True,
+            "app_id": payload.feishu_app_id,
+            "app_secret": payload.feishu_app_secret,
+            "app_token": payload.feishu_app_token,
+            "table_id": payload.feishu_table_id
+        }
         feishu_logger.info("[飞书] 检测到写入请求，开始处理")
+        from feishu_writer import FeishuWriter
         writer = FeishuWriter(feishu_config)
         await writer.write_records(string_records)
     else:
