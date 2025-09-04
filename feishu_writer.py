@@ -299,6 +299,9 @@ class FeishuWriter:
             for i, chunk in enumerate(chunks):
                 payload = {"records": [{"fields": item} for item in chunk]}
                 
+                # 调试：打印实际发送的payload
+                logger.info(f"[飞书调试] 第{i+1}批payload: {json.dumps(payload, ensure_ascii=False)[:200]}...")
+                
                 batch_success = False
                 for attempt in range(3):
                     try:
