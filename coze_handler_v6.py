@@ -19,12 +19,12 @@ def handler(args):
         if (v := get_input_arg(k))
     }
 
-    # 新版飞书配置参数（直接传递，不嵌套）
+    # 新版飞书配置参数（支持双维度）
     feishu_enabled = getattr(input_obj, 'feishu_enabled', False)
     feishu_app_id = getattr(input_obj, 'feishu_app_id', '')
     feishu_app_secret = getattr(input_obj, 'feishu_app_secret', '')
     feishu_app_token = getattr(input_obj, 'feishu_app_token', '')
-    feishu_table_id = getattr(input_obj, 'feishu_table_id', '')
+    feishu_table_id = getattr(input_obj, 'feishu_table_id', '')  # 根据dimension自动选择
     
     if feishu_enabled:
         data["feishu_enabled"] = True
