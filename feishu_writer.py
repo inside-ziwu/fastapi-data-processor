@@ -225,106 +225,22 @@ class FeishuWriter:
             logger.info(f"[飞书] 匹配的字段: {list(data_fields & set(schema.keys()))}")
             logger.info(f"[飞书] 不匹配的字段: {list(data_fields - set(schema.keys()))}")
             
+        # 打印飞书表格实际字段名
+        logger.info("[飞书] 飞书表格实际字段名:")
+        for field_name, field_info in schema.items():
+            field_type = field_info.get('type', 'unknown')
+            field_title = field_info.get('name', field_name)  # 显示名称
+            logger.info(f"[飞书]   '{field_name}' [类型:{field_type}] 标题:'{field_title}'")
+            
+        # 显示数据中的字段名对比
+        if records:
+            data_fields = set(records[0].keys())
+            schema_fields = set(schema.keys())
+            logger.info(f"[飞书] 数据中的字段名: {list(data_fields)}")
+            logger.info(f"[飞书] 匹配的字段: {list(data_fields & schema_fields)}")
+            logger.info(f"[飞书] 不匹配的字段: {list(data_fields - schema_fields)}")
+            
         return []  # 先返回空列表，让你看到字段对比后再决定映射
-            if not record:
-                continue
-                
-            fixed_record = {}
-            
-            # 记录不匹配的字段用于调试
-            missing_fields = []
-            matched_fields = []
-            
-            for key, value in record.items():
-                # 尝试精确匹配
-                if key in schema:
-                    target_key = key
-                    matched_fields.append(key)
-                else:
-                    # 记录不匹配的字段名
-                    missing_fields.append(key)
-                    logger.warning(f"[飞书] 字段名不匹配: '{key}' 不在飞书表格中，可用字段: {list(schema_fields)}")
-                    continue
-                    
-                target_key = field_mapping.get(key, key)
-                    
-                field_schema = schema[key]
-                field_type = field_schema.get('type', 'text')
-                
-                try:
-                    if field_type == 'number' and value is not None:
-                        # 数字类型转换
-                        if isinstance(value, (int, float)):
-                            fixed_record[key] = value
-                        elif isinstance(value, str) and value.strip():
-                            fixed_record[key] = float(value.strip())
-                        else:
-                            fixed_record[key] = 0
-                            
-                    elif field_type == 'text' and value is not None:
-                        # 文本类型转换
-                        fixed_record[key] = str(value)
-                        
-                    elif field_type == 'url' and value is not None:
-                        # URL类型转换
-                        fixed_record[key] = str(value).strip()
-                        
-                    elif field_type == 'date' and value is not None:
-                        # 日期类型转换 - 保持原格式或转为ISO
-                        if isinstance(value, str) and value.strip():
-                            fixed_record[key] = value.strip()
-                        else:
-                            fixed_record[key] = str(value)
-                            
-                    elif field_type == 'checkbox' and value is not None:
-                        # 复选框类型转换
-                        if isinstance(value, bool):
-                            fixed_record[key] = value
-                        elif isinstance(value, str):
-                            str_value = value.strip().lower()
-                            fixed_record[key] = str_value in ['true', '1', 'yes', '是', 'on']
-                        elif isinstance(value, (int, float)):
-                            fixed_record[key] = bool(value)
-                        else:
-                            fixed_record[key] = False
-                            
-                    else:
-                        # 其他类型保留原值
-                        fixed_record[key] = value
-                        
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"[飞书] 字段 '{key}' 类型转换失败: {value} -> {field_type}, 使用默认值")
-                    
-                    # 根据类型提供默认值
-                    if field_type == 'number':
-                        fixed_record[key] = 0
-                    elif field_type == 'text':
-                        fixed_record[key] = str(value) if value is not None else ''
-                    elif field_type == 'url':
-                        fixed_record[key] = ''
-                    elif field_type == 'date':
-                        fixed_record[key] = ''
-                    elif field_type == 'checkbox':
-                        fixed_record[key] = False
-                    else:
-                        fixed_record[key] = value
-            
-            fixed_records.append(fixed_record)
-            
-            # 记录匹配情况
-            if matched_fields:
-                logger.debug(f"[飞书] 记录匹配了 {len(matched_fields)} 个字段: {matched_fields}")
-            if missing_fields:
-                logger.warning(f"[飞书] 记录中 {len(missing_fields)} 个字段不匹配: {missing_fields}")
-        
-        # 如果没有任何有效记录，返回空列表
-        if not fixed_records:
-            logger.error("[飞书] 没有记录匹配飞书表格字段，无数据可写入")
-            logger.error(f"[飞书] 飞书表格包含的字段: {sorted(schema_fields)}")
-        else:
-            logger.info(f"[飞书] 成功匹配 {len(fixed_records)} 条记录到飞书表格字段")
-            
-        return fixed_records
 
     async def _write_single_records(self, client: httpx.AsyncClient, records: List[Dict], headers: Dict) -> (int, int):
         """私有方法，用于逐条写入记录并返回成功和失败的计数"""
