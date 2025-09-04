@@ -210,10 +210,8 @@ class FeishuWriter:
         """
         if not schema or not records:
             return []
-        
-        logger.info(f"[GEMINI_DEBUG] Incoming record keys: {list(records[0].keys())}")
 
-        # 这是你唯一的真相来源，别再用那些垃圾日志污染它了
+        # This mapping should be in a config file. It's a maintenance nightmare.
         field_mapping = {
             '层级': 'field_1', '自然线索总量': 'field_2', 'T月自然线索量': 'field_3', 'T-1月自然线索量': 'field_4',
             '广告线索总量': 'field_5', 'T月广告线索量': 'field_6', 'T-1月广告线索量': 'field_7', '总消耗': 'field_8',
@@ -257,33 +255,36 @@ class FeishuWriter:
             
             fixed_record = {}
             for chinese_key, value in record.items():
-                target_field = field_mapping.get(chinese_key)
-                if not target_field:
-                    logger.warning(f"[GEMINI_DEBUG] 忽略未映射的字段: '{chinese_key}'")
+                # 1. Find the target field ID (e.g., 'field_1') from the mapping
+                target_field_id = field_mapping.get(chinese_key)
+                if not target_field_id:
+                    # logger.warning(f"[飞书] 忽略未映射的字段: '{chinese_key}'")
                     continue
 
-                if target_field not in schema:
-                    logger.warning(f"[GEMINI_DEBUG] 映射目标字段 {target_field} 不在表格schema中，已跳过。")
+                # 2. The schema from Feishu is keyed by the internal field ID. So we check against that.
+                if target_field_id not in schema:
+                    # logger.warning(f"[飞书] 映射目标字段 {target_field_id} (来自 '{chinese_key}') 不在表格schema中，已跳过。")
                     continue
                 
-                # 字段存在于schema中，进行类型转换
-                field_schema = schema[target_field]
+                # 3. We have a match. Now, prepare the fixed record using the target_field_id as the key.
+                field_schema = schema[target_field_id]
                 field_type = field_schema.get("type")
                 
                 try:
+                    converted_value = None
                     if value is None:
-                        fixed_record[target_field] = None
+                        converted_value = None
                     elif field_type == 1: # Text
-                        fixed_record[target_field] = str(value)
+                        converted_value = str(value)
                     elif field_type == 2: # Number
-                        fixed_record[target_field] = float(value)
+                        converted_value = float(value)
                     elif field_type == 5: # DateTime
-                        fixed_record[target_field] = int(datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp() * 1000)
+                        converted_value = int(datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp() * 1000)
                     else:
-                        fixed_record[target_field] = value
+                        converted_value = value
+                    fixed_record[target_field_id] = converted_value
                 except (ValueError, TypeError) as e:
-                    logger.warning(f"[飞书] 字段 {target_field} 值 '{value}' 类型转换失败: {e}")
-                    fixed_record[target_field] = None # Or some other default
+                    logger.warning(f"[飞书] 字段 {target_field_id} 值 '{value}' 类型转换失败: {e}")
 
             if fixed_record:
                 fixed_records.append(fixed_record)
