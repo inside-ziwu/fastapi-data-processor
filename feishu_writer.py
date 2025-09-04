@@ -232,6 +232,10 @@ class FeishuWriter:
                             break
                 
                 logger.info(f"[飞书] Schema获取成功，共解析 {len(simplified_schema)} 个字段。")
+                # 调试：打印前5个字段看看格式
+                debug_fields = list(simplified_schema.items())[:5]
+                for name, info in debug_fields:
+                    logger.info(f"[飞书调试] Schema字段: {name} -> ID: {info.get('id')}, Type: {info.get('type')}")
                 return simplified_schema
 
             except httpx.HTTPStatusError as e:
@@ -282,6 +286,11 @@ class FeishuWriter:
             
         chunks = [records[i:i + 50] for i in range(0, len(records), 50)]
         logger.info(f"[飞书] 数据分 {len(chunks)} 批写入，使用安全批次大小 50。")
+        
+        # 调试：打印第一条记录看看实际字段ID
+        if chunks and chunks[0]:
+            logger.info(f"[飞书调试] 第一条记录字段: {list(chunks[0][0].keys())[:5]}")
+            logger.info(f"[飞书调试] 第一条记录样本: {chunks[0][0]}")
 
         total_success_count = 0
         total_failed_count = 0
