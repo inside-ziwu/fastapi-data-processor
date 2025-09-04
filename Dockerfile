@@ -4,9 +4,6 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y cron
 
-# 先安装飞书SDK确保可用
-RUN pip install --no-cache-dir lark-oapi>=1.2.0
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
