@@ -210,6 +210,8 @@ class FeishuWriter:
         """
         if not schema or not records:
             return []
+        
+        logger.error(f"[GEMINI_DEBUG] Incoming record keys: {list(records[0].keys())}")
 
         # This mapping should be in a config file. It's a maintenance nightmare.
         field_mapping = {
