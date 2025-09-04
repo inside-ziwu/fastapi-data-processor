@@ -1,11 +1,26 @@
 import httpx
 import asyncio
 import json
-from typing import List, Dict
+from typing import List, Dict, Any
 import logging
 from datetime import datetime
 
 logger = logging.getLogger("feishu")
+
+# Based on review and research, expand the type mapping
+# https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/bitable-v1/app-table-record/field-value-dic
+FIELD_TYPE_HANDLERS = {
+    1: str,          # Text
+    2: float,        # Number
+    3: str,          # SingleSelect, return the text value
+    4: lambda v: [str(i) for i in v] if isinstance(v, list) else [str(v)], # MultiSelect
+    5: lambda v: int(datetime.fromisoformat(str(v).replace('Z', '+00:00')).timestamp() * 1000), # DateTime to timestamp
+    7: bool,         # Checkbox
+    11: lambda v: [str(i) for i in v] if isinstance(v, list) else [str(v)], # User
+    13: str,         # Phone
+    15: str,         # URL
+    # Add other types as needed, for now, default to string conversion
+}
 
 class FeishuWriter:
     def __init__(self, config: dict):
@@ -19,7 +34,7 @@ class FeishuWriter:
             self.enabled = False
             logger.warning("[飞书] 配置不完整 (app_id, app_secret, app_token, table_id)，写入功能已禁用。")
 
-        # Business logic mapping from Chinese (Feishu) to English (internal)
+        # This remains a maintenance concern, but fixing the logic is the priority.
         self.FIELD_EN_MAP = {
             "主机厂经销商ID": "NSC_CODE",
             "层级": "level", 
@@ -149,12 +164,9 @@ class FeishuWriter:
         }
         self.EN_TO_CN_MAP = {v: k for k, v in self.FIELD_EN_MAP.items()}
 
-
     async def get_tenant_token(self) -> str:
-        """获取tenant_access_token"""
         url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
         payload = {"app_id": self.app_id, "app_secret": self.app_secret}
-        
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
@@ -164,16 +176,11 @@ class FeishuWriter:
             return result["tenant_access_token"]
 
     async def get_table_schema(self) -> Dict[str, Dict]:
-        """
-        获取并解析飞书多维表格的结构 (schema)，包含重试逻辑。
-        如果多次尝试后仍然失败，则会抛出异常。
-        """
         if not self.enabled:
             logger.warning("[飞书] 功能未启用，无法获取schema。")
             return {}
 
         schema_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self.app_token}/tables/{self.table_id}/fields"
-        
         retries = 3
         last_exception = None
 
@@ -182,7 +189,6 @@ class FeishuWriter:
                 logger.info(f"[飞书] 开始获取表格 {self.table_id} 的 schema (尝试 {attempt + 1}/{retries})...")
                 token = await self.get_tenant_token()
                 headers = {"Authorization": f"Bearer {token}"}
-
                 simplified_schema = {}
                 page_token = None
                 
@@ -195,41 +201,29 @@ class FeishuWriter:
                         resp = await client.get(schema_url, headers=headers, params=params, timeout=30)
                         resp.raise_for_status()
                         data = resp.json().get("data", {})
-                        
                         items = data.get("items", [])
-                        if not items and not simplified_schema: # Only warn if it's the first empty response
-                            logger.warning("[飞书] API首次返回的字段列表为空。")
                         
                         for field in items:
-                            field_name = field.get("field_name")
-                            field_id = field.get("field_id")
-                            field_type = field.get("type")
-                            options = []
-                            
-                            if field_type in [3, 4]: # 3: 单选, 4: 多选
-                                options = [opt["name"] for opt in field.get("property", {}).get("options", [])]
-
-                            if field_name and field_id:
+                            if field_name := field.get("field_name"):
                                 simplified_schema[field_name] = {
-                                    "id": field_id,
-                                    "type": field_type,
-                                    "options": options
+                                    "id": field.get("field_id"),
+                                    "type": field.get("type"),
                                 }
                         
-                        if data.get("has_more") and data.get("page_token"):
-                            page_token = data.get("page_token")
+                        if data.get("has_more") and (page_token := data.get("page_token")):
+                            continue
                         else:
-                            break # Exit pagination loop on success
+                            break
                 
                 logger.info(f"[飞书] Schema获取成功，共解析 {len(simplified_schema)} 个字段。")
-                return simplified_schema # Return on success
+                return simplified_schema
 
             except httpx.HTTPStatusError as e:
                 last_exception = e
                 logger.warning(f"[飞书] 获取schema API请求失败: {e.response.status_code} - {e.response.text}")
                 if e.response.status_code == 404:
                     logger.error("[飞书] 收到 404 错误，可能是 app_token 或 table_id 无效，不再重试。")
-                    break # Stop retrying on 404
+                    break
             except (httpx.RequestError, httpx.TimeoutException) as e:
                 last_exception = e
                 logger.warning(f"[飞书] 获取schema时发生网络错误: {e}")
@@ -237,21 +231,14 @@ class FeishuWriter:
                 last_exception = e
                 logger.error(f"[飞书] 解析schema时发生未知错误: {e}", exc_info=True)
             
-            # If we are here, it means an exception occurred. Wait before retrying.
             if attempt < retries - 1:
                 wait_time = 2 ** attempt
                 logger.info(f"[飞书] 将在 {wait_time} 秒后重试...")
                 await asyncio.sleep(wait_time)
 
-        # If loop finishes, all retries failed
-        logger.error(f"[飞书] 获取 schema 彻底失败，已重试 {retries} 次。")
         raise RuntimeError(f"获取飞书表格结构失败: {last_exception}")
 
     async def write_records(self, records: List[Dict], schema: Dict = None) -> bool:
-        """
-        分批写入记录到飞书多维表格。
-        如果批量写入失败，则会尝试逐条写入以跳过有问题的记录。
-        """
         if not self.enabled:
             logger.info("[飞书] 写入未启用或配置不完整，跳过写入。")
             return True
@@ -262,87 +249,70 @@ class FeishuWriter:
 
         logger.info(f"[飞书] 开始写入，共 {len(records)} 条记录。")
         
-        # 使用字段映射
         if schema:
             records = self._fix_data_types(records, schema)
-            logger.error(f"[GEMINI_PROBE] Records after fix: {records[0] if records else 'No records'}")
-            # _fix_data_types现在会处理字段映射
         
         try:
             token = await self.get_tenant_token()
             headers = {"Authorization": f"Bearer {token}"}
-            logger.info("[飞书] 获取token成功。")
         except (httpx.HTTPError, ValueError) as e:
             logger.error(f"[飞书] 获取token失败，写入中止: {e}")
             return False
 
-        # 过滤掉空记录
         records = [r for r in records if r and any(r.values())]
         if not records:
             logger.info("[飞书] 过滤后没有有效记录可写入。")
             return True
             
-        chunks = [records[i:i + 480] for i in range(0, len(records), 480)]
-        logger.info(f"[飞书] 数据分 {len(chunks)} 批写入，过滤后共 {len(records)} 条记录。")
+        chunks = [records[i:i + 50] for i in range(0, len(records), 50)]
+        logger.info(f"[飞书] 数据分 {len(chunks)} 批写入，使用安全批次大小 50。")
 
         total_success_count = 0
         total_failed_count = 0
         
         async with httpx.AsyncClient() as client:
             for i, chunk in enumerate(chunks):
-                # 验证chunk中的每个记录
-                valid_chunk = []
-                for item in chunk:
-                    if item and any(item.values()):
-                        valid_chunk.append(item)
-                    else:
-                        logger.warning(f"[飞书] 跳过无效记录: {item}")
-                        total_failed_count += 1
+                payload = {"records": [{"fields": item} for item in chunk]}
                 
-                if not valid_chunk:
-                    logger.warning(f"[飞书] 第 {i+1} 批所有记录无效，跳过")
-                    continue
-                
-                payload = {"records": [{"fields": item} for item in valid_chunk]}
-                
-                try:
-                    resp = await client.post(self.base_url, json=payload, headers=headers, timeout=60)
-                    
-                    if resp.status_code == 200:
-                        result = resp.json()
-                        added_records = result.get("data", {}).get("records", [])
-                        batch_success_count = len(added_records)
-                        total_success_count += batch_success_count
-                        logger.info(f"[飞书] 第 {i+1}/{len(chunks)} 批写入成功: {batch_success_count}/{len(chunk)} 条。")
-                    else:
-                        # 批量写入失败，启动单条重试
-                        error_resp = resp.json()
-                        logger.error(f"[飞书] 第 {i+1}/{len(chunks)} 批写入失败: {resp.status_code} - {error_resp.get('msg', '未知错误')}")
-                        logger.info(f"[飞书] 开始对第 {i+1} 批进行逐条写入...")
+                batch_success = False
+                for attempt in range(3):
+                    try:
+                        resp = await client.post(self.base_url, json=payload, headers=headers, timeout=60)
                         
-                        batch_success_count, batch_failed_count = await self._write_single_records(client, chunk, headers)
-                        total_success_count += batch_success_count
-                        total_failed_count += batch_failed_count
-                        logger.info(f"[飞书] 第 {i+1} 批逐条写入完成: 成功 {batch_success_count} 条, 失败 {batch_failed_count} 条。")
+                        if resp.status_code == 200:
+                            result = resp.json()
+                            added_records = result.get("data", {}).get("records", [])
+                            total_success_count += len(added_records)
+                            logger.info(f"[飞书] 第 {i+1}/{len(chunks)} 批写入成功: {len(added_records)}/{len(chunk)} 条。")
+                            batch_success = True
+                            break # Success, exit retry loop
 
-                except httpx.HTTPError as e:
-                    logger.error(f"[飞书] 第 {i+1} 批发生网络错误: {e}")
-                    logger.info(f"[飞书] 开始对第 {i+1} 批进行逐条写入...")
-                    batch_success_count, batch_failed_count = await self._write_single_records(client, chunk, headers)
-                    total_success_count += batch_success_count
-                    total_failed_count += batch_failed_count
-                except Exception as e:
-                    logger.error(f"[飞书] 第 {i+1} 批发生未知异常: {e}")
-                    total_failed_count += len(chunk)
+                        elif resp.status_code in [400, 404, 413]: # Unrecoverable client errors
+                            logger.error(f"[飞书] 第 {i+1} 批发生不可恢复错误: {resp.status_code} - {resp.text}，中止该批次。")
+                            break # Do not retry on these errors
+                        
+                        # Recoverable errors (5xx, 429)
+                        logger.warning(f"[飞书] 第 {i+1} 批写入失败 (尝试 {attempt+1}/3): {resp.status_code} - {resp.text}")
+
+                    except (httpx.RequestError, httpx.TimeoutException) as e:
+                        logger.warning(f"[飞书] 第 {i+1} 批发生网络错误 (尝试 {attempt+1}/3): {e}")
+                    
+                    if attempt < 2:
+                        wait_time = 2 ** (attempt + 1)
+                        logger.info(f"[飞书] 将在 {wait_time} 秒后重试...")
+                        await asyncio.sleep(wait_time)
+
+                if not batch_success:
+                    logger.error(f"[飞书] 第 {i+1} 批在3次尝试后彻底失败，转为逐条写入...")
+                    s_count, f_count = await self._write_single_records(client, chunk, headers)
+                    total_success_count += s_count
+                    total_failed_count += f_count
+                    logger.info(f"[飞书] 第 {i+1} 批逐条写入完成: 成功 {s_count} 条, 失败 {f_count} 条。")
 
         logger.info(f"[飞书] 写入总结: 总记录数 {len(records)}，成功 {total_success_count} 条，失败 {total_failed_count} 条。")
         return total_failed_count == 0
 
     def _fix_data_types(self, records: List[Dict], schema: Dict) -> List[Dict]:
-        """
-        根据飞书schema修正数据类型和字段名，返回修正后的数据副本。
-        现在使用动态schema将中文列名映射到飞书的真实field_id。
-        """
         if not schema or not records:
             return []
 
@@ -353,40 +323,31 @@ class FeishuWriter:
             
             fixed_record = {}
             for en_key, value in record.items():
-                # 1. Translate English key to Chinese key
                 chinese_key = self.EN_TO_CN_MAP.get(en_key)
                 if not chinese_key:
-                    logger.warning(f"[飞书] 忽略未映射的英文字段: '{en_key}'")
                     continue
 
-                # 2. Find the field's schema using the Chinese key
                 field_schema = schema.get(chinese_key)
                 if not field_schema:
-                    logger.warning(f"[飞书] 忽略字段: '{chinese_key}' (from '{en_key}')，因为它在飞书表格中不存在。")
                     continue
 
-                # 3. Get the real field_id and type from the schema
                 target_field_id = field_schema.get("id")
                 field_type = field_schema.get("type")
 
                 if not target_field_id:
-                    logger.warning(f"[飞书] 字段 '{chinese_key}' 在schema中缺少 'id'，已跳过。")
                     continue
                 
-                # 4. Convert value to the correct type
+                # Robust null/empty check
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    fixed_record[target_field_id] = None
+                    continue
+
                 try:
-                    converted_value = None
-                    if value is None or value == '':
-                        converted_value = None
-                    elif field_type == 1: # Text
-                        converted_value = str(value)
-                    elif field_type == 2: # Number
-                        converted_value = float(value)
-                    elif field_type == 5: # DateTime
-                        # Assuming value is an ISO 8601 string
-                        converted_value = int(datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp() * 1000)
+                    handler = FIELD_TYPE_HANDLERS.get(field_type)
+                    if handler:
+                        converted_value = handler(value)
                     else:
-                        converted_value = value
+                        converted_value = str(value) # Default to string if type not handled
                     
                     fixed_record[target_field_id] = converted_value
 
@@ -400,25 +361,17 @@ class FeishuWriter:
         return fixed_records
 
     async def _write_single_records(self, client: httpx.AsyncClient, records: List[Dict], headers: Dict) -> (int, int):
-        """私有方法，用于逐条写入记录并返回成功和失败的计数"""
         success_count = 0
         failed_count = 0
         
         for record in records:
-            if not record or not any(record.values()):  # 跳过空记录或所有字段都空的记录
+            if not record or not any(record.values()):
                 failed_count += 1
                 continue
             
             single_payload = {"records": [{"fields": record}]}
             
-            # 验证payload完整性
-            if not record or not any(record.values()):
-                logger.warning(f"[飞书] 跳过无效记录: {record}")
-                failed_count += 1
-                continue
-                
             try:
-                logger.debug(f"[飞书] 写入单条记录: {single_payload}")
                 single_resp = await client.post(self.base_url, json=single_payload, headers=headers, timeout=30)
                 if single_resp.status_code == 200:
                     success_count += 1
