@@ -105,12 +105,54 @@ class FeishuWriterV3:
             from data_processor import FIELD_EN_MAP
             reverse_map = {}
             
+            # 调试信息：显示schema中的字段名
+            logger.info(f"[飞书] Schema字段: {list(schema.keys())[:10]}...")
+            logger.info(f"[飞书] FIELD_EN_MAP: {list(FIELD_EN_MAP.items())[:5]}...")
+            
+            # 构建标准化映射：处理空格和特殊字符
+            def normalize_field_name(name: str) -> str:
+                """标准化字段名：去除空格，统一格式"""
+                return name.replace(" ", "").replace("（", "(").replace("）", ")")
+            
+            # 创建schema的标准化索引
+            normalized_schema = {normalize_field_name(k): (k, v) for k, v in schema.items()}
+            
             # 创建反向映射：英文键 -> 中文字段信息
+            matched_count = 0
+            failed_mappings = []
+            
             for cn_name, en_name in FIELD_EN_MAP.items():
-                if cn_name in schema:
+                normalized_cn = normalize_field_name(cn_name)
+                
+                if normalized_cn in normalized_schema:
+                    original_cn, field_info = normalized_schema[normalized_cn]
+                    reverse_map[en_name] = field_info
+                    matched_count += 1
+                    logger.debug(f"[飞书] 映射成功: {en_name} -> {original_cn} -> {field_info['id']}")
+                elif cn_name in schema:
+                    # 直接匹配（兼容旧格式）
                     reverse_map[en_name] = schema[cn_name]
-                    
-            logger.info(f"[飞书] 构建反向映射：{len(reverse_map)} 个字段")
+                    matched_count += 1
+                    logger.debug(f"[飞书] 直接匹配: {en_name} -> {cn_name} -> {schema[cn_name]['id']}")
+                else:
+                    failed_mappings.append((cn_name, en_name))
+                    logger.debug(f"[飞书] 未找到中文字段: {cn_name} (标准化: {normalized_cn})")
+            
+            # 报告映射结果
+            logger.info(f"[飞书] 构建反向映射：共 {len(FIELD_EN_MAP)} 个映射，成功匹配 {matched_count} 个字段")
+            
+            if failed_mappings:
+                logger.warning(f"[飞书] 映射失败的字段: {failed_mappings[:10]}")
+                
+                # 显示schema中可用的中文字段
+                chinese_fields = [k for k in schema.keys() if any('\u4e00' <= c <= '\u9fff' for c in k)]
+                logger.info(f"[飞书] 可用的中文字段: {chinese_fields}")
+            
+            # 显示前10个成功映射
+            if reverse_map:
+                sample = dict(list(reverse_map.items())[:10])
+                logger.info(f"[飞书] 反向映射示例: {sample}")
+            
             return reverse_map
             
         except ImportError:
@@ -210,10 +252,25 @@ class FeishuWriterV3:
             # 构建写入数据 - 使用反向映射
             table_records = []
             
+            # 调试：显示前几条记录的结构
+            logger.info(f"[飞书] 记录示例: {dict(list(records[0].items())[:5]) if records else '无记录'}")
+            
+            # 调试：显示反向映射的完整情况
+            logger.info(f"[飞书] 反向映射完整列表: {list(reverse_mapping.keys())}")
+            
+            # 调试：显示schema中的中文字段
+            chinese_fields = [k for k in schema.keys() if any('\u4e00' <= c <= '\u9fff' for c in k)]
+            logger.info(f"[飞书] 中文字段: {chinese_fields}")
+            
+            matched_fields_count = 0
+            total_fields_count = 0
+            
             for record_idx, record in enumerate(records):
                 fields_data = {}
+                record_matched = 0
                 
                 for field_name, value in record.items():
+                    total_fields_count += 1
                     if not self._has_meaningful_value(value):
                         continue
                         
@@ -223,6 +280,8 @@ class FeishuWriterV3:
                         processed_value = self._process_value_by_type(value, field_info)
                         if processed_value is not None:
                             fields_data[field_info["id"]] = processed_value
+                            record_matched += 1
+                            logger.debug(f"[飞书] 反向映射匹配: {field_name} -> {field_info['id']}")
                     else:
                         # 尝试直接匹配中文字段名
                         direct_match = schema.get(field_name)
@@ -230,8 +289,14 @@ class FeishuWriterV3:
                             processed_value = self._process_value_by_type(value, direct_match)
                             if processed_value is not None:
                                 fields_data[direct_match["id"]] = processed_value
+                                record_matched += 1
+                                logger.debug(f"[飞书] 直接匹配: {field_name} -> {direct_match['id']}")
                         else:
                             logger.debug(f"[飞书] 字段 '{field_name}' 不存在，跳过")
+                
+                matched_fields_count += record_matched
+                if record_idx < 3:  # 只显示前3条记录的匹配情况
+                    logger.info(f"[飞书] 记录 {record_idx}: 匹配了 {record_matched} 个字段")
                         
                 if fields_data:
                     table_records.append(
@@ -308,6 +373,26 @@ class FeishuWriterV3:
                 reverse_mapping = self._build_reverse_mapping(schema)
                 result["mapped_fields"] = len(reverse_mapping)
                 result["sample_mapping"] = dict(list(reverse_mapping.items())[:5])
+                
+                # 调试：显示映射失败的字段
+                try:
+                    from data_processor import FIELD_EN_MAP
+                    missing_cn_fields = [cn for cn, en in FIELD_EN_MAP.items() if cn not in schema]
+                    missing_en_fields = [en for cn, en in FIELD_EN_MAP.items() if cn not in schema]
+                    
+                    result["missing_chinese_fields"] = missing_cn_fields[:10]
+                    result["missing_english_fields"] = missing_en_fields[:10]
+                    
+                    # 显示schema和映射表的差异
+                    chinese_schema_fields = [k for k in schema.keys() if any('\u4e00' <= c <= '\u9fff' for c in k)]
+                    result["chinese_fields_in_schema"] = chinese_schema_fields
+                    
+                    logger.info(f"[飞书验证] Schema中文字段: {len(chinese_schema_fields)} 个")
+                    logger.info(f"[飞书验证] 映射表中文字段: {len(FIELD_EN_MAP)} 个") 
+                    logger.info(f"[飞书验证] 缺失中文字段: {len(missing_cn_fields)} 个")
+                    
+                except ImportError:
+                    logger.warning("[飞书验证] 无法导入FIELD_EN_MAP用于验证")
                 
         except Exception as e:
             result["valid"] = False
