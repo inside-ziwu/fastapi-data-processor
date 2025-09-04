@@ -199,17 +199,18 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         logger.info(f"准备并发下载 {len(download_tasks)} 个文件")
         loop = asyncio.get_running_loop()
         
-        # 使用线程池并发下载
+        # 使用线程池的异步方式 - 这才是正确的并发
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_key = {
-                executor.submit(download_to_file, url, run_dir): key 
-                for key, url in download_tasks
-            }
+            async_tasks = []
+            for key, url in download_tasks:
+                # 将同步函数包装成异步任务
+                task = loop.run_in_executor(executor, download_to_file, url, run_dir)
+                async_tasks.append((key, task))
             
-            for future in concurrent.futures.as_completed(future_to_key):
-                key = future_to_key[future]
+            # 真正的异步并发执行
+            for key, task in async_tasks:
                 try:
-                    local_paths[key] = future.result()
+                    local_paths[key] = await task
                     logger.info(f"成功下载 {key} 到 {local_paths[key]}")
                 except Exception as e:
                     # 清理失败的文件
