@@ -199,23 +199,35 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         logger.info(f"准备并发下载 {len(download_tasks)} 个文件")
         loop = asyncio.get_running_loop()
         
-        # 使用线程池的异步方式 - 这才是正确的并发
+        # 使用线程池的异步方式 + asyncio.gather 实现真正并发
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            # 构建并发任务列表
             async_tasks = []
-            for key, url in download_tasks:
-                # 将同步函数包装成异步任务
-                task = loop.run_in_executor(executor, download_to_file, url, run_dir)
-                async_tasks.append((key, task))
+            keys = []
             
-            # 真正的异步并发执行
-            for key, task in async_tasks:
-                try:
-                    local_paths[key] = await task
-                    logger.info(f"成功下载 {key} 到 {local_paths[key]}")
-                except Exception as e:
-                    # 清理失败的文件
-                    shutil.rmtree(run_dir, ignore_errors=True)
-                    raise HTTPException(status_code=500, detail=f"下载失败 {key}: {str(e)}")
+            for key, url in download_tasks:
+                task = loop.run_in_executor(executor, download_to_file, url, run_dir)
+                async_tasks.append(task)
+                keys.append(key)
+            
+            # 真正的并发执行所有下载任务
+            try:
+                results = await asyncio.gather(*async_tasks, return_exceptions=True)
+                
+                # 处理结果
+                for key, result in zip(keys, results):
+                    if isinstance(result, Exception):
+                        # 清理失败的文件
+                        shutil.rmtree(run_dir, ignore_errors=True)
+                        raise HTTPException(status_code=500, detail=f"下载失败 {key}: {str(result)}")
+                    else:
+                        local_paths[key] = result
+                        logger.info(f"成功下载 {key} 到 {local_paths[key]}")
+                        
+            except Exception as e:
+                # 清理失败的文件
+                shutil.rmtree(run_dir, ignore_errors=True)
+                raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
     
     # PROFILING: After Downloads
     download_end_time = time.time()
