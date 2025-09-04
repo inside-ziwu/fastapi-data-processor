@@ -142,15 +142,34 @@ class FeishuWriter:
             logger.error(f"[飞书] 获取token失败，写入中止: {e}")
             return False
 
+        # 过滤掉空记录
+        records = [r for r in records if r and any(r.values())]
+        if not records:
+            logger.info("[飞书] 过滤后没有有效记录可写入。")
+            return True
+            
         chunks = [records[i:i + 480] for i in range(0, len(records), 480)]
-        logger.info(f"[飞书] 数据分 {len(chunks)} 批写入。")
+        logger.info(f"[飞书] 数据分 {len(chunks)} 批写入，过滤后共 {len(records)} 条记录。")
 
         total_success_count = 0
         total_failed_count = 0
         
         async with httpx.AsyncClient() as client:
             for i, chunk in enumerate(chunks):
-                payload = {"records": [{"fields": item} for item in chunk]}
+                # 验证chunk中的每个记录
+                valid_chunk = []
+                for item in chunk:
+                    if item and any(item.values()):
+                        valid_chunk.append(item)
+                    else:
+                        logger.warning(f"[飞书] 跳过无效记录: {item}")
+                        total_failed_count += 1
+                
+                if not valid_chunk:
+                    logger.warning(f"[飞书] 第 {i+1} 批所有记录无效，跳过")
+                    continue
+                
+                payload = {"records": [{"fields": item} for item in valid_chunk]}
                 
                 try:
                     resp = await client.post(self.base_url, json=payload, headers=headers, timeout=60)
@@ -187,24 +206,45 @@ class FeishuWriter:
 
     def _fix_data_types(self, records: List[Dict], schema: Dict) -> List[Dict]:
         """
-        根据飞书schema修正数据类型，返回修正后的数据副本。
+        根据飞书schema修正数据类型和字段名，返回修正后的数据副本。
         不修改原始数据。
         """
         if not schema or not records:
             return records
             
+        # 创建字段映射（中英文互转）
+        field_mapping = {}
+        reverse_mapping = {}
+        
+        for field_name, field_info in schema.items():
+            # 使用字段名本身作为key
+            field_mapping[field_name] = field_name
+            
         fixed_records = []
+        schema_fields = set(schema.keys())
         
         for record in records:
             if not record:
                 continue
                 
             fixed_record = {}
+            
+            # 记录不匹配的字段用于调试
+            missing_fields = []
+            matched_fields = []
+            
             for key, value in record.items():
-                if key not in schema:
-                    # 字段不在schema中，保留原值
-                    fixed_record[key] = value
+                # 尝试精确匹配
+                if key in schema:
+                    target_key = key
+                    matched_fields.append(key)
+                else:
+                    # 记录不匹配的字段名
+                    missing_fields.append(key)
+                    logger.warning(f"[飞书] 字段名不匹配: '{key}' 不在飞书表格中，可用字段: {list(schema_fields)}")
                     continue
+                    
+                target_key = field_mapping.get(key, key)
                     
                 field_schema = schema[key]
                 field_type = field_schema.get('type', 'text')
@@ -268,7 +308,20 @@ class FeishuWriter:
                         fixed_record[key] = value
             
             fixed_records.append(fixed_record)
+            
+            # 记录匹配情况
+            if matched_fields:
+                logger.debug(f"[飞书] 记录匹配了 {len(matched_fields)} 个字段: {matched_fields}")
+            if missing_fields:
+                logger.warning(f"[飞书] 记录中 {len(missing_fields)} 个字段不匹配: {missing_fields}")
         
+        # 如果没有任何有效记录，返回空列表
+        if not fixed_records:
+            logger.error("[飞书] 没有记录匹配飞书表格字段，无数据可写入")
+            logger.error(f"[飞书] 飞书表格包含的字段: {sorted(schema_fields)}")
+        else:
+            logger.info(f"[飞书] 成功匹配 {len(fixed_records)} 条记录到飞书表格字段")
+            
         return fixed_records
 
     async def _write_single_records(self, client: httpx.AsyncClient, records: List[Dict], headers: Dict) -> (int, int):
@@ -277,12 +330,20 @@ class FeishuWriter:
         failed_count = 0
         
         for record in records:
-            if not record:  # 跳过空记录
+            if not record or not any(record.values()):  # 跳过空记录或所有字段都空的记录
                 failed_count += 1
                 continue
             
             single_payload = {"records": [{"fields": record}]}
+            
+            # 验证payload完整性
+            if not record or not any(record.values()):
+                logger.warning(f"[飞书] 跳过无效记录: {record}")
+                failed_count += 1
+                continue
+                
             try:
+                logger.debug(f"[飞书] 写入单条记录: {single_payload}")
                 single_resp = await client.post(self.base_url, json=single_payload, headers=headers, timeout=30)
                 if single_resp.status_code == 200:
                     success_count += 1
