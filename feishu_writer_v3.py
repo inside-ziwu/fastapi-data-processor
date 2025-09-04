@@ -10,8 +10,12 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-import lark_oapi as lark
-from lark_oapi.api.bitable.v1 import *
+try:
+    import lark_oapi as lark
+    from lark_oapi.api.bitable.v1 import *
+except ImportError:
+    # 提供兼容性提示
+    raise ImportError("需要安装飞书SDK: pip install lark-oapi")
 
 logger = logging.getLogger(__name__)
 
