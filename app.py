@@ -21,52 +21,7 @@ def json_date_serializer(obj):
         return obj.isoformat()
     raise TypeError (f"Type {type(obj)} not serializable")
 
-def validate_records_with_schema(records: list, schema: dict, logger) -> (list, list):
-    """
-    使用飞书表格schema验证记录。
-    - 过滤掉不存在于schema中的字段。
-    - 验证单选/多选字段的值是否在允许的选项内。
-    """
-    if not schema:
-        return records, []
 
-    valid_records = []
-    invalid_logs = []
-    valid_field_names = set(schema.keys())
-
-    for i, record in enumerate(records):
-        filtered_record = {}
-        is_valid = True
-        reason = ""
-
-        # 1. Filter columns based on schema
-        for key, value in record.items():
-            if key in valid_field_names:
-                filtered_record[key] = value
-        
-        if not filtered_record:
-            reason = "记录中所有字段均不存在于目标表格中"
-            is_valid = False
-        else:
-            # 2. Validate values for the remaining columns
-            for key, value in filtered_record.items():
-                field_schema = schema[key]
-                field_type = field_schema.get("type")
-                
-                # Type 3: single-select, Type 4: multi-select
-                if field_type in [3, 4]:
-                    allowed_options = field_schema.get("options", [])
-                    if value not in allowed_options:
-                        is_valid = False
-                        reason = f"字段 '{key}' 的值 '{value}' 不在允许的选项中: {allowed_options}"
-                        break
-        
-        if is_valid:
-            valid_records.append(filtered_record)
-        else:
-            invalid_logs.append(f"第 {i+1} 条记录被跳过，原因: {reason} | 原始数据: {json.dumps(record, ensure_ascii=False)}")
-
-    return valid_records, invalid_logs
 
 import polars as pl
 
@@ -442,20 +397,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         # 获取表格结构并验证数据
         table_schema = await writer.get_table_schema()
         if table_schema:
-            logger.info(f"[飞书] 成功获取 {len(table_schema)} 个字段的 Schema，开始验证数据...")
-            valid_chinese_records, invalid_logs = validate_records_with_schema(results_data_chinese, table_schema, logger)
-            
-            if invalid_logs:
-                logger.warning(f"[飞书] {len(invalid_logs)} 条记录未通过验证，将被跳过。")
-                for log_msg in invalid_logs[:10]: # Log first 10 invalid records
-                    logger.warning(log_msg)
-                if len(invalid_logs) > 10:
-                    logger.warning(f"...还有 {len(invalid_logs) - 10} 条无效记录未显示。")
-
-            if valid_chinese_records:
-                await writer.write_records(valid_chinese_records)
-            else:
-                logger.warning("[飞书] 所有记录均未通过验证，没有数据可写入。")
+            logger.info(f"[飞书] 成功获取 {len(table_schema)} 个字段的 Schema，开始写入...")
+            await writer.write_records(results_data_chinese, table_schema)
         else:
             logger.error("[飞书] 无法获取表格 Schema，将尝试直接写入原始数据，可能失败。")
             await writer.write_records(results_data_chinese, table_schema)

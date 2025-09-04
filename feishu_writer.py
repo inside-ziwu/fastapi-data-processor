@@ -207,390 +207,86 @@ class FeishuWriter:
     def _fix_data_types(self, records: List[Dict], schema: Dict) -> List[Dict]:
         """
         根据飞书schema修正数据类型和字段名，返回修正后的数据副本。
-        不修改原始数据。
         """
         if not schema or not records:
-            return records
-            
-        # 打印飞书表格实际字段名
-        logger.info("[飞书] 飞书表格实际字段名:")
-        for field_name, field_info in schema.items():
-            field_type = field_info.get('type', 'unknown')
-            field_title = field_info.get('name', field_name)  # 显示名称
-            logger.info(f"[飞书]   '{field_name}' [类型:{field_type}] 标题:'{field_title}'")
-            
-        # 显示数据中的字段名对比
-        if records:
-            data_fields = set(records[0].keys())
-            logger.info(f"[飞书] 数据中的字段名: {list(data_fields)}")
-            logger.info(f"[飞书] 匹配的字段: {list(data_fields & set(schema.keys()))}")
-            logger.info(f"[飞书] 不匹配的字段: {list(data_fields - set(schema.keys()))}")
-            
-# 强制打印所有字段信息
-        logger.error("=" * 80)
-        logger.error("[飞书] 紧急调试：字段名不匹配")
-        logger.error("=" * 80)
-        
-        logger.error("[飞书] 飞书表格实际字段名:")
-        for field_name, field_info in schema.items():
-            field_type = field_info.get('type', 'unknown')
-            field_title = field_info.get('name', field_name)
-            logger.error(f"[飞书]   飞书字段: '{field_name}' [类型:{field_type}] 显示名:'{field_title}'")
-            
-        if records:
-            data_fields = set(records[0].keys())
-            schema_fields = set(schema.keys())
-            logger.error(f"[飞书] 数据中文字段: {sorted(list(data_fields))}")
-            logger.error(f"[飞书] 飞书实际字段: {sorted(list(schema_fields))}")
-            
-            # 使用字段映射或尝试匹配
-            field_mapping = {
-                '层级': 'field_1',
-                '自然线索总量': 'field_2',
-                'T月自然线索量': 'field_3',
-                'T-1月自然线索量': 'field_4',
-                '广告线索总量': 'field_5',
-                'T月广告线索量': 'field_6',
-                'T-1月广告线索量': 'field_7',
-                '总消耗': 'field_8',
-                'T月消耗': 'field_9',
-                'T-1月消耗': 'field_10',
-                '付费线索总量': 'field_11',
-                'T月付费线索量': 'field_12',
-                'T-1月付费线索量': 'field_13',
-                '区域线索总量': 'field_14',
-                'T月区域线索量': 'field_15',
-                'T-1月区域线索量': 'field_16',
-                '本地线索总量': 'field_17',
-                'T月本地线索量': 'field_18',
-                'T-1月本地线索量': 'field_19',
-                '有效直播时长总量(小时)': 'field_20',
-                'T月有效直播时长(小时)': 'field_21',
-                'T-1月有效直播时长(小时)': 'field_22',
-                '有效直播场次总量': 'field_23',
-                'T月有效直播场次': 'field_24',
-                'T-1月有效直播场次': 'field_25',
-                '总曝光人数': 'field_26',
-                'T月曝光人数': 'field_27',
-                'T-1月曝光人数': 'field_28',
-                '总场观': 'field_29',
-                'T月场观': 'field_30',
-                'T-1月场观': 'field_31',
-                '小风车点击总量': 'field_32',
-                'T月小风车点击': 'field_33',
-                'T-1月小风车点击': 'field_34',
-                '小风车留资总量': 'field_35',
-                'T月小风车留资': 'field_36',
-                'T-1月小风车留资': 'field_37',
-                '直播线索总量': 'field_38',
-                'T月直播线索': 'field_39',
-                'T-1月直播线索': 'field_40',
-                '锚点曝光总量': 'field_41',
-                'T月锚点曝光': 'field_42',
-                'T-1月锚点曝光': 'field_43',
-                '组件点击总量': 'field_44',
-                'T月组件点击': 'field_45',
-                'T-1月组件点击': 'field_46',
-                '短视频留资总量': 'field_47',
-                'T月短视频留资': 'field_48',
-                'T-1月短视频留资': 'field_49',
-                '短视频发布总量': 'field_50',
-                'T月短视频发布': 'field_51',
-                'T-1月短视频发布': 'field_52',
-                '短视频播放总量': 'field_53',
-                'T月短视频播放': 'field_54',
-                'T-1月短视频播放': 'field_55',
-                '进私总量': 'field_56',
-                'T月进私': 'field_57',
-                'T-1月进私': 'field_58',
-                '私信开口总量': 'field_59',
-                'T月私信开口': 'field_60',
-                'T-1月私信开口': 'field_61',
-                '私信留资总量': 'field_62',
-                'T月私信留资': 'field_63',
-                'T-1月私信留资': 'field_64',
-                '车云店+区域综合CPL': 'field_65',
-                '付费CPL（车云店+区域）': 'field_66',
-                '本地线索占比': 'field_67',
-                '直播车云店+区域日均消耗': 'field_68',
-                'T月直播车云店+区域日均消耗': 'field_69',
-                'T-1月直播车云店+区域日均消耗': 'field_70',
-                '直播车云店+区域付费线索量日均': 'field_71',
-                'T月直播车云店+区域付费线索量日均': 'field_72',
-                'T-1月直播车云店+区域付费线索量日均': 'field_73',
-                'T月直播付费CPL': 'field_74',
-                'T-1月直播付费CPL': 'field_75',
-                '日均有效（25min以上）时长（h）': 'field_76',
-                'T月日均有效（25min以上）时长（h）': 'field_77',
-                'T-1月日均有效（25min以上）时长（h）': 'field_78',
-                '场均曝光人数': 'field_79',
-                'T月场均曝光人数': 'field_80',
-                'T-1月场均曝光人数': 'field_81',
-                '曝光进入率': 'field_82',
-                'T月曝光进入率': 'field_83',
-                'T-1月曝光进入率': 'field_84',
-                '场均场观': 'field_85',
-                'T月场均场观': 'field_86',
-                'T-1月场均场观': 'field_87',
-                '小风车点击率': 'field_88',
-                'T月小风车点击率': 'field_89',
-                'T-1月小风车点击率': 'field_90',
-                '小风车点击留资率': 'field_91',
-                'T月小风车点击留资率': 'field_92',
-                'T-1月小风车点击留资率': 'field_93',
-                '场均小风车留资量': 'field_94',
-                'T月场均小风车留资量': 'field_95',
-                'T-1月场均小风车留资量': 'field_96',
-                '组件点击率': 'field_97',
-                'T月组件点击率': 'field_98',
-                'T-1月组件点击率': 'field_99',
-                '组件留资率': 'field_100',
-                'T月组件留资率': 'field_101',
-                'T-1月组件留资率': 'field_102',
-                '日均进私人数': 'field_103',
-                'T月日均进私人数': 'field_104',
-                'T-1月日均进私人数': 'field_105',
-                '日均私信开口人数': 'field_106',
-                'T月日均私信开口人数': 'field_107',
-                'T-1月日均私信开口人数': 'field_108',
-                '日均咨询留资人数': 'field_109',
-                'T月日均咨询留资人数': 'field_110',
-                'T-1月日均咨询留资人数': 'field_111',
-                '私信咨询率': 'field_112',
-                'T月私信咨询率': 'field_113',
-                'T-1月私信咨询率': 'field_114',
-                '咨询留资率': 'field_115',
-                'T月咨询留资率': 'field_116',
-                'T-1月咨询留资率': 'field_117',
-                '私信转化率': 'field_118',
-                'T月私信转化率': 'field_119',
-                'T-1月私信转化率': 'field_120'
-            }
-            
-            # 使用映射创建新记录
-            fixed_records = []
-            for record in records:
-                if not record:
-                    continue
-                    
-                fixed_record = {}
-                for data_field, value in record.items():
-                    if data_field in field_mapping:
-                        target_field = field_mapping[data_field]
-                        if target_field in schema:
-                            # 获取字段类型并转换
-                            field_schema = schema[target_field]
-                            field_type = field_schema.get('type', 'text')
-                            
-                            try:
-                                if field_type == 'number' and value is not None:
-                                    if isinstance(value, (int, float)):
-                                        fixed_record[target_field] = value
-                                    elif isinstance(value, str) and value.strip():
-                                        fixed_record[target_field] = float(value.strip())
-                                    else:
-                                        fixed_record[target_field] = 0
-                                elif field_type == 'text' and value is not None:
-                                    fixed_record[target_field] = str(value)
-                                elif field_type == 'url' and value is not None:
-                                    fixed_record[target_field] = str(value).strip()
-                                elif field_type == 'checkbox' and value is not None:
-                                    if isinstance(value, bool):
-                                        fixed_record[target_field] = value
-                                    elif isinstance(value, str):
-                                        str_value = value.strip().lower()
-                                        fixed_record[target_field] = str_value in ['true', '1', 'yes', '是', 'on']
-                                    else:
-                                        fixed_record[target_field] = bool(value)
-                                else:
-                                    fixed_record[target_field] = value
-                            except (ValueError, TypeError):
-                                logger.warning(f"[飞书] 字段转换失败: {data_field}({value}) -> {target_field}({field_type})")
-                                fixed_record[target_field] = value
-                        else:
-                            logger.warning(f"[飞书] 映射目标字段不在schema中: {target_field}")
-                    else:
-                        logger.warning(f"[飞书] 无映射的中文字段: {data_field}")
-                
-                if fixed_record:  # 确保有有效字段
-                    fixed_records.append(fixed_record)
-            
-            logger.info(f"[飞书] 字段映射完成，从 {len(records)} 条记录映射为 {len(fixed_records)} 条")
-            return fixed_records
-        
-        # 使用硬编码映射
+            return []
+
+        # 这是你唯一的真相来源，别再用那些垃圾日志污染它了
         field_mapping = {
-            '层级': 'field_1',
-            '自然线索总量': 'field_2',
-            'T月自然线索量': 'field_3',
-            'T-1月自然线索量': 'field_4',
-            '广告线索总量': 'field_5',
-            'T月广告线索量': 'field_6',
-            'T-1月广告线索量': 'field_7',
-            '总消耗': 'field_8',
-            'T月消耗': 'field_9',
-            'T-1月消耗': 'field_10',
-            '付费线索总量': 'field_11',
-            'T月付费线索量': 'field_12',
-            'T-1月付费线索量': 'field_13',
-            '区域线索总量': 'field_14',
-            'T月区域线索量': 'field_15',
-            'T-1月区域线索量': 'field_16',
-            '本地线索总量': 'field_17',
-            'T月本地线索量': 'field_18',
-            'T-1月本地线索量': 'field_19',
-            '有效直播时长总量(小时)': 'field_20',
-            'T月有效直播时长(小时)': 'field_21',
-            'T-1月有效直播时长(小时)': 'field_22',
-            '有效直播场次总量': 'field_23',
-            'T月有效直播场次': 'field_24',
-            'T-1月有效直播场次': 'field_25',
-            '总曝光人数': 'field_26',
-            'T月曝光人数': 'field_27',
-            'T-1月曝光人数': 'field_28',
-            '总场观': 'field_29',
-            'T月场观': 'field_30',
-            'T-1月场观': 'field_31',
-            '小风车点击总量': 'field_32',
-            'T月小风车点击': 'field_33',
-            'T-1月小风车点击': 'field_34',
-            '小风车留资总量': 'field_35',
-            'T月小风车留资': 'field_36',
-            'T-1月小风车留资': 'field_37',
-            '直播线索总量': 'field_38',
-            'T月直播线索': 'field_39',
-            'T-1月直播线索': 'field_40',
-            '锚点曝光总量': 'field_41',
-            'T月锚点曝光': 'field_42',
-            'T-1月锚点曝光': 'field_43',
-            '组件点击总量': 'field_44',
-            'T月组件点击': 'field_45',
-            'T-1月组件点击': 'field_46',
-            '短视频留资总量': 'field_47',
-            'T月短视频留资': 'field_48',
-            'T-1月短视频留资': 'field_49',
-            '短视频发布总量': 'field_50',
-            'T月短视频发布': 'field_51',
-            'T-1月短视频发布': 'field_52',
-            '短视频播放总量': 'field_53',
-            'T月短视频播放': 'field_54',
-            'T-1月短视频播放': 'field_55',
-            '进私总量': 'field_56',
-            'T月进私': 'field_57',
-            'T-1月进私': 'field_58',
-            '私信开口总量': 'field_59',
-            'T月私信开口': 'field_60',
-            'T-1月私信开口': 'field_61',
-            '私信留资总量': 'field_62',
-            'T月私信留资': 'field_63',
-            'T-1月私信留资': 'field_64',
-            '车云店+区域综合CPL': 'field_65',
-            '付费CPL（车云店+区域）': 'field_66',
-            '本地线索占比': 'field_67',
-            '直播车云店+区域日均消耗': 'field_68',
-            'T月直播车云店+区域日均消耗': 'field_69',
-            'T-1月直播车云店+区域日均消耗': 'field_70',
-            '直播车云店+区域付费线索量日均': 'field_71',
-            'T月直播车云店+区域付费线索量日均': 'field_72',
-            'T-1月直播车云店+区域付费线索量日均': 'field_73',
-            'T月直播付费CPL': 'field_74',
-            'T-1月直播付费CPL': 'field_75',
-            '日均有效（25min以上）时长（h）': 'field_76',
-            'T月日均有效（25min以上）时长（h）': 'field_77',
-            'T-1月日均有效（25min以上）时长（h）': 'field_78',
-            '场均曝光人数': 'field_79',
-            'T月场均曝光人数': 'field_80',
-            'T-1月场均曝光人数': 'field_81',
-            '曝光进入率': 'field_82',
-            'T月曝光进入率': 'field_83',
-            'T-1月曝光进入率': 'field_84',
-            '场均场观': 'field_85',
-            'T月场均场观': 'field_86',
-            'T-1月场均场观': 'field_87',
-            '小风车点击率': 'field_88',
-            'T月小风车点击率': 'field_89',
-            'T-1月小风车点击率': 'field_90',
-            '小风车点击留资率': 'field_91',
-            'T月小风车点击留资率': 'field_92',
-            'T-1月小风车点击留资率': 'field_93',
-            '场均小风车留资量': 'field_94',
-            'T月场均小风车留资量': 'field_95',
-            'T-1月场均小风车留资量': 'field_96',
-            '组件点击率': 'field_97',
-            'T月组件点击率': 'field_98',
-            'T-1月组件点击率': 'field_99',
-            '组件留资率': 'field_100',
-            'T月组件留资率': 'field_101',
-            'T-1月组件留资率': 'field_102',
-            '日均进私人数': 'field_103',
-            'T月日均进私人数': 'field_104',
-            'T-1月日均进私人数': 'field_105',
-            '日均私信开口人数': 'field_106',
-            'T月日均私信开口人数': 'field_107',
-            'T-1月日均私信开口人数': 'field_108',
-            '日均咨询留资人数': 'field_109',
-            'T月日均咨询留资人数': 'field_110',
-            'T-1月日均咨询留资人数': 'field_111',
-            '私信咨询率': 'field_112',
-            'T月私信咨询率': 'field_113',
-            'T-1月私信咨询率': 'field_114',
-            '咨询留资率': 'field_115',
-            'T月咨询留资率': 'field_116',
-            'T-1月咨询留资率': 'field_117',
-            '私信转化率': 'field_118',
-            'T月私信转化率': 'field_119',
-            'T-1月私信转化率': 'field_120'
+            '层级': 'field_1', '自然线索总量': 'field_2', 'T月自然线索量': 'field_3', 'T-1月自然线索量': 'field_4',
+            '广告线索总量': 'field_5', 'T月广告线索量': 'field_6', 'T-1月广告线索量': 'field_7', '总消耗': 'field_8',
+            'T月消耗': 'field_9', 'T-1月消耗': 'field_10', '付费线索总量': 'field_11', 'T月付费线索量': 'field_12',
+            'T-1月付费线索量': 'field_13', '区域线索总量': 'field_14', 'T月区域线索量': 'field_15', 'T-1月区域线索量': 'field_16',
+            '本地线索总量': 'field_17', 'T月本地线索量': 'field_18', 'T-1月本地线索量': 'field_19', '有效直播时长总量(小时)': 'field_20',
+            'T月有效直播时长(小时)': 'field_21', 'T-1月有效直播时长(小时)': 'field_22', '有效直播场次总量': 'field_23',
+            'T月有效直播场次': 'field_24', 'T-1月有效直播场次': 'field_25', '总曝光人数': 'field_26', 'T月曝光人数': 'field_27',
+            'T-1月曝光人数': 'field_28', '总场观': 'field_29', 'T月场观': 'field_30', 'T-1月场观': 'field_31',
+            '小风车点击总量': 'field_32', 'T月小风车点击': 'field_33', 'T-1月小风车点击': 'field_34', '小风车留资总量': 'field_35',
+            'T月小风车留资': 'field_36', 'T-1月小风车留资': 'field_37', '直播线索总量': 'field_38', 'T月直播线索': 'field_39',
+            'T-1月直播线索': 'field_40', '锚点曝光总量': 'field_41', 'T月锚点曝光': 'field_42', 'T-1月锚点曝光': 'field_43',
+            '组件点击总量': 'field_44', 'T月组件点击': 'field_45', 'T-1月组件点击': 'field_46', '短视频留资总量': 'field_47',
+            'T月短视频留资': 'field_48', 'T-1月短视频留资': 'field_49', '短视频发布总量': 'field_50', 'T月短视频发布': 'field_51',
+            'T-1月短视频发布': 'field_52', '短视频播放总量': 'field_53', 'T月短视频播放': 'field_54', 'T-1月短视频播放': 'field_55',
+            '进私总量': 'field_56', 'T月进私': 'field_57', 'T-1月进私': 'field_58', '私信开口总量': 'field_59',
+            'T月私信开口': 'field_60', 'T-1月私信开口': 'field_61', '私信留资总量': 'field_62', 'T月私信留资': 'field_63',
+            'T-1月私信留资': 'field_64', '车云店+区域综合CPL': 'field_65', '付费CPL（车云店+区域）': 'field_66',
+            '本地线索占比': 'field_67', '直播车云店+区域日均消耗': 'field_68', 'T月直播车云店+区域日均消耗': 'field_69',
+            'T-1月直播车云店+区域日均消耗': 'field_70', '直播车云店+区域付费线索量日均': 'field_71', 'T月直播车云店+区域付费线索量日均': 'field_72',
+            'T-1月直播车云店+区域付费线索量日均': 'field_73', 'T月直播付费CPL': 'field_74', 'T-1月直播付费CPL': 'field_75',
+            '日均有效（25min以上）时长（h）': 'field_76', 'T月日均有效（25min以上）时长（h）': 'field_77', 'T-1月日均有效（25min以上）时长（h）': 'field_78',
+            '场均曝光人数': 'field_79', 'T月场均曝光人数': 'field_80', 'T-1月场均曝光人数': 'field_81', '曝光进入率': 'field_82',
+            'T月曝光进入率': 'field_83', 'T-1月曝光进入率': 'field_84', '场均场观': 'field_85', 'T月场均场观': 'field_86',
+            'T-1月场均场观': 'field_87', '小风车点击率': 'field_88', 'T月小风车点击率': 'field_89', 'T-1月小风车点击率': 'field_90',
+            '小风车点击留资率': 'field_91', 'T月小风车点击留资率': 'field_92', 'T-1月小风车点击留资率': 'field_93',
+            '场均小风车留资量': 'field_94', 'T月场均小风车留资量': 'field_95', 'T-1月场均小风车留资量': 'field_96',
+            '组件点击率': 'field_97', 'T月组件点击率': 'field_98', 'T-1月组件点击率': 'field_99', '组件留资率': 'field_100',
+            'T月组件留资率': 'field_101', 'T-1月组件留资率': 'field_102', '日均进私人数': 'field_103', 'T月日均进私人数': 'field_104',
+            'T-1月日均进私人数': 'field_105', '日均私信开口人数': 'field_106', 'T月日均私信开口人数': 'field_107',
+            'T-1月日均私信开口人数': 'field_108', '日均咨询留资人数': 'field_109', 'T月日均咨询留资人数': 'field_110',
+            'T-1月日均咨询留资人数': 'field_111', '私信咨询率': 'field_112', 'T月私信咨询率': 'field_113',
+            'T-1月私信咨询率': 'field_114', '咨询留资率': 'field_115', 'T月咨询留资率': 'field_116',
+            'T-1月咨询留资率': 'field_117', '私信转化率': 'field_118', 'T月私信转化率': 'field_119', 'T-1月私信转化率': 'field_120'
         }
-        
-        # 使用映射创建新记录
+
         fixed_records = []
         for record in records:
             if not record:
                 continue
-                
-            fixed_record = {}
-            for data_field, value in record.items():
-                if data_field in field_mapping:
-                    target_field = field_mapping[data_field]
-                    if target_field in schema:
-                        # 获取字段类型并转换
-                        field_schema = schema[target_field]
-                        field_type = field_schema.get('type', 'text')
-                        
-                        try:
-                            if field_type == 'number' and value is not None:
-                                if isinstance(value, (int, float)):
-                                    fixed_record[target_field] = value
-                                elif isinstance(value, str) and value.strip():
-                                    fixed_record[target_field] = float(value.strip())
-                                else:
-                                    fixed_record[target_field] = 0
-                            elif field_type == 'text' and value is not None:
-                                fixed_record[target_field] = str(value)
-                            elif field_type == 'url' and value is not None:
-                                fixed_record[target_field] = str(value).strip()
-                            elif field_type == 'checkbox' and value is not None:
-                                if isinstance(value, bool):
-                                    fixed_record[target_field] = value
-                                elif isinstance(value, str):
-                                    str_value = value.strip().lower()
-                                    fixed_record[target_field] = str_value in ['true', '1', 'yes', '是', 'on']
-                                else:
-                                    fixed_record[target_field] = bool(value)
-                            else:
-                                fixed_record[target_field] = value
-                        except (ValueError, TypeError):
-                            logger.warning(f"[飞书] 字段转换失败: {data_field}({value}) -> {target_field}({field_type})")
-                            fixed_record[target_field] = value
-                    else:
-                        logger.warning(f"[飞书] 映射目标字段不在schema中: {target_field}")
-                else:
-                    logger.warning(f"[飞书] 无映射的中文字段: {data_field}")
             
-            if fixed_record:  # 确保有有效字段
+            fixed_record = {}
+            for chinese_key, value in record.items():
+                target_field = field_mapping.get(chinese_key)
+                if not target_field:
+                    # logger.warning(f"[飞书] 忽略未映射的字段: {chinese_key}")
+                    continue
+
+                if target_field not in schema:
+                    # logger.warning(f"[飞书] 映射目标字段 {target_field} 不在表格schema中，已跳过。")
+                    continue
+                
+                # 字段存在于schema中，进行类型转换
+                field_schema = schema[target_field]
+                field_type = field_schema.get("type")
+                
+                try:
+                    if value is None:
+                        fixed_record[target_field] = None
+                    elif field_type == 1: # Text
+                        fixed_record[target_field] = str(value)
+                    elif field_type == 2: # Number
+                        fixed_record[target_field] = float(value)
+                    elif field_type == 5: # DateTime
+                        fixed_record[target_field] = int(datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp() * 1000)
+                    else:
+                        fixed_record[target_field] = value
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"[飞书] 字段 {target_field} 值 '{value}' 类型转换失败: {e}")
+                    fixed_record[target_field] = None # Or some other default
+
+            if fixed_record:
                 fixed_records.append(fixed_record)
         
-        logger.info(f"[飞书] 字段映射完成，从 {len(records)} 条记录映射为 {len(fixed_records)} 条")
+        logger.info(f"[飞书] 字段映射和类型转换完成，有效记录数: {len(fixed_records)}/{len(records)}")
         return fixed_records
 
     async def _write_single_records(self, client: httpx.AsyncClient, records: List[Dict], headers: Dict) -> (int, int):
