@@ -362,8 +362,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             logger.info(f"[飞书] 成功获取 {len(table_schema)} 个字段的 Schema，开始写入...")
             await writer.write_records(results_data_standard, table_schema)
         else:
-            logger.error("[飞书] 无法获取表格 Schema，将尝试直接写入原始数据，可能失败。")
-            await writer.write_records(results_data_standard, table_schema)
+            logger.error("[飞书] 无法获取表格 Schema，写入操作已中止。请检查飞书配置参数（app_token, table_id）是否正确。")
+            raise HTTPException(status_code=500, detail="无法获取飞书表格的元数据(Schema)，写入操作失败。请检查配置。")
     else:
         logger.info("[飞书] 写入未启用，跳过飞书写入。")
 
