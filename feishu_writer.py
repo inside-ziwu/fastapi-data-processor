@@ -131,7 +131,7 @@ class FeishuWriter:
         # 使用字段映射
         if schema:
             records = self._fix_data_types(records, schema)
-            logger.info(f"[GEMINI_PROBE] Records after fix: {records[0] if records else 'No records'}")
+            logger.error(f"[GEMINI_PROBE] Records after fix: {records[0] if records else 'No records'}")
             # _fix_data_types现在会处理字段映射
         
         try:
