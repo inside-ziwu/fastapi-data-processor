@@ -46,6 +46,9 @@ class FeishuWriterV3:
         # 缓存字段映射：field_name -> field_info
         self._field_cache: Dict[str, Dict[str, Any]] = {}
         
+        # 反向映射缓存：英文键 -> 中文字段信息
+        self._reverse_mapping_cache: Dict[str, Dict[str, Any]] = {}
+        
         # 验证配置
         if not all([self.app_id, self.app_secret, self.app_token, self.table_id]):
             self.enabled = False
@@ -92,6 +95,28 @@ class FeishuWriterV3:
             logger.error(f"[飞书] 获取schema时发生错误: {e}")
             return {}
             
+    def _build_reverse_mapping(self, schema: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """构建英文到中文的反向映射"""
+        if not schema:
+            return {}
+            
+        # 从data_processor.py导入映射表
+        try:
+            from data_processor import FIELD_EN_MAP
+            reverse_map = {}
+            
+            # 创建反向映射：英文键 -> 中文字段信息
+            for cn_name, en_name in FIELD_EN_MAP.items():
+                if cn_name in schema:
+                    reverse_map[en_name] = schema[cn_name]
+                    
+            logger.info(f"[飞书] 构建反向映射：{len(reverse_map)} 个字段")
+            return reverse_map
+            
+        except ImportError:
+            logger.warning("[飞书] 无法导入FIELD_EN_MAP，使用空映射")
+            return {}
+
     def _process_value_by_type(self, value: Any, field_info: Dict[str, Any]) -> Any:
         """根据字段类型处理值"""
         if value is None or value == "":
@@ -178,7 +203,11 @@ class FeishuWriterV3:
                 logger.error("[飞书] 无法获取表格schema")
                 return False
                 
-            # 构建写入数据 - 直接使用字段名匹配
+            # 构建反向映射
+            reverse_mapping = self._build_reverse_mapping(schema)
+            logger.info(f"[飞书] 反向映射：{list(reverse_mapping.keys())[:10]}...")
+            
+            # 构建写入数据 - 使用反向映射
             table_records = []
             
             for record_idx, record in enumerate(records):
@@ -188,24 +217,21 @@ class FeishuWriterV3:
                     if not self._has_meaningful_value(value):
                         continue
                         
-                    # 直接使用字段名匹配（支持中英文）
-                    field_info = schema.get(field_name)
-                    if not field_info:
-                        # 尝试英文到中文的映射
-                        field_mapping = {
-                            "NSC_CODE": "主机厂经销商ID",
-                            "level": "层级",
-                            "store_name": "门店名"
-                        }
-                        cn_name = field_mapping.get(field_name, field_name)
-                        field_info = schema.get(cn_name)
-                        
+                    # 使用反向映射查找中文字段
+                    field_info = reverse_mapping.get(field_name)
                     if field_info:
                         processed_value = self._process_value_by_type(value, field_info)
                         if processed_value is not None:
                             fields_data[field_info["id"]] = processed_value
                     else:
-                        logger.debug(f"[飞书] 字段 '{field_name}' 不存在，跳过")
+                        # 尝试直接匹配中文字段名
+                        direct_match = schema.get(field_name)
+                        if direct_match:
+                            processed_value = self._process_value_by_type(value, direct_match)
+                            if processed_value is not None:
+                                fields_data[direct_match["id"]] = processed_value
+                        else:
+                            logger.debug(f"[飞书] 字段 '{field_name}' 不存在，跳过")
                         
                 if fields_data:
                     table_records.append(
@@ -277,6 +303,11 @@ class FeishuWriterV3:
             else:
                 result["field_count"] = len(schema)
                 result["fields"] = list(schema.keys())
+                
+                # 测试反向映射
+                reverse_mapping = self._build_reverse_mapping(schema)
+                result["mapped_fields"] = len(reverse_mapping)
+                result["sample_mapping"] = dict(list(reverse_mapping.items())[:5])
                 
         except Exception as e:
             result["valid"] = False
