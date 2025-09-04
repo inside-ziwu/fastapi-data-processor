@@ -221,7 +221,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             
             try:
                 # Run the synchronous, CPU-bound function in a thread pool
-                result_df, en_to_cn_map, type_mapping = await loop.run_in_executor(
+                result_df = await loop.run_in_executor(
                     None,  # Use the default executor
                     process_all_files,
                     local_paths,
@@ -234,7 +234,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             # PROFILING: After Core Processing
             core_processing_end_time = time.time()
             logger.info(f"PROFILING: Core processing finished. Total core processing time: {core_processing_end_time - core_processing_start_time:.2f} seconds.")
-            return result_df, en_to_cn_map, type_mapping
+            return result_df
         
         # --- Modified Task Execution with Cancellation ---
         task_to_run = asyncio.create_task(core_processing_task())
@@ -246,7 +246,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             if remaining_time <= 0:
                 raise AsyncTimeoutError()
 
-            result_df, en_to_cn_map, type_mapping = await asyncio.wait_for(
+            result_df = await asyncio.wait_for(
                 task_to_run,
                 timeout=remaining_time
             )
@@ -314,32 +314,6 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
 
         # 4. Create standard and Feishu data formats
         results_data_standard = result_df.to_dicts()  # 标准JSON保持英文
-        
-        # 飞书格式使用中文字段名 - 确保无null值
-        results_data_chinese = []
-        for row in results_data_standard:
-            chinese_row = {}
-            for en_key, value in row.items():
-                cn_key = en_to_cn_map.get(en_key, en_key)
-                # 确保value不是None/null
-                if value is None:
-                    if any(keyword in cn_key for keyword in ['率', '占比']):
-                        value = 0.0
-                    elif any(keyword in cn_key for keyword in ['量', '数', '时长', '消耗', 'CPL', '场观', '曝光', '点击']):
-                        value = 0
-                    else:
-                        value = 0
-                chinese_row[cn_key] = value
-            results_data_chinese.append(chinese_row)
-        
-        feishu_records = []
-        for chinese_row in results_data_chinese:
-            feishu_records.append({"fields": chinese_row})
-        feishu_output = {
-            "records": feishu_records,
-            "field_mapping": en_to_cn_map,
-            "field_types": type_mapping
-        }
 
         # 5. Calculate final size and construct message
         json_string_for_size_calc = json.dumps(results_data_standard, default=json_date_serializer)
@@ -367,18 +341,6 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     with open(out_path_standard, "w", encoding="utf-8") as f:
         json.dump({"message": message, "data": results_data_standard}, f, ensure_ascii=False, indent=2, default=json_date_serializer)
 
-    out_path_feishu = os.path.join(run_dir, "feishu_import.json")
-    with open(out_path_feishu, "w", encoding="utf-8") as f:
-        json.dump(feishu_output, f, ensure_ascii=False, indent=2)
-
-    # 构造下载URL
-    from urllib.parse import urljoin, quote
-    base_url = str(request.base_url)
-    download_endpoint = "get-result-file"
-    url_standard = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_standard)}"
-    url_feishu = f"{urljoin(base_url, download_endpoint)}?file_path={quote(out_path_feishu)}"
-    logger.info(f"Returning downloadable URLs: {url_standard}, {url_feishu}")
-
     # 用于API返回的最终结果
     string_records = [json.dumps(row, ensure_ascii=False, default=json_date_serializer) for row in results_data_standard]
     
@@ -398,10 +360,10 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         table_schema = await writer.get_table_schema()
         if table_schema:
             logger.info(f"[飞书] 成功获取 {len(table_schema)} 个字段的 Schema，开始写入...")
-            await writer.write_records(results_data_chinese, table_schema)
+            await writer.write_records(results_data_standard, table_schema)
         else:
             logger.error("[飞书] 无法获取表格 Schema，将尝试直接写入原始数据，可能失败。")
-            await writer.write_records(results_data_chinese, table_schema)
+            await writer.write_records(results_data_standard, table_schema)
     else:
         logger.info("[飞书] 写入未启用，跳过飞书写入。")
 

@@ -3,6 +3,7 @@ import asyncio
 import json
 from typing import List, Dict
 import logging
+from datetime import datetime
 
 logger = logging.getLogger("feishu")
 
@@ -17,6 +18,137 @@ class FeishuWriter:
         if not all([self.app_id, self.app_secret, self.app_token, self.table_id]):
             self.enabled = False
             logger.warning("[飞书] 配置不完整 (app_id, app_secret, app_token, table_id)，写入功能已禁用。")
+
+        # Business logic mapping from Chinese (Feishu) to English (internal)
+        self.FIELD_EN_MAP = {
+            "主机厂经销商ID": "NSC_CODE",
+            "层级": "level", 
+            "门店名": "store_name",
+            "自然线索总量": "natural_leads_total",
+            "T月自然线索量": "natural_leads_t",
+            "T-1月自然线索量": "natural_leads_t_minus_1",
+            "广告线索总量": "ad_leads_total",
+            "T月广告线索量": "ad_leads_t",
+            "T-1月广告线索量": "ad_leads_t_minus_1",
+            "总消耗": "spending_net_total",
+            "T月消耗": "spending_net_t",
+            "T-1月消耗": "spending_net_t_minus_1",
+            "付费线索总量": "paid_leads_total",
+            "T月付费线索量": "paid_leads_t",
+            "T-1月付费线索量": "paid_leads_t_minus_1",
+            "区域线索总量": "area_leads_total",
+            "T月区域线索量": "area_leads_t",
+            "T-1月区域线索量": "area_leads_t_minus_1",
+            "本地线索总量": "local_leads_total",
+            "T月本地线索量": "local_leads_t",
+            "T-1月本地线索量": "local_leads_t_minus_1",
+            "有效直播时长总量(小时)": "live_effective_hours_total",
+            "T月有效直播时长(小时)": "live_effective_hours_t",
+            "T-1月有效直播时长(小时)": "live_effective_hours_t_minus_1",
+            "有效直播场次总量": "effective_live_sessions_total",
+            "T月有效直播场次": "effective_live_sessions_t",
+            "T-1月有效直播场次": "effective_live_sessions_t_minus_1",
+            "总曝光人数": "exposures_total",
+            "T月曝光人数": "exposures_t",
+            "T-1月曝光人数": "exposures_t_minus_1",
+            "总场观": "viewers_total",
+            "T月场观": "viewers_t",
+            "T-1月场观": "viewers_t_minus_1",
+            "小风车点击总量": "small_wheel_clicks_total",
+            "T月小风车点击": "small_wheel_clicks_t",
+            "T-1月小风车点击": "small_wheel_clicks_t_minus_1",
+            "小风车留资总量": "small_wheel_leads_total",
+            "T月小风车留资": "small_wheel_leads_t",
+            "T-1月小风车留资": "small_wheel_leads_t_minus_1",
+            "直播线索总量": "live_leads_total",
+            "T月直播线索": "live_leads_t",
+            "T-1月直播线索": "live_leads_t_minus_1",
+            "锚点曝光总量": "anchor_exposure_total",
+            "T月锚点曝光": "anchor_exposure_t",
+            "T-1月锚点曝光": "anchor_exposure_t_minus_1",
+            "组件点击总量": "component_clicks_total",
+            "T月组件点击": "component_clicks_t",
+            "T-1月组件点击": "component_clicks_t_minus_1",
+            "短视频留资总量": "short_video_leads_total",
+            "T月短视频留资": "short_video_leads_t",
+            "T-1月短视频留资": "short_video_leads_t_minus_1",
+            "短视频发布总量": "short_video_count_total",
+            "T月短视频发布": "short_video_count_t",
+            "T-1月短视频发布": "short_video_count_t_minus_1",
+            "短视频播放总量": "short_video_plays_total",
+            "T月短视频播放": "short_video_plays_t",
+            "T-1月短视频播放": "short_video_plays_t_minus_1",
+            "进私总量": "enter_private_count_total",
+            "T月进私": "enter_private_count_t",
+            "T-1月进私": "enter_private_count_t_minus_1",
+            "私信开口总量": "private_open_count_total",
+            "T月私信开口": "private_open_count_t",
+            "T-1月私信开口": "private_open_count_t_minus_1",
+            "私信留资总量": "private_leads_count_total",
+            "T月私信留资": "private_leads_count_t",
+            "T-1月私信留资": "private_leads_count_t_minus_1",
+            "车云店+区域综合CPL": "total_cpl",
+            "付费CPL（车云店+区域）": "paid_cpl",
+            "本地线索占比": "local_leads_ratio",
+            "直播车云店+区域日均消耗": "avg_daily_spending",
+            "T月直播车云店+区域日均消耗": "avg_daily_spending_t",
+            "T-1月直播车云店+区域日均消耗": "avg_daily_spending_t_minus_1",
+            "直播车云店+区域付费线索量日均": "avg_daily_paid_leads",
+            "T月直播车云店+区域付费线索量日均": "avg_daily_paid_leads_t",
+            "T-1月直播车云店+区域付费线索量日均": "avg_daily_paid_leads_t_minus_1",
+            "T月直播付费CPL": "paid_cpl_t",
+            "T-1月直播付费CPL": "paid_cpl_t_minus_1",
+            "有效（25min以上）时长（h）": "effective_live_hours_25min",
+            "T月有效（25min以上）时长（h）": "effective_live_hours_25min_t",
+            "T-1月有效（25min以上）时长（h）": "effective_live_hours_25min_t_minus_1",
+            "日均有效（25min以上）时长（h）": "avg_daily_effective_live_hours_25min",
+            "T月日均有效（25min以上）时长（h）": "avg_daily_effective_live_hours_25min_t",
+            "T-1月日均有效（25min以上）时长（h）": "avg_daily_effective_live_hours_25min_t_minus_1",
+            "场均曝光人数": "avg_exposures_per_session",
+            "T月场均曝光人数": "avg_exposures_per_session_t",
+            "T-1月场均曝光人数": "avg_exposures_per_session_t_minus_1",
+            "曝光进入率": "exposure_to_viewer_rate",
+            "T月曝光进入率": "exposure_to_viewer_rate_t",
+            "T-1月曝光进入率": "exposure_to_viewer_rate_t_minus_1",
+            "场均场观": "avg_viewers_per_session",
+            "T月场均场观": "avg_viewers_per_session_t",
+            "T-1月场均场观": "avg_viewers_per_session_t_minus_1",
+            "小风车点击率": "small_wheel_click_rate",
+            "T月小风车点击率": "small_wheel_click_rate_t",
+            "T-1月小风车点击率": "small_wheel_click_rate_t_minus_1",
+            "小风车点击留资率": "small_wheel_leads_rate",
+            "T月小风车点击留资率": "small_wheel_leads_rate_t",
+            "T-1月小风车点击留资率": "small_wheel_leads_rate_t_minus_1",
+            "场均小风车留资量": "avg_small_wheel_leads_per_session",
+            "T月场均小风车留资量": "avg_small_wheel_leads_per_session_t",
+            "T-1月场均小风车留资量": "avg_small_wheel_leads_per_session_t_minus_1",
+            "组件点击率": "component_click_rate",
+            "T月组件点击率": "component_click_rate_t",
+            "T-1月组件点击率": "component_click_rate_t_minus_1",
+            "组件留资率": "component_leads_rate",
+            "T月组件留资率": "component_leads_rate_t",
+            "T-1月组件留资率": "component_leads_rate_t_minus_1",
+            "日均进私人数": "avg_daily_private_entry_count",
+            "T月日均进私人数": "avg_daily_private_entry_count_t",
+            "T-1月日均进私人数": "avg_daily_private_entry_count_t_minus_1",
+            "日均私信开口人数": "avg_daily_private_open_count",
+            "T月日均私信开口人数": "avg_daily_private_open_count_t",
+            "T-1月日均私信开口人数": "avg_daily_private_open_count_t_minus_1",
+            "日均咨询留资人数": "avg_daily_private_leads_count",
+            "T月日均咨询留资人数": "avg_daily_private_leads_count_t",
+            "T-1月日均咨询留资人数": "avg_daily_private_leads_count_t_minus_1",
+            "私信咨询率": "private_open_rate",
+            "T月私信咨询率": "private_open_rate_t",
+            "T-1月私信咨询率": "private_open_rate_t_minus_1",
+            "咨询留资率": "private_leads_rate",
+            "T月咨询留资率": "private_leads_rate_t",
+            "T-1月咨询留资率": "private_leads_rate_t_minus_1",
+            "私信转化率": "private_conversion_rate",
+            "T月私信转化率": "private_conversion_rate_t",
+            "T-1月私信转化率": "private_conversion_rate_t_minus_1"
+        }
+        self.EN_TO_CN_MAP = {v: k for k, v in self.FIELD_EN_MAP.items()}
+
 
     async def get_tenant_token(self) -> str:
         """获取tenant_access_token"""
@@ -70,14 +202,16 @@ class FeishuWriter:
                         
                         for field in items:
                             field_name = field.get("field_name")
+                            field_id = field.get("field_id")
                             field_type = field.get("type")
                             options = []
                             
                             if field_type in [3, 4]: # 3: 单选, 4: 多选
                                 options = [opt["name"] for opt in field.get("property", {}).get("options", [])]
 
-                            if field_name:
+                            if field_name and field_id:
                                 simplified_schema[field_name] = {
+                                    "id": field_id,
                                     "type": field_type,
                                     "options": options
                                 }
@@ -113,7 +247,7 @@ class FeishuWriter:
         logger.error(f"[飞书] 获取 schema 彻底失败，已重试 {retries} 次。")
         raise RuntimeError(f"获取飞书表格结构失败: {last_exception}")
 
-    async def write_records(self, records: List[Dict], schema: Dict = None, field_mapping: Dict = None) -> bool:
+    async def write_records(self, records: List[Dict], schema: Dict = None) -> bool:
         """
         分批写入记录到飞书多维表格。
         如果批量写入失败，则会尝试逐条写入以跳过有问题的记录。
@@ -207,48 +341,10 @@ class FeishuWriter:
     def _fix_data_types(self, records: List[Dict], schema: Dict) -> List[Dict]:
         """
         根据飞书schema修正数据类型和字段名，返回修正后的数据副本。
+        现在使用动态schema将中文列名映射到飞书的真实field_id。
         """
         if not schema or not records:
             return []
-        
-        logger.error(f"[GEMINI_DEBUG] Incoming record keys: {list(records[0].keys())}")
-
-        # This mapping should be in a config file. It's a maintenance nightmare.
-        field_mapping = {
-            '层级': 'field_1', '自然线索总量': 'field_2', 'T月自然线索量': 'field_3', 'T-1月自然线索量': 'field_4',
-            '广告线索总量': 'field_5', 'T月广告线索量': 'field_6', 'T-1月广告线索量': 'field_7', '总消耗': 'field_8',
-            'T月消耗': 'field_9', 'T-1月消耗': 'field_10', '付费线索总量': 'field_11', 'T月付费线索量': 'field_12',
-            'T-1月付费线索量': 'field_13', '区域线索总量': 'field_14', 'T月区域线索量': 'field_15', 'T-1月区域线索量': 'field_16',
-            '本地线索总量': 'field_17', 'T月本地线索量': 'field_18', 'T-1月本地线索量': 'field_19', '有效直播时长总量(小时)': 'field_20',
-            'T月有效直播时长(小时)': 'field_21', 'T-1月有效直播时长(小时)': 'field_22', '有效直播场次总量': 'field_23',
-            'T月有效直播场次': 'field_24', 'T-1月有效直播场次': 'field_25', '总曝光人数': 'field_26', 'T月曝光人数': 'field_27',
-            'T-1月曝光人数': 'field_28', '总场观': 'field_29', 'T月场观': 'field_30', 'T-1月场观': 'field_31',
-            '小风车点击总量': 'field_32', 'T月小风车点击': 'field_33', 'T-1月小风车点击': 'field_34', '小风车留资总量': 'field_35',
-            'T月小风车留资': 'field_36', 'T-1月小风车留资': 'field_37', '直播线索总量': 'field_38', 'T月直播线索': 'field_39',
-            'T-1月直播线索': 'field_40', '锚点曝光总量': 'field_41', 'T月锚点曝光': 'field_42', 'T-1月锚点曝光': 'field_43',
-            '组件点击总量': 'field_44', 'T月组件点击': 'field_45', 'T-1月组件点击': 'field_46', '短视频留资总量': 'field_47',
-            'T月短视频留资': 'field_48', 'T-1月短视频留资': 'field_49', '短视频发布总量': 'field_50', 'T月短视频发布': 'field_51',
-            'T-1月短视频发布': 'field_52', '短视频播放总量': 'field_53', 'T月短视频播放': 'field_54', 'T-1月短视频播放': 'field_55',
-            '进私总量': 'field_56', 'T月进私': 'field_57', 'T-1月进私': 'field_58', '私信开口总量': 'field_59',
-            'T月私信开口': 'field_60', 'T-1月私信开口': 'field_61', '私信留资总量': 'field_62', 'T月私信留资': 'field_63',
-            'T-1月私信留资': 'field_64', '车云店+区域综合CPL': 'field_65', '付费CPL（车云店+区域）': 'field_66',
-            '本地线索占比': 'field_67', '直播车云店+区域日均消耗': 'field_68', 'T月直播车云店+区域日均消耗': 'field_69',
-            'T-1月直播车云店+区域日均消耗': 'field_70', '直播车云店+区域付费线索量日均': 'field_71', 'T月直播车云店+区域付费线索量日均': 'field_72',
-            'T-1月直播车云店+区域付费线索量日均': 'field_73', 'T月直播付费CPL': 'field_74', 'T-1月直播付费CPL': 'field_75',
-            '日均有效（25min以上）时长（h）': 'field_76', 'T月日均有效（25min以上）时长（h）': 'field_77', 'T-1月日均有效（25min以上）时长（h）': 'field_78',
-            '场均曝光人数': 'field_79', 'T月场均曝光人数': 'field_80', 'T-1月场均曝光人数': 'field_81', '曝光进入率': 'field_82',
-            'T月曝光进入率': 'field_83', 'T-1月曝光进入率': 'field_84', '场均场观': 'field_85', 'T月场均场观': 'field_86',
-            'T-1月场均场观': 'field_87', '小风车点击率': 'field_88', 'T月小风车点击率': 'field_89', 'T-1月小风车点击率': 'field_90',
-            '小风车点击留资率': 'field_91', 'T月小风车点击留资率': 'field_92', 'T-1月小风车点击留资率': 'field_93',
-            '场均小风车留资量': 'field_94', 'T月场均小风车留资量': 'field_95', 'T-1月场均小风车留资量': 'field_96',
-            '组件点击率': 'field_97', 'T月组件点击率': 'field_98', 'T-1月组件点击率': 'field_99', '组件留资率': 'field_100',
-            'T月组件留资率': 'field_101', 'T-1月组件留资率': 'field_102', '日均进私人数': 'field_103', 'T月日均进私人数': 'field_104',
-            'T-1月日均进私人数': 'field_105', '日均私信开口人数': 'field_106', 'T月日均私信开口人数': 'field_107',
-            'T-1月日均私信开口人数': 'field_108', '日均咨询留资人数': 'field_109', 'T月日均咨询留资人数': 'field_110',
-            'T-1月日均咨询留资人数': 'field_111', '私信咨询率': 'field_112', 'T月私信咨询率': 'field_113',
-            'T-1月私信咨询率': 'field_114', '咨询留资率': 'field_115', 'T月咨询留资率': 'field_116',
-            'T-1月咨询留资率': 'field_117', '私信转化率': 'field_118', 'T月私信转化率': 'field_119', 'T-1月私信转化率': 'field_120'
-        }
 
         fixed_records = []
         for record in records:
@@ -256,37 +352,46 @@ class FeishuWriter:
                 continue
             
             fixed_record = {}
-            for chinese_key, value in record.items():
-                # 1. Find the target field ID (e.g., 'field_1') from the mapping
-                target_field_id = field_mapping.get(chinese_key)
-                if not target_field_id:
-                    # logger.warning(f"[飞书] 忽略未映射的字段: '{chinese_key}'")
+            for en_key, value in record.items():
+                # 1. Translate English key to Chinese key
+                chinese_key = self.EN_TO_CN_MAP.get(en_key)
+                if not chinese_key:
+                    logger.warning(f"[飞书] 忽略未映射的英文字段: '{en_key}'")
                     continue
 
-                # 2. The schema from Feishu is keyed by the internal field ID. So we check against that.
-                if target_field_id not in schema:
-                    # logger.warning(f"[飞书] 映射目标字段 {target_field_id} (来自 '{chinese_key}') 不在表格schema中，已跳过。")
+                # 2. Find the field's schema using the Chinese key
+                field_schema = schema.get(chinese_key)
+                if not field_schema:
+                    logger.warning(f"[飞书] 忽略字段: '{chinese_key}' (from '{en_key}')，因为它在飞书表格中不存在。")
+                    continue
+
+                # 3. Get the real field_id and type from the schema
+                target_field_id = field_schema.get("id")
+                field_type = field_schema.get("type")
+
+                if not target_field_id:
+                    logger.warning(f"[飞书] 字段 '{chinese_key}' 在schema中缺少 'id'，已跳过。")
                     continue
                 
-                # 3. We have a match. Now, prepare the fixed record using the target_field_id as the key.
-                field_schema = schema[target_field_id]
-                field_type = field_schema.get("type")
-                
+                # 4. Convert value to the correct type
                 try:
                     converted_value = None
-                    if value is None:
+                    if value is None or value == '':
                         converted_value = None
                     elif field_type == 1: # Text
                         converted_value = str(value)
                     elif field_type == 2: # Number
                         converted_value = float(value)
                     elif field_type == 5: # DateTime
+                        # Assuming value is an ISO 8601 string
                         converted_value = int(datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp() * 1000)
                     else:
                         converted_value = value
+                    
                     fixed_record[target_field_id] = converted_value
+
                 except (ValueError, TypeError) as e:
-                    logger.warning(f"[飞书] 字段 {target_field_id} 值 '{value}' 类型转换失败: {e}")
+                    logger.warning(f"[飞书] 字段 '{chinese_key}' (ID: {target_field_id}) 的值 '{value}' 类型转换失败: {e}")
 
             if fixed_record:
                 fixed_records.append(fixed_record)
