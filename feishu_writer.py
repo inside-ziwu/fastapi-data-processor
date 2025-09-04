@@ -306,6 +306,16 @@ class FeishuWriter:
                 for attempt in range(3):
                     try:
                         resp = await client.post(self.base_url, json=payload, headers=headers, timeout=60)
+                    
+                    # 调试：打印完整响应
+                    response_data = resp.json()
+                    logger.info(f"[飞书调试] 响应完整数据: {response_data}")
+                    
+                    # 检查records返回
+                    created_records = response_data.get("data", {}).get("records", [])
+                    logger.info(f"[飞书调试] 实际创建记录数: {len(created_records)}")
+                    if created_records:
+                        logger.info(f"[飞书调试] 第一条创建记录: {created_records[0]}")
                         
                         if resp.status_code == 200:
                             result = resp.json()
