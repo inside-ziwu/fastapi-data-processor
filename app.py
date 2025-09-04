@@ -458,7 +458,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 logger.warning("[飞书] 所有记录均未通过验证，没有数据可写入。")
         else:
             logger.error("[飞书] 无法获取表格 Schema，将尝试直接写入原始数据，可能失败。")
-            await writer.write_records(results_data_chinese)
+            await writer.write_records(results_data_chinese, table_schema)
     else:
         logger.info("[飞书] 写入未启用，跳过飞书写入。")
 
