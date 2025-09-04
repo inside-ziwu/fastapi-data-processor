@@ -161,7 +161,7 @@ class FeishuWriter:
                         logger.error(f"[飞书] 第 {i+1}/{len(chunks)} 批写入失败: {resp.status_code} - {error_resp.get('msg', '未知错误')}")
                         logger.info(f"[飞书] 开始对第 {i+1} 批进行逐条写入...")
                         
-                        batch_success_count, batch_failed_count = await self._write_single_records(client, chunk, headers)
+                        batch_success_count, batch_failed_count = await self._write_single_records(client, chunk, headers, schema)
                         total_success_count += batch_success_count
                         total_failed_count += batch_failed_count
                         logger.info(f"[飞书] 第 {i+1} 批逐条写入完成: 成功 {batch_success_count} 条, 失败 {batch_failed_count} 条。")
@@ -169,7 +169,7 @@ class FeishuWriter:
                 except httpx.HTTPError as e:
                     logger.error(f"[飞书] 第 {i+1} 批发生网络错误: {e}")
                     logger.info(f"[飞书] 开始对第 {i+1} 批进行逐条写入...")
-                    batch_success_count, batch_failed_count = await self._write_single_records(client, chunk, headers)
+                    batch_success_count, batch_failed_count = await self._write_single_records(client, chunk, headers, schema)
                     total_success_count += batch_success_count
                     total_failed_count += batch_failed_count
                 except Exception as e:
@@ -179,7 +179,7 @@ class FeishuWriter:
         logger.info(f"[飞书] 写入总结: 总记录数 {len(records)}，成功 {total_success_count} 条，失败 {total_failed_count} 条。")
         return total_failed_count == 0
 
-    async def _write_single_records(self, client: httpx.AsyncClient, records: List[Dict], headers: Dict) -> (int, int):
+    async def _write_single_records(self, client: httpx.AsyncClient, records: List[Dict], headers: Dict, schema: Dict) -> (int, int):
         """私有方法，用于逐条写入记录并返回成功和失败的计数"""
         success_count = 0
         failed_count = 0
@@ -196,8 +196,16 @@ class FeishuWriter:
                     success_count += 1
                 else:
                     failed_count += 1
-                    error_msg = single_resp.json().get('msg', '未知错误')
-                    logger.warning(f"[飞书] 跳过问题记录: {error_msg} | 数据: {json.dumps(record, ensure_ascii=False)[:100]}...")
+                    error_detail = single_resp.text
+                    logger.warning(f"[飞书] 跳过问题记录: {error_detail} | 数据: {json.dumps(record, ensure_ascii=False)[:200]}...")
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"[飞书] 单条记录写入异常: {e} | 数据: {json.dumps(record, ensure_ascii=False)[:100]}...")
+        
+        return success_count, failed_count
+字段: '{key}', 数据: '{value}' (类型: {type(value).__name__}), Schema 要求: {schema_info}\n"
+                    log_message += "--------------------------"
+                    logger.warning(log_message)
             except Exception as e:
                 failed_count += 1
                 logger.error(f"[飞书] 单条记录写入异常: {e} | 数据: {json.dumps(record, ensure_ascii=False)[:100]}...")
