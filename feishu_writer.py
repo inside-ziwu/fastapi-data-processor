@@ -46,7 +46,7 @@ class FeishuWriter:
         self.app_secret = config.get("app_secret", "")
         self.app_token = config.get("app_token", "")
         self.table_id = config.get("table_id", "")
-        self.base_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self.app_token}/tables/{self.table_id}/records"
+        self.base_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self.app_token}/tables/{self.table_id}/records/batch_create"
         if not all([self.app_id, self.app_secret, self.app_token, self.table_id]):
             self.enabled = False
             logger.warning("[飞书] 配置不完整 (app_id, app_secret, app_token, table_id)，写入功能已禁用。")
@@ -379,15 +379,17 @@ class FeishuWriter:
         success_count = 0
         failed_count = 0
         
+        single_record_url = self.base_url.replace('/batch_create', '')
+
         for record in records:
             if not record or not any(record.values()):
                 failed_count += 1
                 continue
             
-            single_payload = {"records": [{"fields": record}]}
+            single_payload = {"fields": record}
             
             try:
-                single_resp = await client.post(self.base_url, json=single_payload, headers=headers, timeout=30)
+                single_resp = await client.post(single_record_url, json=single_payload, headers=headers, timeout=30)
                 if single_resp.status_code == 200:
                     success_count += 1
                 else:
