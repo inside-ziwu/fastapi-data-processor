@@ -183,11 +183,11 @@ def normalize_symbol(s: str) -> str:
         s.replace("（", "(")
          .replace("）", ")")
          .replace("，", ",")
-         .replace("。", ".")
+         .replace("。。", ".")
          .replace("【", "[")
          .replace("】", "]")
-         .replace("“", "\"")
-         .replace("”", "\"")
+         .replace("“", '"')
+         .replace("”", '"')
          .replace("‘", "'")
          .replace("’", "'")
          .replace("：", ":")
@@ -195,7 +195,7 @@ def normalize_symbol(s: str) -> str:
          .replace("、", "/")
          .replace("—", "-")
          .replace("－", "-")
-         .replace("　", "")
+         .replace("\u3000", "")
          .replace(" ", "")
     )
 
@@ -251,7 +251,6 @@ def read_excel_polars(path: str, sheet_name=None):
             pdf[col] = pdf[col].astype(str)
         return pl.from_pandas(pdf)
 
-
 def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFrame:
     if colname not in df.columns:
         df = df.with_columns(pl.lit(None).alias(colname))
@@ -260,8 +259,8 @@ def normalize_nsc_col(df: pl.DataFrame, colname: str = "NSC_CODE") -> pl.DataFra
     
     # 修复：保留原始值，不要过度清洗
     df = df.with_columns(
-        pl.when(pl.col(colname).str.contains(r"[；，\|\u3001/\\]"))
-        .then(pl.col(colname).str.replace_all(r"[；，\|\u3001/\\]+", ","))
+        pl.when(pl.col(colname).str.contains(r"[；，|\|\u3001/\\]") )
+        .then(pl.col(colname).str.replace_all(r"[；，|\|\u3001/\\]+", ","))
         .otherwise(pl.col(colname))
         .alias(colname)
     )
@@ -746,7 +745,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                         processed = process_single_table(df_sheet, SPENDING_MAP, ["spending_net"], "spending")
                         processed_dfs.append(processed)
                     except Exception as e:
-                        logger.warning(f"Spending_file sheet {sheet_name} processing failed: {e}")
+                        logger.warning(f"Spending_file sheet {sheetname} processing failed: {e}")
                         continue
                 if processed_dfs:
                     df = pl.concat(processed_dfs, how="vertical")
@@ -853,7 +852,7 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
     logger.info("开始进行T/T-1分析...")
     unique_months = base.get_column("date").dt.month().unique().sort(descending=True)
     if len(unique_months) < 2:
-        raise ValueError("数据不足两个月，无法进行T/T-1对比分析。")
+        raise ValueError("数据不足两个月，无法进行T/T-1对比分析。" )
     month_t = unique_months[0]
     month_t_minus_1 = unique_months[1]
     logger.info(f"T周期月份: {month_t}, T-1周期月份: {month_t_minus_1}")
@@ -1077,35 +1076,4 @@ def process_all_files(local_paths: Dict[str, str], spending_sheet_names: Optiona
                 .fill_nan(None)
                 .alias(col_name)
             )
-    # 创建反向映射（英文->中文）
-    EN_TO_CN_MAP = {v: k for k, v in FIELD_EN_MAP.items()}
-    
-    # 确保level字段正确映射到中文
-    EN_TO_CN_MAP["level"] = "层级"
-    
-    # 创建变量类型映射
-    TYPE_MAPPING = {}
-    for col in final_df.columns:
-        if col in EN_TO_CN_MAP:
-            cn_name = EN_TO_CN_MAP[col]
-            dtype = str(final_df[col].dtype)
-            if "float" in dtype:
-                type_desc = "数值型"
-            elif "int" in dtype:
-                type_desc = "整数型"
-            elif "str" in dtype or "utf8" in dtype:
-                type_desc = "文本型"
-            elif "date" in dtype:
-                type_desc = "日期型"
-            else:
-                type_desc = "其他"
-            TYPE_MAPPING[cn_name] = type_desc
-    
-    # 输出中英文对照表和类型说明
-    print("字段中英文对照表如下：")
-    print(json.dumps(FIELD_EN_MAP, ensure_ascii=False, indent=2))
-    
-    # 转换为官方格式：records 数组，每个元素包含 fields 对象
-    records = []
-    
-    return final_df, EN_TO_CN_MAP, TYPE_MAPPING
+    return final_df, None, None
