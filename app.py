@@ -26,7 +26,7 @@ def json_date_serializer(obj):
 import polars as pl
 
 from data_processor import process_all_files
-from feishu_writer import FeishuWriter
+from feishu_writer_v3 import FeishuWriterV3
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -344,7 +344,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     # 用于API返回的最终结果
     string_records = [json.dumps(row, ensure_ascii=False, default=json_date_serializer) for row in results_data_standard]
     
-    # 飞书写入逻辑
+    # 飞书写入逻辑 - 简化版本
     request_body = await request.json()
     if request_body.get("feishu_enabled", False):
         feishu_config = {
@@ -354,16 +354,25 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             "app_token": request_body.get("feishu_app_token", ""),
             "table_id": request_body.get("feishu_table_id", "")
         }
-        writer = FeishuWriter(feishu_config)
         
-        # 获取表格结构并验证数据
-        table_schema = await writer.get_table_schema()
-        if table_schema:
-            logger.info(f"[飞书] 成功获取 {len(table_schema)} 个字段的 Schema，开始写入...")
-            await writer.write_records(results_data_standard, table_schema)
+        writer = FeishuWriterV3(feishu_config)
+        
+        # 验证配置
+        validation = await writer.validate_config()
+        if not validation["valid"]:
+            logger.error(f"[飞书] 配置验证失败: {validation['errors']}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"飞书配置验证失败: {'; '.join(validation['errors'])}"
+            )
+        
+        # 写入数据
+        success = await writer.write_records(results_data_standard)
+        if not success:
+            logger.error("[飞书] 写入失败")
+            raise HTTPException(status_code=500, detail="写入飞书表格失败，请检查配置和数据格式")
         else:
-            logger.error("[飞书] 无法获取表格 Schema，写入操作已中止。请检查飞书配置参数（app_token, table_id）是否正确。")
-            raise HTTPException(status_code=500, detail="无法获取飞书表格的元数据(Schema)，写入操作失败。请检查配置。")
+            logger.info("[飞书] 写入成功")
     else:
         logger.info("[飞书] 写入未启用，跳过飞书写入。")
 
