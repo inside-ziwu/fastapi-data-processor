@@ -7,19 +7,36 @@ from datetime import datetime
 
 logger = logging.getLogger("feishu")
 
-# Based on review and research, expand the type mapping
-# https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/bitable-v1/app-table-record/field-value-dic
+def to_ms_timestamp(v: Any) -> int:
+    """Helper to convert ISO date string to millisecond timestamp."""
+    if isinstance(v, int):
+        return v # Already a timestamp
+    if isinstance(v, datetime):
+        return int(v.timestamp() * 1000)
+    return int(datetime.fromisoformat(str(v).replace('Z', '+00:00')).timestamp() * 1000)
+
+# Correct and robust Feishu field type mapping
 FIELD_TYPE_HANDLERS = {
-    1: str,          # Text
-    2: float,        # Number
-    3: str,          # SingleSelect, return the text value
-    4: lambda v: [str(i) for i in v] if isinstance(v, list) else [str(v)], # MultiSelect
-    5: lambda v: int(datetime.fromisoformat(str(v).replace('Z', '+00:00')).timestamp() * 1000), # DateTime to timestamp
-    7: bool,         # Checkbox
-    11: lambda v: [str(i) for i in v] if isinstance(v, list) else [str(v)], # User
-    13: str,         # Phone
-    15: str,         # URL
-    # Add other types as needed, for now, default to string conversion
+    1: str,          # Text (文本)
+    2: float,        # Number (数字)
+    3: float,        # Progress (百分比 0-1)
+    4: float,        # Currency (货币)
+    5: int,          # Rating (评分 1-5)
+    7: to_ms_timestamp, # Date (日期)
+    11: bool,        # Checkbox (复选框)
+    13: str,         # SingleSelect (单选)
+    15: lambda v: [str(i) for i in (v if isinstance(v, list) else [v])],  # MultiSelect (多选)
+    17: lambda v: [{"id": str(i)} for i in (v if isinstance(v, list) else [v])],  # User (人员)
+    18: lambda v: [{"id": str(i)} for i in (v if isinstance(v, list) else [v])],  # GroupChat (群组)
+    21: lambda v: [str(i) for i in (v if isinstance(v, list) else [v])],  # SingleLink (单向关联)
+    22: lambda v: [str(i) for i in (v if isinstance(v, list) else [v])],  # DuplexLink (双向关联)
+    23: str,         # Location (地理位置 "lng,lat")
+    1001: to_ms_timestamp, # DateTime (日期时间)
+    1003: str,       # Phone (电话)
+    1004: str,       # Email (邮箱)
+    1005: lambda v: {"text": str(v), "link": str(v)} if isinstance(v, str) else v,  # URL (超链接)
+    1006: str,       # Barcode (条码)
+    1007: lambda v: [{"file_token": str(i)} for i in (v if isinstance(v, list) else [v])],  # Attachment (附件)
 }
 
 class FeishuWriter:
@@ -34,7 +51,6 @@ class FeishuWriter:
             self.enabled = False
             logger.warning("[飞书] 配置不完整 (app_id, app_secret, app_token, table_id)，写入功能已禁用。")
 
-        # This remains a maintenance concern, but fixing the logic is the priority.
         self.FIELD_EN_MAP = {
             "主机厂经销商ID": "NSC_CODE",
             "层级": "level", 
@@ -204,9 +220,9 @@ class FeishuWriter:
                         items = data.get("items", [])
                         
                         for field in items:
-                            if field_name := field.get("field_name"):
+                            if (field_name := field.get("field_name")) and (field_id := field.get("field_id")):
                                 simplified_schema[field_name] = {
-                                    "id": field.get("field_id"),
+                                    "id": field_id,
                                     "type": field.get("type"),
                                 }
                         
@@ -285,13 +301,12 @@ class FeishuWriter:
                             total_success_count += len(added_records)
                             logger.info(f"[飞书] 第 {i+1}/{len(chunks)} 批写入成功: {len(added_records)}/{len(chunk)} 条。")
                             batch_success = True
-                            break # Success, exit retry loop
+                            break
 
-                        elif resp.status_code in [400, 404, 413]: # Unrecoverable client errors
+                        elif resp.status_code in [400, 404, 413]:
                             logger.error(f"[飞书] 第 {i+1} 批发生不可恢复错误: {resp.status_code} - {resp.text}，中止该批次。")
-                            break # Do not retry on these errors
+                            break
                         
-                        # Recoverable errors (5xx, 429)
                         logger.warning(f"[飞书] 第 {i+1} 批写入失败 (尝试 {attempt+1}/3): {resp.status_code} - {resp.text}")
 
                     except (httpx.RequestError, httpx.TimeoutException) as e:
@@ -337,7 +352,6 @@ class FeishuWriter:
                 if not target_field_id:
                     continue
                 
-                # Robust null/empty check
                 if value is None or (isinstance(value, str) and not value.strip()):
                     fixed_record[target_field_id] = None
                     continue
@@ -347,11 +361,12 @@ class FeishuWriter:
                     if handler:
                         converted_value = handler(value)
                     else:
-                        converted_value = str(value) # Default to string if type not handled
+                        logger.warning(f"[飞书] 未知或未处理的字段类型 {field_type}，将使用字符串转换。")
+                        converted_value = str(value)
                     
                     fixed_record[target_field_id] = converted_value
 
-                except (ValueError, TypeError) as e:
+                except (ValueError, TypeError, Exception) as e:
                     logger.warning(f"[飞书] 字段 '{chinese_key}' (ID: {target_field_id}) 的值 '{value}' 类型转换失败: {e}")
 
             if fixed_record:
@@ -376,11 +391,14 @@ class FeishuWriter:
                 if single_resp.status_code == 200:
                     success_count += 1
                 else:
+                    if single_resp.status_code in [400, 404, 413]:
+                        logger.error(f"[飞书] 单条记录因不可恢复错误 {single_resp.status_code} 被跳过: {single_resp.text}")
+                    else:
+                        logger.warning(f"[飞书] 单条记录写入失败: {single_resp.status_code} - {single_resp.text}")
                     failed_count += 1
-                    error_detail = single_resp.text
-                    logger.warning(f"[飞书] 跳过问题记录: {error_detail} | 数据: {json.dumps(record, ensure_ascii=False)[:200]}...")
+
             except Exception as e:
                 failed_count += 1
-                logger.error(f"[飞书] 单条记录写入异常: {e} | 数据: {json.dumps(record, ensure_ascii=False)[:100]}...")
+                logger.error(f"[飞书] 单条记录写入时发生异常: {e} | 数据: {json.dumps(record, ensure_ascii=False)[:100]}...")
         
         return success_count, failed_count
