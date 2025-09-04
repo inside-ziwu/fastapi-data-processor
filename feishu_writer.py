@@ -210,6 +210,8 @@ class FeishuWriter:
         """
         if not schema or not records:
             return []
+        
+        logger.info(f"[GEMINI_DEBUG] Incoming record keys: {list(records[0].keys())}")
 
         # 这是你唯一的真相来源，别再用那些垃圾日志污染它了
         field_mapping = {
@@ -257,11 +259,11 @@ class FeishuWriter:
             for chinese_key, value in record.items():
                 target_field = field_mapping.get(chinese_key)
                 if not target_field:
-                    # logger.warning(f"[飞书] 忽略未映射的字段: {chinese_key}")
+                    logger.warning(f"[GEMINI_DEBUG] 忽略未映射的字段: '{chinese_key}'")
                     continue
 
                 if target_field not in schema:
-                    # logger.warning(f"[飞书] 映射目标字段 {target_field} 不在表格schema中，已跳过。")
+                    logger.warning(f"[GEMINI_DEBUG] 映射目标字段 {target_field} 不在表格schema中，已跳过。")
                     continue
                 
                 # 字段存在于schema中，进行类型转换
