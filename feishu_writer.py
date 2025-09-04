@@ -376,6 +376,15 @@ class FeishuWriter:
                         logger.warning(f"[飞书] 未知或未处理的字段类型 {field_type}，将使用字符串转换。")
                         converted_value = str(value)
                     
+                    # 修正数值精度问题
+                    if field_type == 2 and isinstance(converted_value, float):
+                        # 如果是数字类型，移除不必要的.0
+                        if converted_value.is_integer():
+                            converted_value = int(converted_value)
+                        else:
+                            # 保留合理的小数位数
+                            converted_value = round(converted_value, 2)
+                    
                     fixed_record[target_field_id] = converted_value
 
                 except (ValueError, TypeError, Exception) as e:
