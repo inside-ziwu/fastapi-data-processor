@@ -113,7 +113,7 @@ class FeishuWriter:
         logger.error(f"[飞书] 获取 schema 彻底失败，已重试 {retries} 次。")
         raise RuntimeError(f"获取飞书表格结构失败: {last_exception}")
 
-    async def write_records(self, records: List[Dict]) -> bool:
+    async def write_records(self, records: List[Dict], schema: Dict = None) -> bool:
         """
         分批写入记录到飞书多维表格。
         如果批量写入失败，则会尝试逐条写入以跳过有问题的记录。
@@ -127,6 +127,12 @@ class FeishuWriter:
             return True
 
         logger.info(f"[飞书] 开始写入，共 {len(records)} 条记录。")
+        
+        # 根据schema修正数据类型
+        if schema:
+            original_count = len(records)
+            records = self._fix_data_types(records, schema)
+            logger.info(f"[飞书] 数据类型修正完成，从 {original_count} 条记录修正为 {len(records)} 条。")
         
         try:
             token = await self.get_tenant_token()
@@ -161,7 +167,7 @@ class FeishuWriter:
                         logger.error(f"[飞书] 第 {i+1}/{len(chunks)} 批写入失败: {resp.status_code} - {error_resp.get('msg', '未知错误')}")
                         logger.info(f"[飞书] 开始对第 {i+1} 批进行逐条写入...")
                         
-                        batch_success_count, batch_failed_count = await self._write_single_records(client, chunk, headers, schema)
+                        batch_success_count, batch_failed_count = await self._write_single_records(client, chunk, headers)
                         total_success_count += batch_success_count
                         total_failed_count += batch_failed_count
                         logger.info(f"[飞书] 第 {i+1} 批逐条写入完成: 成功 {batch_success_count} 条, 失败 {batch_failed_count} 条。")
@@ -169,7 +175,7 @@ class FeishuWriter:
                 except httpx.HTTPError as e:
                     logger.error(f"[飞书] 第 {i+1} 批发生网络错误: {e}")
                     logger.info(f"[飞书] 开始对第 {i+1} 批进行逐条写入...")
-                    batch_success_count, batch_failed_count = await self._write_single_records(client, chunk, headers, schema)
+                    batch_success_count, batch_failed_count = await self._write_single_records(client, chunk, headers)
                     total_success_count += batch_success_count
                     total_failed_count += batch_failed_count
                 except Exception as e:
@@ -179,7 +185,93 @@ class FeishuWriter:
         logger.info(f"[飞书] 写入总结: 总记录数 {len(records)}，成功 {total_success_count} 条，失败 {total_failed_count} 条。")
         return total_failed_count == 0
 
-    async def _write_single_records(self, client: httpx.AsyncClient, records: List[Dict], headers: Dict, schema: Dict) -> (int, int):
+    def _fix_data_types(self, records: List[Dict], schema: Dict) -> List[Dict]:
+        """
+        根据飞书schema修正数据类型，返回修正后的数据副本。
+        不修改原始数据。
+        """
+        if not schema or not records:
+            return records
+            
+        fixed_records = []
+        
+        for record in records:
+            if not record:
+                continue
+                
+            fixed_record = {}
+            for key, value in record.items():
+                if key not in schema:
+                    # 字段不在schema中，保留原值
+                    fixed_record[key] = value
+                    continue
+                    
+                field_schema = schema[key]
+                field_type = field_schema.get('type', 'text')
+                
+                try:
+                    if field_type == 'number' and value is not None:
+                        # 数字类型转换
+                        if isinstance(value, (int, float)):
+                            fixed_record[key] = value
+                        elif isinstance(value, str) and value.strip():
+                            fixed_record[key] = float(value.strip())
+                        else:
+                            fixed_record[key] = 0
+                            
+                    elif field_type == 'text' and value is not None:
+                        # 文本类型转换
+                        fixed_record[key] = str(value)
+                        
+                    elif field_type == 'url' and value is not None:
+                        # URL类型转换
+                        fixed_record[key] = str(value).strip()
+                        
+                    elif field_type == 'date' and value is not None:
+                        # 日期类型转换 - 保持原格式或转为ISO
+                        if isinstance(value, str) and value.strip():
+                            fixed_record[key] = value.strip()
+                        else:
+                            fixed_record[key] = str(value)
+                            
+                    elif field_type == 'checkbox' and value is not None:
+                        # 复选框类型转换
+                        if isinstance(value, bool):
+                            fixed_record[key] = value
+                        elif isinstance(value, str):
+                            str_value = value.strip().lower()
+                            fixed_record[key] = str_value in ['true', '1', 'yes', '是', 'on']
+                        elif isinstance(value, (int, float)):
+                            fixed_record[key] = bool(value)
+                        else:
+                            fixed_record[key] = False
+                            
+                    else:
+                        # 其他类型保留原值
+                        fixed_record[key] = value
+                        
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"[飞书] 字段 '{key}' 类型转换失败: {value} -> {field_type}, 使用默认值")
+                    
+                    # 根据类型提供默认值
+                    if field_type == 'number':
+                        fixed_record[key] = 0
+                    elif field_type == 'text':
+                        fixed_record[key] = str(value) if value is not None else ''
+                    elif field_type == 'url':
+                        fixed_record[key] = ''
+                    elif field_type == 'date':
+                        fixed_record[key] = ''
+                    elif field_type == 'checkbox':
+                        fixed_record[key] = False
+                    else:
+                        fixed_record[key] = value
+            
+            fixed_records.append(fixed_record)
+        
+        return fixed_records
+
+    async def _write_single_records(self, client: httpx.AsyncClient, records: List[Dict], headers: Dict) -> (int, int):
         """私有方法，用于逐条写入记录并返回成功和失败的计数"""
         success_count = 0
         failed_count = 0
@@ -198,14 +290,6 @@ class FeishuWriter:
                     failed_count += 1
                     error_detail = single_resp.text
                     logger.warning(f"[飞书] 跳过问题记录: {error_detail} | 数据: {json.dumps(record, ensure_ascii=False)[:200]}...")
-            except Exception as e:
-                failed_count += 1
-                logger.error(f"[飞书] 单条记录写入异常: {e} | 数据: {json.dumps(record, ensure_ascii=False)[:100]}...")
-        
-        return success_count, failed_count
-字段: '{key}', 数据: '{value}' (类型: {type(value).__name__}), Schema 要求: {schema_info}\n"
-                    log_message += "--------------------------"
-                    logger.warning(log_message)
             except Exception as e:
                 failed_count += 1
                 logger.error(f"[飞书] 单条记录写入异常: {e} | 数据: {json.dumps(record, ensure_ascii=False)[:100]}...")
