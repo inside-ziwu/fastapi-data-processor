@@ -128,11 +128,10 @@ class FeishuWriter:
 
         logger.info(f"[飞书] 开始写入，共 {len(records)} 条记录。")
         
-        # 根据schema修正数据类型
+        # 显示字段对比
         if schema:
-            original_count = len(records)
             records = self._fix_data_types(records, schema)
-            logger.info(f"[飞书] 数据类型修正完成，从 {original_count} 条记录修正为 {len(records)} 条。")
+            # 此时records为空，调试模式已打印字段对比
         
         try:
             token = await self.get_tenant_token()
@@ -212,18 +211,21 @@ class FeishuWriter:
         if not schema or not records:
             return records
             
-        # 创建字段映射（中英文互转）
-        field_mapping = {}
-        reverse_mapping = {}
-        
+        # 打印飞书表格实际字段名
+        logger.info("[飞书] 飞书表格实际字段名:")
         for field_name, field_info in schema.items():
-            # 使用字段名本身作为key
-            field_mapping[field_name] = field_name
+            field_type = field_info.get('type', 'unknown')
+            field_title = field_info.get('name', field_name)  # 显示名称
+            logger.info(f"[飞书]   '{field_name}' [类型:{field_type}] 标题:'{field_title}'")
             
-        fixed_records = []
-        schema_fields = set(schema.keys())
-        
-        for record in records:
+        # 显示数据中的字段名对比
+        if records:
+            data_fields = set(records[0].keys())
+            logger.info(f"[飞书] 数据中的字段名: {list(data_fields)}")
+            logger.info(f"[飞书] 匹配的字段: {list(data_fields & set(schema.keys()))}")
+            logger.info(f"[飞书] 不匹配的字段: {list(data_fields - set(schema.keys()))}")
+            
+        return []  # 先返回空列表，让你看到字段对比后再决定映射
             if not record:
                 continue
                 
