@@ -5,6 +5,7 @@ import json
 import time
 import logging
 import asyncio
+import concurrent.futures
 from typing import Optional, Dict
 from fastapi import FastAPI, Body, HTTPException, Header, Response, Request
 from fastapi.responses import JSONResponse
@@ -75,14 +76,15 @@ def download_to_file(url_or_path: str, target_dir: str) -> str:
         logger.info(f"本地文件复制完成: {dest} ({os.path.getsize(dest)} bytes)")
         return dest
     
-    # 远程下载防卡死
+    # 远程下载 - 增加超时时间
     session = create_robust_session()
     fname = url_or_path.split("/")[-1].split("?")[0] or f"file_{int(time.time())}"
     dest = os.path.join(target_dir, fname)
     
     try:
         start_time = time.time()
-        with session.get(url_or_path, stream=True, timeout=(30, 60)) as resp:
+        # 增加超时：连接60秒，读取300秒
+        with session.get(url_or_path, stream=True, timeout=(60, 300)) as resp:
             resp.raise_for_status()
             
             content_length = int(resp.headers.get('content-length', 0))
@@ -182,19 +184,37 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     logger.info(f"Starting file processing with payload: {list(provided.keys())}")
     
     download_start_time = time.time()
+    
+    # 收集需要下载的文件
+    download_tasks = []
     for key in file_keys:
         val = provided.get(key)
         logger.info(f"DEBUG: {key} raw value = '{repr(val)}' (type: {type(val)})")
         if val is not None and str(val).strip() != "" and str(val).strip() != "None":
-            try:
-                logger.info(f"Downloading file: {key} = {val}")
-                local_paths[key] = download_to_file(val, run_dir)
-                logger.info(f"Successfully downloaded {key} to {local_paths[key]}")
-            except Exception as e:
-                shutil.rmtree(run_dir, ignore_errors=True)
-                raise HTTPException(status_code=500, detail=f"Failed to download {key}: {str(e)}")
+            download_tasks.append((key, val))
         else:
             logger.info(f"❌ Skipping {key}: value is '{repr(val)}'")
+    
+    if download_tasks:
+        logger.info(f"准备并发下载 {len(download_tasks)} 个文件")
+        loop = asyncio.get_running_loop()
+        
+        # 使用线程池并发下载
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_key = {
+                executor.submit(download_to_file, url, run_dir): key 
+                for key, url in download_tasks
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_key):
+                key = future_to_key[future]
+                try:
+                    local_paths[key] = future.result()
+                    logger.info(f"成功下载 {key} 到 {local_paths[key]}")
+                except Exception as e:
+                    # 清理失败的文件
+                    shutil.rmtree(run_dir, ignore_errors=True)
+                    raise HTTPException(status_code=500, detail=f"下载失败 {key}: {str(e)}")
     
     # PROFILING: After Downloads
     download_end_time = time.time()
