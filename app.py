@@ -278,7 +278,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             if remaining_time <= 0:
                 raise AsyncTimeoutError()
 
-            result_df, _, _ = await asyncio.wait_for(
+            result_df = await asyncio.wait_for(
                 task_to_run,
                 timeout=remaining_time
             )
