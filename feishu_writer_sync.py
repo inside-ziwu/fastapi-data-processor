@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Optional import with fallback
 try:
-    import lark
+    from lark_oapi import Client, LogLevel
     from lark_oapi.api.bitable.v1 import *
     SDK_AVAILABLE = True
 except ImportError as e:
@@ -46,10 +46,10 @@ class FeishuWriterSync:
         else:
             # 创建client
             self.client = (
-                lark.Client.builder()
+                Client.builder()
                 .app_id(self.app_id)
                 .app_secret(self.app_secret)
-                .log_level(lark.LogLevel.INFO)
+                .log_level(LogLevel.INFO)
                 .build()
             )
 
