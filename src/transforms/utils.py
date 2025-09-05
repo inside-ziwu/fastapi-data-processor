@@ -175,9 +175,19 @@ def cast_numeric_columns(df: pl.DataFrame, columns: List[str]) -> pl.DataFrame:
     """
     for col in columns:
         if col in df.columns:
+            # PROBE: force element-wise to string to handle mixed object columns from pandas
+            # This is slower but robust; after validation we can optimize back.
+            expr = pl.col(col).map_elements(
+                lambda v: (
+                    "" if v is None else (
+                        (v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray)) else (v if isinstance(v, str) else str(v)))
+                    )
+                ),
+                return_dtype=pl.Utf8,
+            )
+
             clean = (
-                pl.col(col)
-                .cast(pl.Utf8)
+                expr
                 .str.replace_all(",", "")
                 .str.replace_all("%", "")
                 .str.strip_chars()
