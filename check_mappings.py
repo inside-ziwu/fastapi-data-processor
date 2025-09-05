@@ -29,11 +29,16 @@ feishu_fields = [
 def check_mappings():
     """Check which Feishu fields are missing from our mappings."""
     
-    # Build reverse mapping (Chinese -> English)
+    # 标准化函数（统一+和➕符号，|和/符号）
+    def normalize_text(text):
+        return text.replace('➕', '+').replace('|', '/')
+    
+    # Build reverse mapping (Chinese -> English) with normalization
     chinese_to_english = {}
     for english_name, chinese_list in FIELD_MAPPINGS.items():
         for chinese_name in chinese_list:
-            chinese_to_english[chinese_name] = english_name
+            normalized = normalize_text(chinese_name)
+            chinese_to_english[normalized] = english_name
     
     print("=== 字段映射检查 ===")
     print(f"当前映射表中有 {len(FIELD_MAPPINGS)} 个英文字段")
@@ -43,7 +48,8 @@ def check_mappings():
     found_fields = []
     
     for field in feishu_fields:
-        if field in chinese_to_english:
+        normalized_field = normalize_text(field)
+        if normalized_field in chinese_to_english:
             found_fields.append(field)
         else:
             missing_fields.append(field)
@@ -59,7 +65,8 @@ def check_mappings():
     if found_fields:
         print(f"\n=== 示例已映射字段 ===")
         for i, field in enumerate(found_fields[:10], 1):
-            english_name = chinese_to_english[field]
+            normalized_field = normalize_text(field)
+            english_name = chinese_to_english[normalized_field]
             print(f"{i:2d}. {field} -> {english_name}")
     
     return missing_fields

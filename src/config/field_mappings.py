@@ -265,6 +265,11 @@ FIELD_MAPPINGS = {
     "avg_daily_paid_leads": ["直播车云店+区域付费线索量日均"],
     "avg_daily_paid_leads_t": ["T月直播车云店+区域付费线索量日均"],
     "avg_daily_paid_leads_t_minus_1": ["T-1月直播车云店+区域付费线索量日均"],
+    # 直播付费线索量（总量，非日均）
+    "paid_area_leads_total": ["直播车云店+区域付费线索量"],
+    "paid_area_leads_t": ["T月直播车云店+区域付费线索量"],
+    "paid_area_leads_t_minus_1": ["T-1月直播车云店+区域付费线索量"],
+
     "effective_live_hours_25min": ["有效（25min以上）时长（h）"],
     "effective_live_hours_25min_t": ["T月有效（25min以上）时长（h）"],
     "effective_live_hours_25min_t_minus_1": ["T-1月有效（25min以上）时长（h）"],
