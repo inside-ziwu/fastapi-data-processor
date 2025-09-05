@@ -18,10 +18,35 @@ try:
     from lark_oapi.api.bitable.v1 import *
     SDK_AVAILABLE = True
 except ImportError as e:
-SDK_AVAILABLE = False
+    SDK_AVAILABLE = False
     logger.warning(
         f"飞书SDK导入失败，Feishu功能将不可用。错误: {e}。安装: pip install lark-oapi"
     )
+
+# ---- Module-level utility: normalize field names ----
+def _norm_field_name(name: str) -> str:
+    """标准化字段名，处理空格、全角/半角差异和特殊符号，对比用。
+
+    - 全角括号（）、竖线｜、斜杠／ 转半角
+    - 竖线统一为斜杠 /
+    - 特殊加号➕ 与全角冒号：替换
+    - 去空白，剔除非 [\w()/+:] 的字符
+    """
+    if name is None:
+        return ""
+    s = re.sub(r"\s+", "", str(name))
+    table = str.maketrans({
+        "（": "(",
+        "）": ")",
+        "|": "/",
+        "｜": "/",
+        "／": "/",
+        "➕": "+",
+        "：": ":",
+    })
+    s = s.translate(table)
+    s = re.sub(r"[^\w\(\)/+:]", "", s)
+    return s
 
 
 class FeishuWriterSync:
@@ -67,31 +92,7 @@ class FeishuWriterSync:
             self.enabled = False
             logger.warning("[飞书] 配置不完整，写入功能已禁用。")
 
-    # ---- Module-level utility: normalize field names ----
-
-def _norm_field_name(name: str) -> str:
-    """标准化字段名，处理空格、全角/半角差异和特殊符号，对比用。
-
-    - 全角括号（）、竖线｜、斜杠／ 转半角
-    - 竖线统一为斜杠 /
-    - 特殊加号➕ 与全角冒号：替换
-    - 去空白，剔除非 [\w()/+:] 的字符
-    """
-    if name is None:
-        return ""
-    s = re.sub(r"\s+", "", str(name))
-    table = str.maketrans({
-        "（": "(",
-        "）": ")",
-        "|": "/",
-        "｜": "/",
-        "／": "/",
-        "➕": "+",
-        "：": ":",
-    })
-    s = s.translate(table)
-    s = re.sub(r"[^\w\(\)/+:]", "", s)
-    return s
+    
 
     def get_table_schema(self) -> Dict[str, Dict[str, Any]]:
         """获取表格的字段schema - 同步版本"""
