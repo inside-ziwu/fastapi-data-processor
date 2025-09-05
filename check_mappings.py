@@ -2,7 +2,12 @@
 """Check field mappings against Feishu API response."""
 
 import json
+import logging
 from src.config.field_mappings import FIELD_MAPPINGS
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 # Feishu API response data
 feishu_fields = [
@@ -40,9 +45,9 @@ def check_mappings():
             normalized = normalize_text(chinese_name)
             chinese_to_english[normalized] = english_name
     
-    print("=== 字段映射检查 ===")
-    print(f"当前映射表中有 {len(FIELD_MAPPINGS)} 个英文字段")
-    print(f"飞书API返回了 {len(feishu_fields)} 个中文字段")
+    logger.info("=== 字段映射检查 ===")
+    logger.info(f"当前映射表中有 {len(FIELD_MAPPINGS)} 个英文字段")
+    logger.info(f"飞书API返回了 {len(feishu_fields)} 个中文字段")
     
     missing_fields = []
     found_fields = []
@@ -54,26 +59,26 @@ def check_mappings():
         else:
             missing_fields.append(field)
     
-    print(f"\n✅ 已映射字段: {len(found_fields)} 个")
-    print(f"❌ 缺失字段: {len(missing_fields)} 个")
+    logger.info(f"\n✅ 已映射字段: {len(found_fields)} 个")
+    logger.info(f"❌ 缺失字段: {len(missing_fields)} 个")
     
     if missing_fields:
-        print(f"\n=== 缺失字段列表 ===")
+        logger.info(f"\n=== 缺失字段列表 ===")
         for i, field in enumerate(missing_fields, 1):
-            print(f"{i:2d}. {field}")
+            logger.info(f"{i:2d}. {field}")
     
     if found_fields:
-        print(f"\n=== 示例已映射字段 ===")
+        logger.info(f"\n=== 示例已映射字段 ===")
         for i, field in enumerate(found_fields[:10], 1):
             normalized_field = normalize_text(field)
             english_name = chinese_to_english[normalized_field]
-            print(f"{i:2d}. {field} -> {english_name}")
+            logger.info(f"{i:2d}. {field} -> {english_name}")
     
     return missing_fields
 
 if __name__ == "__main__":
     missing = check_mappings()
     if missing:
-        print(f"\n🔧 建议添加这些缺失的映射")
+        logger.info(f"\n🔧 建议添加这些缺失的映射")
     else:
-        print(f"\n✅ 所有字段都已正确映射！")
+        logger.info(f"\n✅ 所有字段都已正确映射！")

@@ -36,25 +36,51 @@ class ReaderRegistry:
         return self._readers.get(file_type)
 
     def auto_detect_reader(self, path: str) -> Optional[Type[BaseReader]]:
-        """Auto-detect reader based on file extension."""
-        path_lower = path.lower()
-        
-        # Extract real extension by finding the first dot from the right
-        # This handles cases like file.xlsx~tplv-mdko3gqilj-image.image
-        base_name = path_lower.split('/')[-1]  # Remove path
-        if '.' not in base_name:
+        """Auto-detect reader based on file content MIME type."""
+        try:
+            import magic
+            
+            # Detect MIME type from file content
+            mime_type = magic.from_file(path, mime=True)
+            
+            # Map MIME types to readers - single source of truth
+            MIME_TYPE_MAP = {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+                "application/vnd.ms-excel": "xlsx",
+                "text/csv": "csv", 
+                "text/plain": "csv",  # TXT treated as CSV
+                "application/csv": "csv"
+            }
+            
+            reader_key = MIME_TYPE_MAP.get(mime_type)
+            if reader_key:
+                return self._readers.get(reader_key)
+                
+        except ImportError:
+            # Fallback to extension-based detection if magic not available
+            logger = logging.getLogger(__name__)
+            logger.warning("python-magic not available, falling back to extension detection")
+            return self._fallback_extension_detection(path)
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"MIME detection failed for {path}: {e}")
             return None
             
-        # Find the real extension (first extension in the filename)
-        parts = base_name.split('.')
-        if len(parts) > 1:
-            ext = '.' + parts[1]  # Get the first extension
-            
-            if ext == ".csv":
-                return self._readers.get("csv")
-            elif ext == ".xlsx" or ext == ".xls":
-                return self._readers.get("xlsx")
-            elif ext == ".txt":
-                return self._readers.get("csv")  # TXT treated as CSV
-
+        return None
+        
+    def _fallback_extension_detection(self, path: str) -> Optional[Type[BaseReader]]:
+        """Fallback extension-based detection for when magic is not available."""
+        EXTENSION_MAP = {
+            ".csv": "csv",
+            ".xlsx": "xlsx", 
+            ".xls": "xlsx",
+            ".txt": "csv"  # TXT treated as CSV
+        }
+        
+        # Get the last extension (handles files like file.xlsx~extra-stuff)
+        path_lower = path.lower()
+        for ext, reader_key in EXTENSION_MAP.items():
+            if path_lower.endswith(ext):
+                return self._readers.get(reader_key)
+                
         return None
