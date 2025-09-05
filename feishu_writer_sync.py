@@ -30,7 +30,7 @@ def _norm_field_name(name: str) -> str:
     - 全角括号（）、竖线｜、斜杠／ 转半角
     - 竖线统一为斜杠 /
     - 特殊加号➕ 与全角冒号：替换
-    - 去空白，剔除非 [\w()/+:] 的字符
+    - 去空白，剔除非 [\\w()/+:] 的字符
     """
     if name is None:
         return ""
@@ -45,7 +45,7 @@ def _norm_field_name(name: str) -> str:
         "：": ":",
     })
     s = s.translate(table)
-    s = re.sub(r"[^\w\(\)/+:]", "", s)
+    s = re.sub(r"[^\w()/+:]", "", s)
     return s
 
 
