@@ -71,6 +71,8 @@ class ReaderRegistry:
         
     def _fallback_extension_detection(self, path: str) -> Optional[Type[BaseReader]]:
         """Fallback extension-based detection for when magic is not available."""
+        import os
+        
         EXTENSION_MAP = {
             ".csv": "csv",
             ".xlsx": "xlsx", 
@@ -78,10 +80,22 @@ class ReaderRegistry:
             ".txt": "csv"  # TXT treated as CSV
         }
         
-        # Get the last extension (handles files like file.xlsx~extra-stuff)
-        path_lower = path.lower()
-        for ext, reader_key in EXTENSION_MAP.items():
-            if path_lower.endswith(ext):
-                return self._readers.get(reader_key)
+        # Extract real extension, handling polluted filenames like file.xlsx~extra-stuff
+        try:
+            basename = os.path.basename(path).lower()
+            
+            # Find the first valid extension in the filename
+            for ext in EXTENSION_MAP:
+                # Look for extension followed by dot, space, or end of string
+                # This handles both "file.xlsx" and "file.xlsx~pollution"
+                ext_pos = basename.find(ext)
+                if ext_pos != -1:
+                    # Make sure this is a real extension, not part of the name
+                    # Check if it's followed by dot, space, or end of string
+                    next_char_pos = ext_pos + len(ext)
+                    if next_char_pos >= len(basename) or basename[next_char_pos] in ' .~':
+                        return self._readers.get(EXTENSION_MAP[ext])
+        except Exception:
+            pass
                 
         return None
