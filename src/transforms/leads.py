@@ -68,7 +68,29 @@ class LeadsTransform(BaseTransform):
         logger.warning(f"[leads probe] rename_map applied: {rename_map}")
         logger.warning(f"[leads probe] columns after rename: {df.columns}")
         df = self._normalize_nsc_code(df)
-        df = self._ensure_date_column(df, ["date", "留资日期", "日期"]) 
+        # Leads: 强制确保 date 列（不依赖通用 ensure_date_column）
+        if "date" not in df.columns and "留资日期" in df.columns:
+            df = df.rename({"留资日期": "date"})
+        if "date" not in df.columns:
+            # 进一步宽松：查找包含“留资”和“日期”的列
+            candidates = [c for c in df.columns if ("留资" in c and "日期" in c)]
+            if candidates:
+                df = df.rename({candidates[0]: "date"})
+        # 解析 date 为 pl.Date
+        if "date" not in df.columns:
+            raise ValueError(f"leads 缺少 date 列，现有列: {df.columns}")
+        if df["date"].dtype != pl.Date:
+            df = df.with_columns(
+                pl.col("date")
+                .cast(pl.Utf8)
+                .str.replace_all("/", "-")
+                .str.replace_all(r"\.", "-")
+                .str.replace_all("年", "-")
+                .str.replace_all("月", "-")
+                .str.replace_all("日", "")
+                .str.strptime(pl.Date, "%Y-%m-%d", strict=False)
+                .alias("date")
+            )
 
         df = self._cast_numeric_columns(df, self.sum_columns)
         # Extraction-only — 仅输出 NSC_CODE, date, 小风车留资量
