@@ -38,12 +38,23 @@ class ReaderRegistry:
     def auto_detect_reader(self, path: str) -> Optional[Type[BaseReader]]:
         """Auto-detect reader based on file extension."""
         path_lower = path.lower()
-
-        if path_lower.endswith(".csv"):
-            return self._readers.get("csv")
-        elif path_lower.endswith(".xlsx") or path_lower.endswith(".xls"):
-            return self._readers.get("xlsx")
-        elif path_lower.endswith(".txt"):
-            return self._readers.get("csv")  # TXT treated as CSV
+        
+        # Extract real extension by finding the first dot from the right
+        # This handles cases like file.xlsx~tplv-mdko3gqilj-image.image
+        base_name = path_lower.split('/')[-1]  # Remove path
+        if '.' not in base_name:
+            return None
+            
+        # Find the real extension (first extension in the filename)
+        parts = base_name.split('.')
+        if len(parts) > 1:
+            ext = '.' + parts[1]  # Get the first extension
+            
+            if ext == ".csv":
+                return self._readers.get("csv")
+            elif ext == ".xlsx" or ext == ".xls":
+                return self._readers.get("xlsx")
+            elif ext == ".txt":
+                return self._readers.get("csv")  # TXT treated as CSV
 
         return None
