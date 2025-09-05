@@ -142,20 +142,14 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
     for out, src in metrics_both.items():
         if src in df.columns:
             agg_exprs.append(_sum_period(src, "both").alias(out))
-        else:
-            agg_exprs.append(pl.lit(0).sum().alias(out))
     # T
     for out, src in metrics_T.items():
         if src in df.columns:
             agg_exprs.append(_sum_period(src, "T").alias(out))
-        else:
-            agg_exprs.append(pl.lit(0).sum().alias(out))
     # T-1
     for out, src in metrics_T1.items():
         if src in df.columns:
             agg_exprs.append(_sum_period(src, "T-1").alias(out))
-        else:
-            agg_exprs.append(pl.lit(0).sum().alias(out))
 
     # Effective days per NSC_CODE
     eff_cols = []
@@ -282,6 +276,31 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
         (col("T月 车云店付费线索") + col("T月 区域加码付费线索")).alias("T月直播车云店+区域付费线索量"),
         (col("T-1月 车云店付费线索") + col("T-1月 区域加码付费线索")).alias("T-1月直播车云店+区域付费线索量"),
     )
+
+    # Ensure missing metrics exist as zeros to match strict header
+    ensure_zero_cols = []
+    expected_cols = list(metrics_both.keys()) + list(metrics_T.keys()) + list(metrics_T1.keys()) + [
+        "车云店+区域综合CPL", "付费CPL（车云店+区域）", "直播付费CPL", "T月直播付费CPL", "T-1月直播付费CPL",
+        "本地线索占比",
+        "直播车云店+区域日均消耗", "T月直播车云店+区域日均消耗", "T-1月直播车云店+区域日均消耗",
+        "直播车云店+区域付费线索量", "T月直播车云店+区域付费线索量", "T-1月直播车云店+区域付费线索量",
+        "直播车云店+区域付费线索量日均", "T月直播车云店+区域付费线索量日均", "T-1月直播车云店+区域付费线索量日均",
+        "日均有效（25min以上）时长（h）", "T月日均有效（25min以上）时长（h）", "T-1月日均有效（25min以上）时长（h）",
+        "场均曝光人数", "T月场均曝光人数", "T-1月场均曝光人数",
+        "曝光进入率", "T月曝光进入率", "T-1月曝光进入率",
+        "场均场观", "T月场均场观", "T-1月场均场观",
+        "小风车点击率", "T月小风车点击率", "T-1月小风车点击率",
+        "小风车点击留资率", "T月小风车点击留资率", "T-1月小风车点击留资率",
+        "场均小风车留资量", "T月场均小风车留资量", "T-1月场均小风车留资量",
+        "场均小风车点击次数", "T月场均小风车点击次数", "T-1月场均小风车点击次数",
+        "组件点击率", "T月组件点击率", "T-1月组件点击率",
+        "组件留资率", "T月组件留资率", "T-1月组件留资率",
+    ]
+    for cname in expected_cols:
+        if cname not in result.columns:
+            ensure_zero_cols.append(pl.lit(0.0).alias(cname))
+    if ensure_zero_cols:
+        result = result.with_columns(ensure_zero_cols)
 
     # Final selection: strict header as requested
     key_cols = [id_col]
