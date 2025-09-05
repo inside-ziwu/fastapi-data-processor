@@ -6,6 +6,10 @@ from .field_mappings import (
     LIVE_MAP,
     MSG_MAP,
     SPENDING_MAP,
+    DR_MAP,
+    LEADS_MAP,
+    ACCOUNT_BI_MAP,
+    ACCOUNT_BASE_MAP,
 )
 
 __all__ = [
@@ -14,4 +18,8 @@ __all__ = [
     "LIVE_MAP",
     "MSG_MAP",
     "SPENDING_MAP",
+    "DR_MAP",
+    "LEADS_MAP",
+    "ACCOUNT_BI_MAP",
+    "ACCOUNT_BASE_MAP",
 ]
