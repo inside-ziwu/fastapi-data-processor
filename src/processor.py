@@ -97,11 +97,6 @@ class DataProcessor:
         # Get appropriate transform first, so we can optimize reading (e.g., CSV column pruning)
         transform = self._get_transform_for_source(source_name)
 
-        # Auto-detect reader
-        reader_class = self.reader_registry.auto_detect_reader(file_path)
-        if not reader_class:
-            raise ValueError(f"No reader found for {file_path}")
-
         # Special handling: message Excel wants merge-all-sheets with a '日期' column = sheet name
         name_norm = (source_name or "").lower()
         is_excel = file_path.lower().endswith((".xlsx", ".xls"))
@@ -195,9 +190,16 @@ class DataProcessor:
                     import pandas as pd  # ensure in scope
                     df = pl.from_pandas(pd.concat(frames, ignore_index=True))
             else:
-                df = reader_class().read(file_path)
+                # Fallback to generic reader below
+                df = None
         else:
-            # Read data (optimize CSV for large files by selecting only needed columns)
+            df = None
+
+        if df is None:
+            # Generic reading path (optimize CSV for large files by selecting only needed columns)
+            reader_class = self.reader_registry.auto_detect_reader(file_path)
+            if not reader_class:
+                raise ValueError(f"No reader found for {file_path}")
             reader = reader_class()
 
             read_kwargs: dict[str, Any] = {}
@@ -208,7 +210,6 @@ class DataProcessor:
                     if subset_cols:
                         read_kwargs["columns"] = subset_cols
             except Exception as e:
-                logger = logging.getLogger(__name__)
                 logger.warning(f"CSV subset inference failed for {source_name}: {e}. Reading full file.")
 
             df = reader.read(file_path, **read_kwargs)
@@ -426,7 +427,6 @@ class DataProcessor:
 
             # determine keys
             if "date" not in df.columns:
-                logger = logging.getLogger(__name__)
                 logger.warning(
                     f"Skip aggregating '{source_name}': missing 'date' column; "
                     "to avoid multi-date duplication in later joins."
