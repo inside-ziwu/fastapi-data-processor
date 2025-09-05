@@ -140,19 +140,45 @@ class FeishuWriterV3:
             matched_count = 0
             failed_mappings = []
             
+            # 反向一对多映射配置：多个中文字段 -> 同一个英文
+            reverse_one_to_many = {
+                "直播付费CPL": "paid_cpl",
+                "付费CPL（车云店+区域）": "paid_cpl"
+            }
+            
+            # 处理反向一对多映射
+            for cn_name in reverse_one_to_many.keys():
+                normalized_cn = normalize_field_name(cn_name)
+                en_name = reverse_one_to_many[cn_name]
+                
+                if normalized_cn in normalized_schema:
+                    original_cn, field_info = normalized_schema[normalized_cn]
+                    reverse_map[en_name] = field_info  # 两个中文都映射到同一个英文
+                    matched_count += 1
+                    logger.info(f"[飞书] 反向一对多映射: {cn_name} -> {en_name} -> {field_info['id']}")
+                elif cn_name in schema:
+                    reverse_map[en_name] = schema[cn_name]
+                    matched_count += 1
+                    logger.info(f"[飞书] 反向一对多直接匹配: {cn_name} -> {en_name}")
+            
+            # 处理正常的一对一映射
             for cn_name, en_name in FIELD_EN_MAP.items():
+                # 跳过已经在反向一对多中处理过的字段
+                if cn_name in reverse_one_to_many:
+                    continue
+                    
                 normalized_cn = normalize_field_name(cn_name)
                 
                 if normalized_cn in normalized_schema:
                     original_cn, field_info = normalized_schema[normalized_cn]
                     reverse_map[en_name] = field_info
                     matched_count += 1
-                    logger.debug(f"[飞书] 映射成功: {en_name} -> {original_cn} -> {field_info['id']}")
+                    logger.debug(f"[飞书] 一对一映射: {en_name} -> {original_cn} -> {field_info['id']}")
                 elif cn_name in schema:
                     # 直接匹配（兼容旧格式）
                     reverse_map[en_name] = schema[cn_name]
                     matched_count += 1
-                    logger.debug(f"[飞书] 直接匹配: {en_name} -> {cn_name} -> {schema[cn_name]['id']}")
+                    logger.debug(f"[飞书] 一对一直接匹配: {en_name} -> {cn_name} -> {schema[cn_name]['id']}")
                 else:
                     failed_mappings.append((cn_name, en_name))
                     logger.debug(f"[飞书] 未找到中文字段: {cn_name} (标准化: {normalized_cn})")
@@ -258,6 +284,7 @@ class FeishuWriterV3:
             # 如果没有配置，使用默认的空配置
             pass
         
+        logger.info(f"[Linus诊断] record keys: {list(record.keys())}")
         for field_name, value in record.items():
             if value is None:  # None值直接跳过
                 continue
@@ -362,7 +389,7 @@ class FeishuWriterV3:
                     .table_id(self.table_id) \
                     .request_body(BatchCreateAppTableRecordRequestBody.builder()
                         .records(batch)
-                        .build()) \
+                        .build())
                     .build()
                 
                 try:
