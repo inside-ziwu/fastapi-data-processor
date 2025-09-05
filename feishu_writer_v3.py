@@ -175,79 +175,106 @@ class FeishuWriterV3:
             logger.warning("[飞书] 无法导入FIELD_EN_MAP，使用空映射")
             return {}
 
+    def _convert_value_by_type(self, value: Any, field_info: Dict[str, Any]) -> Any:
+        """根据字段类型转换值"""
+        ui_type = field_info.get("ui_type", "Text")
+        
+        try:
+            if ui_type == "Text":
+                return str(value)
+                
+            elif ui_type == "Number":
+                # 确保是数字类型
+                if isinstance(value, (int, float)):
+                    return float(value)
+                elif isinstance(value, str):
+                    # 字符串转数字，失败则设为0
+                    try:
+                        return float(value.strip().replace(',', ''))
+                    except (ValueError, AttributeError):
+                        return 0.0
+                else:
+                    return 0.0
+                    
+            elif ui_type == "DateTime":
+                # 确保是Unix时间戳（毫秒）
+                if isinstance(value, int):
+                    return value
+                elif isinstance(value, str):
+                    # 解析ISO格式日期字符串
+                    try:
+                        dt_str = value.replace('Z', '+00:00')
+                        dt = datetime.fromisoformat(dt_str)
+                        return int(dt.timestamp() * 1000)
+                    except (ValueError, AttributeError):
+                        # 如果解析失败，使用当前时间
+                        return int(datetime.now().timestamp() * 1000)
+                else:
+                    # 其他类型使用当前时间
+                    return int(datetime.now().timestamp() * 1000)
+                    
+            elif ui_type == "Checkbox":
+                return bool(value)
+                
+            elif ui_type == "SingleSelect":
+                # 单选需要{"id": "value"}格式
+                return {"id": str(value)}
+                
+            elif ui_type == "MultiSelect":
+                # 多选需要[{"id": "value"}]格式
+                if isinstance(value, list):
+                    return [{"id": str(v)} for v in value if v is not None]
+                else:
+                    return [{"id": str(value)}]
+                    
+            else:
+                # 默认按文本处理
+                return str(value)
+                
+        except Exception as e:
+            # 转换失败时记录错误并使用默认值
+            logger.warning(f"字段转换失败: {value}[{type(value)}] -> {ui_type}: {e}")
+            return str(value) if ui_type != "Number" else 0.0
+
     def _convert_record(self, record: Dict[str, Any], schema: Dict[str, Dict[str, Any]], 
                        reverse_mapping: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """将单条记录转换为飞书API需要的格式"""
+        """将单条记录转换为飞书API需要的格式 - 支持一对多映射"""
         converted = {}
+        
+        # 一对多映射配置：一个英文键 -> 多个中文字段
+        one_to_many_mappings = {
+            'paid_cpl': ['直播付费CPL', '付费CPL（车云店+区域）'],  # 一个值写入两个CPL字段
+        }
         
         for field_name, value in record.items():
             if value is None:  # None值直接跳过
                 continue
                 
-            field_info = reverse_mapping.get(field_name)
-            if not field_info:  # 找不到映射的字段也跳过
-                continue
+            # 检查是否是一对多映射
+            if field_name in one_to_many_mappings:
+                target_cn_fields = one_to_many_mappings[field_name]
+                mapped_count = 0
                 
-            field_id = field_info["id"]
-            ui_type = field_info.get("ui_type", "Text")
-            
-            try:
-                # 根据飞书字段类型进行严格转换
-                if ui_type == "Text":
-                    converted[field_id] = str(value)
-                    
-                elif ui_type == "Number":
-                    # 确保是数字类型
-                    if isinstance(value, (int, float)):
-                        converted[field_id] = float(value)
-                    elif isinstance(value, str):
-                        # 字符串转数字，失败则设为0
-                        try:
-                            converted[field_id] = float(value.strip().replace(',', ''))
-                        except (ValueError, AttributeError):
-                            converted[field_id] = 0.0
-                    else:
-                        converted[field_id] = 0.0
-                        
-                elif ui_type == "DateTime":
-                    # 确保是Unix时间戳（毫秒）
-                    if isinstance(value, int):
-                        converted[field_id] = value
-                    elif isinstance(value, str):
-                        # 解析ISO格式日期字符串
-                        try:
-                            dt_str = value.replace('Z', '+00:00')
-                            dt = datetime.fromisoformat(dt_str)
-                            converted[field_id] = int(dt.timestamp() * 1000)
-                        except (ValueError, AttributeError):
-                            # 如果解析失败，使用当前时间
-                            converted[field_id] = int(datetime.now().timestamp() * 1000)
-                    else:
-                        # 其他类型使用当前时间
-                        converted[field_id] = int(datetime.now().timestamp() * 1000)
-                        
-                elif ui_type == "Checkbox":
-                    converted[field_id] = bool(value)
-                    
-                elif ui_type == "SingleSelect":
-                    # 单选需要{"id": "value"}格式
-                    converted[field_id] = {"id": str(value)}
-                    
-                elif ui_type == "MultiSelect":
-                    # 多选需要[{"id": "value"}]格式
-                    if isinstance(value, list):
-                        converted[field_id] = [{"id": str(v)} for v in value if v is not None]
-                    else:
-                        converted[field_id] = [{"id": str(value)}]
-                        
+                for cn_field in target_cn_fields:
+                    if cn_field in schema:
+                        field_id = schema[cn_field]['id']
+                        converted[field_id] = self._convert_value_by_type(value, schema[cn_field])
+                        mapped_count += 1
+                        logger.debug(f"[飞书] 一对多映射: {field_name} -> {cn_field} -> {field_id}")
+                
+                if mapped_count > 0:
+                    logger.info(f"[飞书] 一对多映射成功: {field_name} 映射到 {mapped_count} 个字段")
                 else:
-                    # 默认按文本处理
-                    converted[field_id] = str(value)
+                    logger.warning(f"[飞书] 一对多映射失败: {field_name} 的目标字段都不在schema中")
                     
-            except Exception as e:
-                # 转换失败时记录错误并使用默认值
-                logger.warning(f"字段转换失败: {field_name}={value}[{type(value)}] -> {ui_type}: {e}")
-                converted[field_id] = str(value) if ui_type != "Number" else 0.0
+            else:
+                # 正常的一对一映射
+                field_info = reverse_mapping.get(field_name)
+                if field_info:  # 找到映射的字段
+                    field_id = field_info["id"]
+                    converted[field_id] = self._convert_value_by_type(value, field_info)
+                else:
+                    logger.debug(f"[飞书] 未找到映射: {field_name}")
                 
         return converted
             
