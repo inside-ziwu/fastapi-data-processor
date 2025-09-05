@@ -283,6 +283,13 @@ class DataProcessor:
         if transform_class:
             return transform_class()
 
+        # High-priority disambiguation to avoid false positives (e.g., 'ad' in 'leads')
+        if "leads" in name:
+            return self.TRANSFORM_MAP.get("lead")()
+        # For spending/ad, avoid matching 'ad' as a substring of 'lead(s)'
+        if ("spending" in name) or (" ad" in name) or name.endswith("_ad") or name == "ad":
+            return self.TRANSFORM_MAP.get("ad")()
+
         # Optional fallback: conservative fuzzy match against known aliases
         for map_key, cls in self.TRANSFORM_MAP.items():
             if map_key in name:
