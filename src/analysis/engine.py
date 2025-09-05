@@ -1,5 +1,7 @@
 """Analysis computation engine."""
 
+import logging
+
 import polars as pl
 from typing import Dict, List, Any, Optional
 from .computations import ComputationRegistry
@@ -21,7 +23,8 @@ class AnalysisEngine:
                 result = computation.apply(result)
             except Exception as e:
                 # Log error but continue with other computations
-                print(f"Warning: Computation {computation.name} failed: {e}")
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Computation {computation.name} failed: {e}")
                 continue
 
         return result
