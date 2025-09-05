@@ -171,82 +171,27 @@ class FeishuWriterV3:
             return {}
 
     def _process_value_by_type(self, value: Any, field_info: Dict[str, Any]) -> Any:
-        """根据字段类型处理值"""
-        if value is None or value == "":
-            return None
-            
+        """根据字段类型处理值 - 只做类型转换，不做清洗"""
         ui_type = field_info.get("ui_type", "")
         
-        try:
-            # 文本类型 - 确保非空字符串
-            if ui_type == "Text":
-                str_value = str(value).strip()
-                if not str_value:
-                    logger.warning(f"[飞书] 文本字段值为空: {value}")
-                    return None
-                return str_value
-                
-            # 数值类型 - 确保是有效数字
-            elif ui_type == "Number":
-                if isinstance(value, str):
-                    value = value.replace(',', '')  # 处理千分位
-                try:
-                    return float(value)
-                except (ValueError, TypeError):
-                    logger.warning(f"[飞书] 数字转换失败: {value}")
-                    return None
-                    
-            # 日期类型
-            elif ui_type == "DateTime":
-                if isinstance(value, int):
-                    return value
-                elif isinstance(value, str):
-                    try:
-                        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
-                        return int(dt.timestamp() * 1000)
-                    except ValueError:
-                        logger.warning(f"[飞书] 日期格式无效: {value}")
-                        return None
-                else:
-                    return value
-                    
-            # 布尔类型
-            elif ui_type == "Checkbox":
-                return bool(value)
-                
-            # 单选类型
-            elif ui_type == "SingleSelect":
-                str_value = str(value).strip()
-                if not str_value:
-                    return None
-                options = field_info.get("property", {}).get("options", [])
-                for option in options:
-                    if str(option.get("name")) == str_value:
-                        return {"id": option.get("id")}
-                return {"id": str_value}
-                
-            # 多选类型
-            elif ui_type == "MultiSelect":
-                values = value if isinstance(value, list) else [value]
-                result = []
-                options = field_info.get("property", {}).get("options", [])
-                option_map = {opt.get("name"): opt.get("id") for opt in options}
-                
-                for val in values:
-                    val_str = str(val).strip()
-                    if val_str:
-                        option_id = option_map.get(val_str, val_str)
-                        result.append({"id": option_id})
-                return result if result else None
-                
-            # 其他类型
-            else:
-                str_value = str(value).strip()
-                return str_value if str_value else None
-                
-        except Exception as e:
-            logger.warning(f"[飞书] 值处理失败: {value} -> {e}")
-            return str(value).strip() if str(value).strip() else None
+        # 此时value已经是干净数据，只需类型转换
+        if ui_type == "Text":
+            return str(value)
+        elif ui_type == "Number":
+            return float(value)
+        elif ui_type == "DateTime":
+            if isinstance(value, int):
+                return value
+            dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+            return int(dt.timestamp() * 1000)
+        elif ui_type == "Checkbox":
+            return bool(value)
+        elif ui_type == "SingleSelect":
+            return {"id": str(value)}
+        elif ui_type == "MultiSelect":
+            return [{"id": str(v)} for v in value] if isinstance(value, list) else [{"id": str(value)}]
+        else:
+            return str(value)
             
     def _has_meaningful_value(self, v: Any) -> bool:
         """True if value is not None and not empty string after strip; 0 is meaningful."""
@@ -257,7 +202,7 @@ class FeishuWriterV3:
         return True
             
     async def write_records(self, records: List[Dict[str, Any]]) -> bool:
-        """写入记录到飞书多维表格"""
+        """写入记录到飞书多维表格 - 只做写入，不做清洗"""
         if not self.enabled:
             logger.info("[飞书] 写入未启用，跳过写入。")
             return True
@@ -277,62 +222,24 @@ class FeishuWriterV3:
                 
             # 构建反向映射
             reverse_mapping = self._build_reverse_mapping(schema)
-            logger.info(f"[飞书] 反向映射：{list(reverse_mapping.keys())[:10]}...")
             
-            # 构建写入数据 - 使用反向映射
+            # 构建写入数据
             table_records = []
             
-            # 调试：显示前几条记录的结构
-            logger.info(f"[飞书] 记录示例: {dict(list(records[0].items())[:5]) if records else '无记录'}")
-            
-            # 调试：显示反向映射的完整情况
-            logger.info(f"[飞书] 反向映射完整列表: {list(reverse_mapping.keys())}")
-            
-            # 调试：显示schema中的中文字段
-            chinese_fields = [k for k in schema.keys() if any('\u4e00' <= c <= '\u9fff' for c in k)]
-            logger.info(f"[飞书] 中文字段: {chinese_fields}")
-            
-            matched_fields_count = 0
-            total_fields_count = 0
-            
-            for record_idx, record in enumerate(records):
+            for record in records:
                 fields_data = {}
-                record_matched = 0
                 
                 for field_name, value in record.items():
-                    total_fields_count += 1
-                    if not self._has_meaningful_value(value):
+                    if value is None:  # 干净数据，直接跳过None
                         continue
                         
-                    # 使用反向映射查找中文字段
                     field_info = reverse_mapping.get(field_name)
                     if field_info:
                         processed_value = self._process_value_by_type(value, field_info)
                         if processed_value is not None:
                             fields_data[field_info["id"]] = processed_value
-                            record_matched += 1
-                            logger.debug(f"[飞书] 反向映射匹配: {field_name} -> {field_info['id']}")
-                    else:
-                        # 尝试直接匹配中文字段名
-                        direct_match = schema.get(field_name)
-                        if direct_match:
-                            processed_value = self._process_value_by_type(value, direct_match)
-                            if processed_value is not None:
-                                fields_data[direct_match["id"]] = processed_value
-                                record_matched += 1
-                                logger.debug(f"[飞书] 直接匹配: {field_name} -> {direct_match['id']}")
-                        else:
-                            logger.debug(f"[飞书] 字段 '{field_name}' 不存在，跳过")
                 
-                matched_fields_count += record_matched
-                if record_idx < 3:  # 只显示前3条记录的匹配情况
-                    logger.info(f"[飞书] 记录 {record_idx}: 匹配了 {record_matched} 个字段")
-                    logger.info(f"[飞书] 写入数据预览: {dict(list(fields_data.items())[:5])}")
-                    # 检查每个字段的类型和值
-                    for field_id, value in list(fields_data.items())[:3]:
-                        logger.info(f"[飞书] 字段检查: {field_id} = {value} (类型: {type(value)})")
-                        
-                if fields_data:
+                if fields_data:  # 只有有效数据才写入
                     table_records.append(
                         AppTableRecord.builder()
                         .fields(fields_data)
