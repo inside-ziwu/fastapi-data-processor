@@ -39,54 +39,10 @@ class LiveTransform(BaseTransform):
         # Step 4: Cast numeric columns
         df = self._cast_numeric_columns(df, self.sum_columns)
 
-        # Step 5: Group by key columns and aggregate
-        df = self._aggregate_data(df, ["NSC_CODE", "date"], self.sum_columns)
-
-        # Step 6: Add computed columns
-        df = self.add_computed_columns(df)
-
-        return df
-
-    def add_computed_columns(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Add live-specific computed columns."""
-        # Add viewer engagement rate if we have the required columns
-        if (
-            "viewers" in df.columns
-            and "exposures" in df.columns
-            and df["exposures"].sum() > 0
-        ):
-
-            df = df.with_columns(
-                (pl.col("viewers") / pl.col("exposures")).alias(
-                    "viewer_engagement_rate"
-                )
-            )
-
-        # Add average session duration if we have the required columns
-        if (
-            "live_effective_hours" in df.columns
-            and "effective_live_sessions" in df.columns
-            and df["effective_live_sessions"].sum() > 0
-        ):
-
-            df = df.with_columns(
-                (
-                    pl.col("live_effective_hours")
-                    / pl.col("effective_live_sessions")
-                ).alias("avg_session_duration_hours")
-            )
-
-        # Add small wheel conversion rate if we have the required columns
-        if (
-            "small_wheel_clicks" in df.columns
-            and "viewers" in df.columns
-            and df["viewers"].sum() > 0
-        ):
-
-            df = df.with_columns(
-                (pl.col("small_wheel_clicks") / pl.col("viewers")).alias(
-                    "small_wheel_click_rate"
-                )
-            )
+        # Step 5: Extraction-only — no aggregation at this stage
+        wanted = ["NSC_CODE", "date"] + self.sum_columns
+        present = [c for c in wanted if c in df.columns]
+        df = df.select(present)
 
         return df
+        

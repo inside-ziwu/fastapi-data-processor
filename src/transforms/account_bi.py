@@ -27,11 +27,9 @@ class AccountBITransform(BaseTransform):
         df = self._normalize_nsc_code(df)
         df = self._ensure_date_column(df, ["date", "日期"]) 
 
-        if self.sum_columns:
-            df = self._cast_numeric_columns(df, self.sum_columns)
-            df = self._aggregate_data(df, ["NSC_CODE", "date"], self.sum_columns)
-        else:
-            df = df.unique(subset=[c for c in ["NSC_CODE", "date"] if c in df.columns])
-
+        # Extraction-only — no aggregation
+        df = self._cast_numeric_columns(df, self.sum_columns)
+        wanted = ["NSC_CODE", "date"] + self.sum_columns
+        present = [c for c in wanted if c in df.columns]
+        df = df.select(present)
         return df
-

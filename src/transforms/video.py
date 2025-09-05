@@ -37,40 +37,10 @@ class VideoTransform(BaseTransform):
         # Step 4: Cast numeric columns
         df = self._cast_numeric_columns(df, self.sum_columns)
 
-        # Step 5: Group by key columns and aggregate
-        df = self._aggregate_data(df, ["NSC_CODE", "date"], self.sum_columns)
-
-        # Step 6: Add computed columns
-        df = self.add_computed_columns(df)
-
-        return df
-
-    def add_computed_columns(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Add video-specific computed columns."""
-        # Add conversion rate if we have the required columns
-        if (
-            "component_clicks" in df.columns
-            and "anchor_exposure" in df.columns
-            and df["anchor_exposure"].sum() > 0
-        ):
-
-            df = df.with_columns(
-                (pl.col("component_clicks") / pl.col("anchor_exposure")).alias(
-                    "click_through_rate"
-                )
-            )
-
-        # Add leads per video if we have the required columns
-        if (
-            "short_video_leads" in df.columns
-            and "short_video_count" in df.columns
-            and df["short_video_count"].sum() > 0
-        ):
-
-            df = df.with_columns(
-                (
-                    pl.col("short_video_leads") / pl.col("short_video_count")
-                ).alias("leads_per_video")
-            )
+        # Step 5: Extraction-only — no aggregation at this stage
+        wanted = ["NSC_CODE", "date"] + self.sum_columns
+        present = [c for c in wanted if c in df.columns]
+        df = df.select(present)
 
         return df
+        

@@ -47,6 +47,7 @@ DR_MAP = {
     "register_time": "date",
     "leads_type": "leads_type",
     "mkt_second_channel_name": "mkt_second_channel_name",
+    # 只接受 send2dealer_id，send2dealer 无效且丢弃
     "send2dealer_id": "send2dealer_id",
 }
 

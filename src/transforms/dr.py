@@ -12,8 +12,14 @@ class DRTransform(BaseTransform):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
         self.mapping = DR_MAP
-        # Typically DR is event-level; we don't aggregate many numeric fields here by default
-        self.sum_columns: List[str] = []
+        # DR 指标：在提取阶段构造 0/1 指示列，聚合阶段对这些列求和
+        self.sum_columns: List[str] = [
+            "natural_leads",
+            "paid_leads",
+            "store_paid_leads",
+            "area_paid_leads",
+            "local_leads",
+        ]
 
     def get_required_columns(self) -> List[str]:
         return list(self.mapping.keys())
@@ -24,12 +30,35 @@ class DRTransform(BaseTransform):
         # DR date column candidates
         df = self._ensure_date_column(df, ["date", "register_time", "register date", "日期"])
 
-        if self.sum_columns:
-            df = self._cast_numeric_columns(df, self.sum_columns)
-            df = self._aggregate_data(df, ["NSC_CODE", "date"], self.sum_columns)
-        else:
-            # keep unique rows for keys to avoid duplication
-            df = df.unique(subset=[c for c in ["NSC_CODE", "date"] if c in df.columns])
+        # 构造 0/1 指示列，聚合阶段对其按 NSC_CODE+date 求和
+        leads_type = pl.col("leads_type").cast(pl.Utf8)
+        chan = pl.col("mkt_second_channel_name").cast(pl.Utf8)
+        nsc = pl.col("NSC_CODE").cast(pl.Utf8)
+        send2 = pl.col("send2dealer_id").cast(pl.Utf8)
+
+        df = df.with_columns(
+            (
+                (leads_type == "自然").cast(pl.Int64)
+            ).alias("natural_leads"),
+            (
+                (leads_type == "付费").cast(pl.Int64)
+            ).alias("paid_leads"),
+            (
+                ((leads_type == "付费") & chan.is_in(["抖音车云店_BMW_本市_LS直发", "抖音车云店_LS直发"]))
+                .cast(pl.Int64)
+            ).alias("store_paid_leads"),
+            (
+                ((leads_type == "付费") & (chan == "抖音车云店_BMW_总部BDT_LS直发"))
+                .cast(pl.Int64)
+            ).alias("area_paid_leads"),
+            (
+                (send2 == nsc).cast(pl.Int64)
+            ).alias("local_leads"),
+        )
+
+        # 仅保留聚合所需列
+        keep_cols = ["NSC_CODE", "date"] + self.sum_columns
+        present = [c for c in keep_cols if c in df.columns]
+        df = df.select(present)
 
         return df
-
