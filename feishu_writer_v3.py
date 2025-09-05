@@ -117,8 +117,12 @@ class FeishuWriterV3:
                 name = re.sub(r'\s+', '', name)
                 # 处理括号
                 name = name.replace('（', '(').replace('）', ')')
+                # 处理斜杠差异：| -> /
+                name = name.replace('|', '/')
+                # 处理加号差异：➕ -> +
+                name = name.replace('➕', '+')
                 # 处理特殊字符
-                name = re.sub(r'[^\w\(\)\+\-]', '', name)
+                name = re.sub(r'[^\w\(\)\+/\-]', '', name)
                 return name
             
             # 创建schema的标准化索引
