@@ -21,6 +21,9 @@ class LeadsTransform(BaseTransform):
         return list(self.mapping.keys())
 
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
+        # PROBE: verify LeadsTransform is actually invoked
+        logger = logging.getLogger(__name__)
+        logger.error("PROBE: ENTERING LeadsTransform.transform")
         # 严格映射：仅接受这三列，但允许列名存在空格/全角差异（规范化后精确匹配）
         import re
         logger = logging.getLogger(__name__)
