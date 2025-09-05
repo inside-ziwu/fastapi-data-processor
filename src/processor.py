@@ -141,29 +141,29 @@ class DataProcessor:
     def _safe_join(
         self, left: pl.DataFrame, right: pl.DataFrame, source_name: str
     ) -> pl.DataFrame:
-        """Safely join two DataFrames on NSC_CODE and date."""
+        """Safely join two DataFrames on NSC_CODE and date without catastrophic cross-joins."""
         join_keys = ["NSC_CODE", "date"]
 
-        # Ensure join keys exist in both DataFrames
-        left_keys = [k for k in join_keys if k in left.columns]
-        right_keys = [k for k in join_keys if k in right.columns]
+        # Determine common join keys
+        common_keys = [k for k in join_keys if k in left.columns and k in right.columns]
 
-        if not left_keys or not right_keys:
-            # No common keys, do cross join with row index
-            return (
-                left.with_columns(pl.lit(1).alias("_join_idx"))
-                .join(
-                    right.with_columns(pl.lit(1).alias("_join_idx")),
-                    on="_join_idx",
-                    how="outer",
-                )
-                .drop("_join_idx")
+        if not common_keys:
+            # Absolutely do not cross-join. It explodes memory and is almost always wrong.
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"Skip merging '{source_name}': no common join keys among {join_keys}. "
+                f"left has {left.columns}, right has {right.columns}"
             )
+            return left
 
-        # Standard join on common keys with suffix handling
-        return left.join(
-            right,
-            on=list(set(left_keys) & set(right_keys)),
-            how="outer",
-            suffix="_{}".format(source_name),
+        # Prefer lazy join with streaming to reduce peak memory
+        return (
+            left.lazy()
+            .join(
+                right.lazy(),
+                on=common_keys,
+                how="outer",
+                suffix=f"_{source_name}",
+            )
+            .collect(streaming=True)
         )
