@@ -105,9 +105,9 @@ FIELD_MAPPINGS = {
     "local_leads_t_minus_1": ["T-1月本地线索量"],
     
     # 直播时长
-    "live_effective_hours_total": ["有效直播时长总量(小时)"],
-    "live_effective_hours_t": ["T月有效直播时长(小时)"],
-    "live_effective_hours_t_minus_1": ["T-1月有效直播时长(小时)"],
+    "live_effective_hours_total": ["有效直播时长总量(小时)", "直播时长"],
+    "live_effective_hours_t": ["T月有效直播时长(小时)", "T月直播时长"],
+    "live_effective_hours_t_minus_1": ["T-1月有效直播时长(小时)", "T-1月直播时长"],
     
     # 直播场次
     "effective_live_sessions_total": ["有效直播场次总量"],
@@ -140,9 +140,9 @@ FIELD_MAPPINGS = {
     "anchor_exposure_t_minus_1": ["T-1月锚点曝光量"],
     
     # 短视频
-    "short_video_count_total": ["短视频发布量"],
-    "short_video_count_t": ["T月短视频发布量"],
-    "short_video_count_t_minus_1": ["T-1月短视频发布量"],
+    "short_video_count_total": ["短视频发布量", "短视频条数"],
+    "short_video_count_t": ["T月短视频发布量", "T月短视频条数"],
+    "short_video_count_t_minus_1": ["T-1月短视频发布量", "T-1月短视频条数"],
     "short_video_leads_total": ["组件留资人数（获取线索量）"],
     "short_video_leads_t": ["T月组件留资人数（获取线索量）"],
     "short_video_leads_t_minus_1": ["T-1月组件留资人数（获取线索量）"],
@@ -159,7 +159,7 @@ FIELD_MAPPINGS = {
     "private_leads_count_t_minus_1": ["T-1月私信留资"],
     
     # 短视频播放
-    "short_video_plays_total": ["短视频播放总量"],
+    "short_video_plays_total": ["短视频播放总量", "短视频播放量"],
     "short_video_plays_t": ["T月短视频播放量"],
     "short_video_plays_t_minus_1": ["T-1月短视频播放量"],
     
