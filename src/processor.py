@@ -168,7 +168,12 @@ class DataProcessor:
     def _safe_join(
         self, left: pl.DataFrame, right: pl.DataFrame, source_name: str
     ) -> pl.DataFrame:
-        """Safely join two DataFrames on NSC_CODE and date without catastrophic cross-joins."""
+        """Safely join two DataFrames on NSC_CODE and/or date.
+
+        - Never cross-join: if no common keys, skip with warning.
+        - Prefer lazy streaming join for scalability; fallback to eager join if it fails.
+        - Rely on Transform outputs to provide correct dtypes for keys.
+        """
         join_keys = ["NSC_CODE", "date"]
 
         # Determine common join keys
@@ -183,29 +188,24 @@ class DataProcessor:
             )
             return left
 
-        # Coerce join key dtypes to be consistent to avoid engine edge cases
-        def _coerce_keys(df: pl.DataFrame) -> pl.DataFrame:
-            exprs = []
-            if "NSC_CODE" in common_keys and "NSC_CODE" in df.columns:
-                exprs.append(pl.col("NSC_CODE").cast(pl.Utf8))
-            if "date" in common_keys and "date" in df.columns:
-                # Be permissive on date parsing if it's Utf8
-                if df["date"].dtype == pl.Utf8:
-                    exprs.append(
-                        pl.col("date").str.strptime(pl.Date, "%Y-%m-%d", strict=False)
-                    )
-                else:
-                    exprs.append(pl.col("date").cast(pl.Date))
-            return df.with_columns(exprs) if exprs else df
-
-        left_c = _coerce_keys(left).rechunk()
-        right_c = _coerce_keys(right).rechunk()
-
-        # Use eager outer join; streaming join can hit Arrow validity bugs in some versions
-        joined = left_c.join(
-            right_c,
-            on=common_keys,
-            how="outer",
-            suffix=f"_{source_name}",
-        )
-        return joined.rechunk()
+        # Prefer lazy streaming join for performance/scalability
+        try:
+            return (
+                left.lazy()
+                .join(
+                    right.lazy(),
+                    on=common_keys,
+                    how="outer",
+                    suffix=f"_{source_name}",
+                )
+                .collect(streaming=True)
+            )
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Streaming join failed for '{source_name}': {e}. Falling back to eager join.")
+            return left.rechunk().join(
+                right.rechunk(),
+                on=common_keys,
+                how="outer",
+                suffix=f"_{source_name}",
+            )
