@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Optional import with fallback
 try:
+    import lark
     from lark_oapi.api.bitable.v1 import *
     SDK_AVAILABLE = True
 except ImportError as e:
