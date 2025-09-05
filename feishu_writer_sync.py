@@ -146,7 +146,9 @@ class FeishuWriterSync:
             char_mappings = {
                 "（": "(",
                 "）": ")",  # 括号
-                "|": "/",  # 分隔符统一
+                "|": "/",  # 分隔符统一（半角竖线）
+                "｜": "/",  # 分隔符统一（全角竖线）
+                "／": "/",  # 全角斜杠 -> 半角斜杠
                 "➕": "+",  # 特殊加号
                 "：": ":",  # 冒号
             }
@@ -283,11 +285,42 @@ class FeishuWriterSync:
 
             # 统一映射：reverse_mapping已经包含了一对一和一对多的处理结果
             field_info = reverse_mapping.get(field_name)
+            if not field_info:
+                # 回退1：直接使用中文字段名匹配 schema
+                if field_name in schema:
+                    field_info = schema[field_name]
+                else:
+                    # 回退2：对字段名做轻量标准化后再匹配（处理全角/空格/括号等差异）
+                    def _norm(s: str) -> str:
+                        import re
+                        s = re.sub(r"\s+", "", s)
+                        table = str.maketrans({
+                            "（": "(",
+                            "）": ")",
+                            "|": "/",
+                            "｜": "/",
+                            "／": "/",
+                            "➕": "+",
+                            "：": ":",
+                        })
+                        s = s.translate(table)
+                        s = re.sub(r"[^\w\(\)/+:]", "", s)
+                        return s
+
+                    norm = _norm(field_name)
+                    normalized_schema = { _norm(k): k for k in schema.keys() }
+                    match = normalized_schema.get(norm)
+                    if match:
+                        field_info = schema[match]
+
             if field_info:  # 找到映射的字段
-                field_id = field_info["id"]
-                converted[field_id] = self._convert_value_by_type(
-                    value, field_info
-                )
+                field_id = field_info.get("id")
+                if field_id:
+                    converted[field_id] = self._convert_value_by_type(
+                        value, field_info
+                    )
+                else:
+                    logger.debug(f"[飞书] 字段无ID，忽略: {field_name}")
             else:
                 logger.debug(f"[飞书] 未找到映射: {field_name}")
 
