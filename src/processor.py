@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .readers import ReaderRegistry, registry as reader_registry
 from .transforms import BaseTransform
-from .analysis import AnalysisEngine
+from .analysis import create_default_analysis_engine
 from .config import FIELD_MAPPINGS
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ class DataProcessor:
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
         self.reader_registry = reader_registry
-        self.analysis_engine = AnalysisEngine()
+        self.analysis_engine = create_default_analysis_engine()
 
     def process_pipeline(self, file_paths: Dict[str, str]) -> pl.DataFrame:
         """
