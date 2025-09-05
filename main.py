@@ -10,6 +10,7 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, Optional
+import platform
 
 from src import DataProcessor
 from src.config import FIELD_MAPPINGS
@@ -37,6 +38,28 @@ async def process_data_files(
         feishu_config: Optional Feishu configuration for writing results
     """
     logger.info("Starting data processing pipeline")
+    
+    # 运行时环境诊断
+    logger.info("=== 运行时环境诊断 ===")
+    logger.info(f"Python版本: {platform.python_version()}")
+    logger.info(f"平台: {platform.platform()}")
+    logger.info(f"工作目录: {Path.cwd()}")
+    
+    # 检查关键依赖
+    try:
+        import magic
+        logger.info("✅ python-magic: 可用")
+        # 测试实际功能
+        test_mime = magic.from_file('/etc/passwd', mime=True)
+        logger.info(f"✅ magic功能测试: {test_mime}")
+    except ImportError as e:
+        logger.warning(f"❌ python-magic: 不可用 - {e}")
+        logger.warning("将使用扩展名检测降级方案")
+    except Exception as e:
+        logger.warning(f"❌ python-magic: 功能异常 - {e}")
+    
+    logger.info(f"待处理文件数: {len(file_paths)}")
+    logger.info("=== 开始处理 ===")
 
     # Initialize processor
     processor = DataProcessor()
