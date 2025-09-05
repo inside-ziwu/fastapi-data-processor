@@ -223,15 +223,6 @@ class FeishuWriterV3:
             # 构建反向映射
             reverse_mapping = self._build_reverse_mapping(schema)
             
-            # 🔍 映射验证探针：显示未映射的字段
-            if records:
-                first_record_keys = set(records[0].keys())
-                mapped_keys = set(reverse_mapping.keys())
-                unmapped_keys = first_record_keys - mapped_keys
-                if unmapped_keys:
-                    logger.warning(f"🔍 未映射字段: {list(unmapped_keys)[:5]}{'...' if len(unmapped_keys) > 5 else ''}")
-                    logger.info(f"🔍 已映射字段示例: {dict(list(reverse_mapping.items())[:3])}")
-            
             # 构建写入数据
             table_records = []
             
@@ -267,22 +258,6 @@ class FeishuWriterV3:
             for i in range(0, len(table_records), batch_size):
                 batch = table_records[i:i+batch_size]
                 
-                # 🔍 精简探针：只打印关键信息
-                if len(batch) > 0:
-                    first_record = batch[0]
-                    if hasattr(first_record, '_fields') and first_record._fields:
-                        field_summary = []
-                        for field_id, value in first_record._fields.items():
-                            # 反向查找字段名
-                            field_name = None
-                            for cn_name, info in schema.items():
-                                if info.get('id') == field_id:
-                                    field_name = cn_name
-                                    break
-                            field_summary.append(f"{field_name or field_id}({field_id})={value}[{type(value).__name__}]")
-                        
-                        logger.info(f"🔍 批次{i//batch_size + 1}样本: {', '.join(field_summary[:3])}{'...' if len(field_summary) > 3 else ''}")
-                
                 request: BatchCreateAppTableRecordRequest = BatchCreateAppTableRecordRequest.builder() \
                     .app_token(self.app_token) \
                     .table_id(self.table_id) \
@@ -290,15 +265,37 @@ class FeishuWriterV3:
                         .records(batch)
                         .build()) \
                     .build()
-                    
-                response: BatchCreateAppTableRecordResponse = self.client.bitable.v1.app_table_record.batch_create(request)
                 
-                if response.success():
-                    batch_success = len(response.data.records) if response.data else 0
-                    total_success += batch_success
-                    logger.info(f"[飞书] 批次 {i//batch_size + 1} 成功写入 {batch_success}/{len(batch)} 条记录")
-                else:
-                    logger.error(f"[飞书] 批次 {i//batch_size + 1} 写入失败: code={response.code}, msg={response.msg}")
+                try:
+                    response: BatchCreateAppTableRecordResponse = self.client.bitable.v1.app_table_record.batch_create(request)
+                    
+                    if response.success():
+                        batch_success = len(response.data.records) if response.data else 0
+                        total_success += batch_success
+                        logger.info(f"[飞书] 批次 {i//batch_size + 1} 成功写入 {batch_success}/{len(batch)} 条记录")
+                    else:
+                        # 捕获飞书返回的详细错误信息
+                        error_detail = {
+                            "code": response.code,
+                            "message": response.msg,
+                            "request_id": getattr(response, 'request_id', 'unknown'),
+                            "table_id": self.table_id,
+                            "batch_size": len(batch)
+                        }
+                        
+                        # 尝试获取更详细的错误信息
+                        if hasattr(response, 'data') and response.data:
+                            error_detail['data'] = str(response.data)
+                        
+                        logger.error(f"[飞书] 写入失败详情: {json.dumps(error_detail, ensure_ascii=False)}")
+                        return False
+                        
+                except Exception as e:
+                    # 捕获所有异常，包括网络错误、格式错误等
+                    logger.error(f"[飞书] API调用异常: {type(e).__name__}: {str(e)}")
+                    if hasattr(e, 'response'):
+                        logger.error(f"[飞书] 响应内容: {e.response}")
+                    return False
                     
             logger.info(f"[飞书] 写入完成: 成功 {total_success}/{total_total} 条记录")
             return total_success == total_total
@@ -340,11 +337,10 @@ class FeishuWriterV3:
                 result["mapped_fields"] = len(reverse_mapping)
                 result["sample_mapping"] = dict(list(reverse_mapping.items())[:5])
                 
-                # 🔍 增强验证：显示详细的字段映射报告
                 try:
                     from data_processor import FIELD_EN_MAP
                     
-                    # 创建详细的映射报告
+                    # 创建映射报告
                     mapping_report = []
                     for cn_name, en_name in FIELD_EN_MAP.items():
                         if cn_name in schema:
@@ -354,7 +350,7 @@ class FeishuWriterV3:
                                 "english": en_name,
                                 "field_id": field_info.get('id'),
                                 "type": field_info.get('ui_type'),
-                                "status": "✅ 匹配成功"
+                                "status": "found"
                             })
                         else:
                             mapping_report.append({
@@ -362,38 +358,21 @@ class FeishuWriterV3:
                                 "english": en_name,
                                 "field_id": None,
                                 "type": None,
-                                "status": "❌ 未找到"
+                                "status": "missing"
                             })
                     
                     result["mapping_report"] = mapping_report
-                    result["mapping_success_rate"] = f"{len([m for m in mapping_report if m['status'] == '✅ 匹配成功'])}/{len(mapping_report)}"
+                    found_count = len([m for m in mapping_report if m['status'] == "found"])
+                    result["mapping_success_rate"] = f"{found_count}/{len(mapping_report)}"
                     
-                    # 显示字段类型分析
-                    field_types = {}
-                    for cn_name, info in schema.items():
-                        field_type = info.get('ui_type', 'unknown')
-                        if field_type not in field_types:
-                            field_types[field_type] = []
-                        field_types[field_type].append(cn_name)
-                    
-                    result["field_types"] = {k: len(v) for k, v in field_types.items()}
-                    
-                    # 显示表格基本信息
-                    logger.info(f"🔍 表格验证结果:")
-                    logger.info(f"   表格ID: {self.table_id}")
-                    logger.info(f"   总字段数: {len(schema)}")
-                    logger.info(f"   映射成功率: {result['mapping_success_rate']}")
-                    logger.info(f"   字段类型分布: {result['field_types']}")
-                    
-                    # 显示前10个未映射字段
-                    missing_fields = [m for m in mapping_report if m['status'] == '❌ 未找到']
-                    if missing_fields:
-                        logger.warning(f"🔍 未映射字段(前10个):")
-                        for field in missing_fields[:10]:
-                            logger.warning(f"   {field['chinese']} -> {field['english']}")
+                    # 只记录关键信息
+                    missing_count = len(mapping_report) - found_count
+                    if missing_count > 0:
+                        missing_examples = [m["english"] for m in mapping_report if m["status"] == "missing"][:3]
+                        logger.warning(f"飞书字段映射: {missing_count}/{len(mapping_report)} 字段缺失, 示例: {missing_examples}")
                     
                 except ImportError:
-                    logger.warning("[飞书验证] 无法导入FIELD_EN_MAP用于验证")
+                    logger.warning("无法导入FIELD_EN_MAP用于验证")
                 
         except Exception as e:
             result["valid"] = False
