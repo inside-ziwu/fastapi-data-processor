@@ -8,5 +8,6 @@ pyarrow==21.0.0
 httpx==0.27.2
 lark-oapi==1.4.22
 python-magic==0.4.27
+fastexcel
 flake8
 black
