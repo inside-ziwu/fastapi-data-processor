@@ -88,9 +88,12 @@ class DataProcessor:
         self, source_name: str, file_path: str
     ) -> Optional[pl.DataFrame]:
         """Process a single data source."""
-        # 参数健壮性：路径必须是字符串
+        # 参数健壮性：路径必须是字符串；若不是则尽力转换为字符串并告警
         if not isinstance(file_path, str):
-            raise ValueError(f"Invalid path for {source_name}: expected string path, got {type(file_path).__name__}")
+            logger.warning(
+                f"Path for {source_name} is {type(file_path).__name__}; coercing to string."
+            )
+            file_path = str(file_path)
         # Get appropriate transform first, so we can optimize reading (e.g., CSV column pruning)
         transform = self._get_transform_for_source(source_name)
 
@@ -123,12 +126,48 @@ class DataProcessor:
                 sheet_names_raw = self.config.get("spending_sheet_names")
             if sheet_names_raw:
                 import pandas as pd
-                parts = [s.strip() for s in str(sheet_names_raw).replace("，", ",").split(",") if s.strip()]
+
+                # Normalize input into a list of tokens (strings or ints)
+                if isinstance(sheet_names_raw, list):
+                    tokens = sheet_names_raw
+                else:
+                    tokens = [s.strip() for s in str(sheet_names_raw).replace("，", ",").split(",") if s.strip()]
+
+                def _norm_name(s: str) -> str:
+                    return (
+                        (s or "").strip().lower()
+                        .replace(" ", "")
+                        .replace("（", "(")
+                        .replace("）", ")")
+                    )
+
                 frames = []
                 xls = pd.ExcelFile(file_path, engine="openpyxl")
-                for sn in parts:
-                    if sn in xls.sheet_names:
-                        frames.append(pd.read_excel(xls, sheet_name=sn, engine="openpyxl"))
+                norm_map = {_norm_name(name): name for name in xls.sheet_names}
+
+                for tok in tokens:
+                    # numeric index support
+                    if isinstance(tok, int) or (isinstance(tok, str) and tok.isdigit()):
+                        idx = int(tok)
+                        if 0 <= idx < len(xls.sheet_names):
+                            frames.append(pd.read_excel(xls, sheet_name=idx, engine="openpyxl"))
+                        continue
+
+                    tnorm = _norm_name(str(tok))
+                    # direct normalized equality
+                    if tnorm in norm_map:
+                        frames.append(pd.read_excel(xls, sheet_name=norm_map[tnorm], engine="openpyxl"))
+                        continue
+
+                    # substring fuzzy match as last resort
+                    matched = None
+                    for sn_norm, original in norm_map.items():
+                        if tnorm in sn_norm:
+                            matched = original
+                            break
+                    if matched:
+                        frames.append(pd.read_excel(xls, sheet_name=matched, engine="openpyxl"))
+
                 if not frames:
                     # fallback: no valid sheet matched, read first sheet
                     df = reader_class().read(file_path)

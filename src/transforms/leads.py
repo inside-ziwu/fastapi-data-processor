@@ -20,17 +20,36 @@ class LeadsTransform(BaseTransform):
         return list(self.mapping.keys())
 
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
-        # 严格映射：仅接受这三列，确保准确性
-        required_exact = {
+        # 严格映射：仅接受这三列，但允许列名存在空格/全角差异（规范化后精确匹配）
+        def _norm(s: str) -> str:
+            return (
+                (s or "").replace(" ", "")
+                .replace("（", "(")
+                .replace("）", ")")
+                .strip()
+                .lower()
+            )
+
+        targets = {
             "主机厂经销商id列表": "NSC_CODE",
             "留资日期": "date",
             "直播间表单提交商机量(去重)": "small_wheel_leads",
         }
-        missing = [k for k in required_exact if k not in df.columns]
+
+        norm_cols = {_norm(c): c for c in df.columns}
+        rename_map = {}
+        missing = []
+        for raw_name, out_name in targets.items():
+            key = _norm(raw_name)
+            if key in norm_cols:
+                rename_map[norm_cols[key]] = out_name
+            else:
+                missing.append(raw_name)
+
         if missing:
             raise ValueError(f"leads 缺少必要列: {missing}")
 
-        df = df.rename(required_exact)
+        df = df.rename(rename_map)
         df = self._normalize_nsc_code(df)
         df = self._ensure_date_column(df, ["date", "留资日期", "日期"]) 
 
