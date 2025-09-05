@@ -475,7 +475,7 @@ class FeishuWriterSync:
                 )
 
                 try:
-                    from data_processor import FIELD_MAPPINGS
+                    from src.config import FIELD_MAPPINGS
 
                     # 创建反向映射用于验证 (Chinese -> English)
                     chinese_to_english = {}

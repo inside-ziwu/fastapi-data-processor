@@ -26,7 +26,7 @@ def json_date_serializer(obj):
 
 import polars as pl
 
-from data_processor import process_all_files
+from src import DataProcessor
 from feishu_writer_v3 import FeishuWriterV3
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -254,12 +254,11 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             
             try:
                 # Run the synchronous, CPU-bound function in a thread pool
+                processor = DataProcessor()
                 result_df = await loop.run_in_executor(
                     None,  # Use the default executor
-                    process_all_files,
-                    local_paths,
-                    spending_sheet_names,
-                    dimension
+                    processor.process_pipeline,
+                    local_paths
                 )
             except Exception as e:
                 logger.error(f"Core processing failed: {str(e)}", exc_info=True)
