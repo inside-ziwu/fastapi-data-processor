@@ -13,14 +13,12 @@ logger = logging.getLogger(__name__)
 
 # Optional import with fallback
 try:
-    import lark
     from lark_oapi.api.bitable.v1 import *
-
     SDK_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     SDK_AVAILABLE = False
     logger.warning(
-        "飞书SDK未安装，Feishu功能将不可用。安装: pip install lark-oapi"
+        f"飞书SDK导入失败，Feishu功能将不可用。错误: {e}。安装: pip install lark-oapi"
     )
 
 
