@@ -43,9 +43,13 @@ class DataCleaner:
     
     @staticmethod
     def clean_text(value: Any) -> Optional[str]:
-        """清洗文本值 - 保证非空字符串"""
-        cleaned = DataCleaner.clean_value(value)
-        return cleaned
+        """清洗文本值 - 只处理字符串，其他类型返回None"""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            return value if value else None
+        return None
     
     @staticmethod
     def clean_level_data(record: Dict[str, Any]) -> Dict[str, Any]:
