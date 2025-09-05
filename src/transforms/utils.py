@@ -5,7 +5,12 @@ from typing import Dict, List, Any, Optional
 
 
 def rename_columns(df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
-    """Rename columns based on mapping with fuzzy matching."""
+    """Rename columns based on mapping with fuzzy matching.
+
+    - Uses provided mapping as the single source of truth.
+    - If NSC_CODE is still missing after the first pass, try a conservative
+      fallback matching over common NSC synonyms to avoid brittle failures.
+    """
     rename_map = {}
     for src_col, expected_col in mapping.items():
         # Find matching column in actual data
@@ -16,6 +21,24 @@ def rename_columns(df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
 
     if rename_map:
         df = df.rename(rename_map)
+
+    # If NSC_CODE still missing, attempt a conservative fallback
+    if "NSC_CODE" not in df.columns:
+        nsc_candidates = []
+        for c in df.columns:
+            c_norm = c.replace(" ", "").lower()
+            if any(
+                token in c_norm
+                for token in (
+                    "nsc", "经销商id", "主机厂经销商id", "经销商id列表", "主机厂经销商id列表"
+                )
+            ):
+                nsc_candidates.append(c)
+
+        if nsc_candidates:
+            # Pick the longest match (most specific) deterministically
+            best = sorted(nsc_candidates, key=lambda x: len(x), reverse=True)[0]
+            df = df.rename({best: "NSC_CODE"})
 
     # Validate NSC_CODE exists after renaming
     if "NSC_CODE" not in df.columns:
@@ -131,14 +154,31 @@ def ensure_optional_date_column(
 
 
 def cast_numeric_columns(df: pl.DataFrame, columns: List[str]) -> pl.DataFrame:
-    """Cast specified columns to numeric types, handling commas and empty strings."""
+    """Cast specified columns to numeric types robustly.
+
+    - Removes commas and percent signs.
+    - Treats placeholders like "", "-", "—", "N/A", "NA", "null", "None" as nulls.
+    - Uses non-strict casting to coerce remaining strings to Float64.
+    """
     for col in columns:
         if col in df.columns:
-            df = df.with_columns(
+            clean = (
                 pl.col(col)
                 .cast(pl.Utf8)
                 .str.replace_all(",", "")
-                .cast(pl.Float64)
+                .str.replace_all("%", "")
+                .str.strip_chars()
+            )
+
+            df = df.with_columns(
+                pl.when(
+                    clean.str.to_lowercase().is_in([
+                        "", "-", "—", "n/a", "na", "null", "none",
+                    ])
+                )
+                .then(None)
+                .otherwise(clean)
+                .cast(pl.Float64, strict=False)
                 .alias(col)
             )
     return df
