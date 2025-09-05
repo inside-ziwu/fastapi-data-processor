@@ -76,22 +76,39 @@ class DataProcessor:
     def _get_transform_for_source(
         self, source_name: str
     ) -> Optional[BaseTransform]:
-        """Get transform for specific data source."""
+        """Get transform for specific data source.
+
+        Uses substring matching to avoid brittle exact-key coupling.
+        """
         from .transforms import (
             VideoTransform,
             LiveTransform,
             MessageTransform,
+            DRTransform,
+            SpendingTransform,
+            LeadsTransform,
+            AccountBITransform,
+            AccountBaseTransform,
         )
 
-        transform_map = {
-            "video": VideoTransform,
-            "live": LiveTransform,
-            "msg": MessageTransform,
-        }
+        name = (source_name or "").lower()
 
-        transform_class = transform_map.get(source_name)
-        if transform_class:
-            return transform_class()
+        if "video" in name:
+            return VideoTransform()
+        if "live" in name:
+            return LiveTransform()
+        if "msg" in name or "message" in name:
+            return MessageTransform()
+        if "dr" in name:
+            return DRTransform()
+        if "spending" in name or "ad" in name:
+            return SpendingTransform()
+        if "lead" in name:
+            return LeadsTransform()
+        if "account" in name and "bi" in name:
+            return AccountBITransform()
+        if "account" in name and "base" in name:
+            return AccountBaseTransform()
 
         return None
 
