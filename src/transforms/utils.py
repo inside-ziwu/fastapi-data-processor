@@ -78,7 +78,7 @@ def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
 def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = None) -> pl.DataFrame:
     """Ensure date column exists and is properly formatted."""
     if date_candidates is None:
-        date_candidates = ["日期", "date", "time", "开播日期", "直播日期", "日期时间"]
+        date_candidates = ["日期", "留资日期", "date", "time", "开播日期", "直播日期", "日期时间"]
 
     if "date" not in df.columns:
         # Try to find date column with different names
@@ -131,7 +131,7 @@ def ensure_optional_date_column(
     - If no candidate found, returns df unchanged.
     """
     if date_candidates is None:
-        date_candidates = ["日期", "date", "time", "开播日期", "直播日期", "日期时间"]
+        date_candidates = ["日期", "留资日期", "date", "time", "开播日期", "直播日期", "日期时间"]
 
     if "date" not in df.columns:
         for candidate in date_candidates:
