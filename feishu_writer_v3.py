@@ -178,21 +178,35 @@ class FeishuWriterV3:
         ui_type = field_info.get("ui_type", "")
         
         try:
-            # 文本类型
+            # 文本类型 - 确保非空字符串
             if ui_type == "Text":
-                return str(value)
+                str_value = str(value).strip()
+                if not str_value:
+                    logger.warning(f"[飞书] 文本字段值为空: {value}")
+                    return None
+                return str_value
                 
-            # 数值类型
+            # 数值类型 - 确保是有效数字
             elif ui_type == "Number":
-                return float(value)
-                
+                if isinstance(value, str):
+                    value = value.replace(',', '')  # 处理千分位
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    logger.warning(f"[飞书] 数字转换失败: {value}")
+                    return None
+                    
             # 日期类型
             elif ui_type == "DateTime":
                 if isinstance(value, int):
                     return value
                 elif isinstance(value, str):
-                    dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
-                    return int(dt.timestamp() * 1000)
+                    try:
+                        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                        return int(dt.timestamp() * 1000)
+                    except ValueError:
+                        logger.warning(f"[飞书] 日期格式无效: {value}")
+                        return None
                 else:
                     return value
                     
@@ -202,11 +216,14 @@ class FeishuWriterV3:
                 
             # 单选类型
             elif ui_type == "SingleSelect":
+                str_value = str(value).strip()
+                if not str_value:
+                    return None
                 options = field_info.get("property", {}).get("options", [])
                 for option in options:
-                    if str(option.get("name")) == str(value):
+                    if str(option.get("name")) == str_value:
                         return {"id": option.get("id")}
-                return {"id": str(value)}
+                return {"id": str_value}
                 
             # 多选类型
             elif ui_type == "MultiSelect":
@@ -216,18 +233,20 @@ class FeishuWriterV3:
                 option_map = {opt.get("name"): opt.get("id") for opt in options}
                 
                 for val in values:
-                    val_str = str(val)
-                    option_id = option_map.get(val_str, val_str)
-                    result.append({"id": option_id})
-                return result
+                    val_str = str(val).strip()
+                    if val_str:
+                        option_id = option_map.get(val_str, val_str)
+                        result.append({"id": option_id})
+                return result if result else None
                 
             # 其他类型
             else:
-                return str(value)
+                str_value = str(value).strip()
+                return str_value if str_value else None
                 
         except Exception as e:
             logger.warning(f"[飞书] 值处理失败: {value} -> {e}")
-            return str(value)
+            return str(value).strip() if str(value).strip() else None
             
     def _has_meaningful_value(self, v: Any) -> bool:
         """True if value is not None and not empty string after strip; 0 is meaningful."""
@@ -308,6 +327,10 @@ class FeishuWriterV3:
                 matched_fields_count += record_matched
                 if record_idx < 3:  # 只显示前3条记录的匹配情况
                     logger.info(f"[飞书] 记录 {record_idx}: 匹配了 {record_matched} 个字段")
+                    logger.info(f"[飞书] 写入数据预览: {dict(list(fields_data.items())[:5])}")
+                    # 检查每个字段的类型和值
+                    for field_id, value in list(fields_data.items())[:3]:
+                        logger.info(f"[飞书] 字段检查: {field_id} = {value} (类型: {type(value)})")
                         
                 if fields_data:
                     table_records.append(
