@@ -20,6 +20,30 @@ class DataProcessor:
         self.config = config or {}
         self.reader_registry = reader_registry
         self.analysis_engine = create_default_analysis_engine()
+        # Build transform mapping once with aliases for clarity and maintainability
+        from .transforms import (
+            VideoTransform,
+            LiveTransform,
+            MessageTransform,
+            DRTransform,
+            SpendingTransform,
+            LeadsTransform,
+            AccountBITransform,
+            AccountBaseTransform,
+        )
+
+        self.TRANSFORM_MAP: Dict[str, type[BaseTransform]] = {
+            "video": VideoTransform,
+            "live": LiveTransform,
+            "message": MessageTransform,
+            "msg": MessageTransform,  # alias
+            "dr": DRTransform,
+            "spending": SpendingTransform,
+            "ad": SpendingTransform,  # alias
+            "lead": LeadsTransform,
+            "account_bi": AccountBITransform,
+            "account_base": AccountBaseTransform,
+        }
 
     def process_pipeline(self, file_paths: Dict[str, str]) -> pl.DataFrame:
         """
@@ -76,39 +100,25 @@ class DataProcessor:
     def _get_transform_for_source(
         self, source_name: str
     ) -> Optional[BaseTransform]:
-        """Get transform for specific data source.
-
-        Uses substring matching to avoid brittle exact-key coupling.
-        """
-        from .transforms import (
-            VideoTransform,
-            LiveTransform,
-            MessageTransform,
-            DRTransform,
-            SpendingTransform,
-            LeadsTransform,
-            AccountBITransform,
-            AccountBaseTransform,
-        )
-
+        """通过查找表获取数据源对应的转换器。"""
         name = (source_name or "").lower()
 
-        if "video" in name:
-            return VideoTransform()
-        if "live" in name:
-            return LiveTransform()
-        if "msg" in name or "message" in name:
-            return MessageTransform()
-        if "dr" in name:
-            return DRTransform()
-        if "spending" in name or "ad" in name:
-            return SpendingTransform()
-        if "lead" in name:
-            return LeadsTransform()
+        # Normalize special compound keys first
+        key = name
         if "account" in name and "bi" in name:
-            return AccountBITransform()
-        if "account" in name and "base" in name:
-            return AccountBaseTransform()
+            key = "account_bi"
+        elif "account" in name and "base" in name:
+            key = "account_base"
+
+        # Exact match first (O(1))
+        transform_class = self.TRANSFORM_MAP.get(key)
+        if transform_class:
+            return transform_class()
+
+        # Optional fallback: conservative fuzzy match against known aliases
+        for map_key, cls in self.TRANSFORM_MAP.items():
+            if map_key in name:
+                return cls()
 
         return None
 
