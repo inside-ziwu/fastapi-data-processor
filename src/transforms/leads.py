@@ -21,14 +21,13 @@ class LeadsTransform(BaseTransform):
 
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
         # 严格映射：仅接受这三列，但允许列名存在空格/全角差异（规范化后精确匹配）
+        import re
         def _norm(s: str) -> str:
-            return (
-                (s or "").replace(" ", "")
-                .replace("（", "(")
-                .replace("）", ")")
-                .strip()
-                .lower()
-            )
+            s = (s or "")
+            # 去除所有空白及零宽字符、NBSP
+            s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\u00a0]+", "", s)
+            s = s.replace("（", "(").replace("）", ")")
+            return s.strip().lower()
 
         targets = {
             "主机厂经销商id列表": "NSC_CODE",
