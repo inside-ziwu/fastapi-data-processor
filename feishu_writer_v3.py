@@ -223,6 +223,15 @@ class FeishuWriterV3:
             # 构建反向映射
             reverse_mapping = self._build_reverse_mapping(schema)
             
+            # 🔍 映射验证探针：显示未映射的字段
+            if records:
+                first_record_keys = set(records[0].keys())
+                mapped_keys = set(reverse_mapping.keys())
+                unmapped_keys = first_record_keys - mapped_keys
+                if unmapped_keys:
+                    logger.warning(f"🔍 未映射字段: {list(unmapped_keys)[:5]}{'...' if len(unmapped_keys) > 5 else ''}")
+                    logger.info(f"🔍 已映射字段示例: {dict(list(reverse_mapping.items())[:3])}")
+            
             # 构建写入数据
             table_records = []
             
@@ -257,6 +266,22 @@ class FeishuWriterV3:
             
             for i in range(0, len(table_records), batch_size):
                 batch = table_records[i:i+batch_size]
+                
+                # 🔍 精简探针：只打印关键信息
+                if len(batch) > 0:
+                    first_record = batch[0]
+                    if hasattr(first_record, '_fields') and first_record._fields:
+                        field_summary = []
+                        for field_id, value in first_record._fields.items():
+                            # 反向查找字段名
+                            field_name = None
+                            for cn_name, info in schema.items():
+                                if info.get('id') == field_id:
+                                    field_name = cn_name
+                                    break
+                            field_summary.append(f"{field_name or field_id}({field_id})={value}[{type(value).__name__}]")
+                        
+                        logger.info(f"🔍 批次{i//batch_size + 1}样本: {', '.join(field_summary[:3])}{'...' if len(field_summary) > 3 else ''}")
                 
                 request: BatchCreateAppTableRecordRequest = BatchCreateAppTableRecordRequest.builder() \
                     .app_token(self.app_token) \
@@ -315,22 +340,57 @@ class FeishuWriterV3:
                 result["mapped_fields"] = len(reverse_mapping)
                 result["sample_mapping"] = dict(list(reverse_mapping.items())[:5])
                 
-                # 调试：显示映射失败的字段
+                # 🔍 增强验证：显示详细的字段映射报告
                 try:
                     from data_processor import FIELD_EN_MAP
-                    missing_cn_fields = [cn for cn, en in FIELD_EN_MAP.items() if cn not in schema]
-                    missing_en_fields = [en for cn, en in FIELD_EN_MAP.items() if cn not in schema]
                     
-                    result["missing_chinese_fields"] = missing_cn_fields[:10]
-                    result["missing_english_fields"] = missing_en_fields[:10]
+                    # 创建详细的映射报告
+                    mapping_report = []
+                    for cn_name, en_name in FIELD_EN_MAP.items():
+                        if cn_name in schema:
+                            field_info = schema[cn_name]
+                            mapping_report.append({
+                                "chinese": cn_name,
+                                "english": en_name,
+                                "field_id": field_info.get('id'),
+                                "type": field_info.get('ui_type'),
+                                "status": "✅ 匹配成功"
+                            })
+                        else:
+                            mapping_report.append({
+                                "chinese": cn_name,
+                                "english": en_name,
+                                "field_id": None,
+                                "type": None,
+                                "status": "❌ 未找到"
+                            })
                     
-                    # 显示schema和映射表的差异
-                    chinese_schema_fields = [k for k in schema.keys() if any('\u4e00' <= c <= '\u9fff' for c in k)]
-                    result["chinese_fields_in_schema"] = chinese_schema_fields
+                    result["mapping_report"] = mapping_report
+                    result["mapping_success_rate"] = f"{len([m for m in mapping_report if m['status'] == '✅ 匹配成功'])}/{len(mapping_report)}"
                     
-                    logger.info(f"[飞书验证] Schema中文字段: {len(chinese_schema_fields)} 个")
-                    logger.info(f"[飞书验证] 映射表中文字段: {len(FIELD_EN_MAP)} 个") 
-                    logger.info(f"[飞书验证] 缺失中文字段: {len(missing_cn_fields)} 个")
+                    # 显示字段类型分析
+                    field_types = {}
+                    for cn_name, info in schema.items():
+                        field_type = info.get('ui_type', 'unknown')
+                        if field_type not in field_types:
+                            field_types[field_type] = []
+                        field_types[field_type].append(cn_name)
+                    
+                    result["field_types"] = {k: len(v) for k, v in field_types.items()}
+                    
+                    # 显示表格基本信息
+                    logger.info(f"🔍 表格验证结果:")
+                    logger.info(f"   表格ID: {self.table_id}")
+                    logger.info(f"   总字段数: {len(schema)}")
+                    logger.info(f"   映射成功率: {result['mapping_success_rate']}")
+                    logger.info(f"   字段类型分布: {result['field_types']}")
+                    
+                    # 显示前10个未映射字段
+                    missing_fields = [m for m in mapping_report if m['status'] == '❌ 未找到']
+                    if missing_fields:
+                        logger.warning(f"🔍 未映射字段(前10个):")
+                        for field in missing_fields[:10]:
+                            logger.warning(f"   {field['chinese']} -> {field['english']}")
                     
                 except ImportError:
                     logger.warning("[飞书验证] 无法导入FIELD_EN_MAP用于验证")
