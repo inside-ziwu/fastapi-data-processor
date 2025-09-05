@@ -111,18 +111,26 @@ class FeishuWriterV3:
             
             # 构建标准化映射：处理空格和特殊字符
             def normalize_field_name(name: str) -> str:
-                """修复版标准化：处理所有已知的字符差异"""
+                """终极修复版：正确处理所有字符差异，不删除有用字符"""
                 import re
-                # 处理空格
+                
+                # 1. 处理空格
                 name = re.sub(r'\s+', '', name)
-                # 处理括号
-                name = name.replace('（', '(').replace('）', ')')
-                # 处理斜杠和分隔符：统一为/
-                name = name.replace('|', '/')
-                # 处理加号：统一为+
-                name = name.replace('➕', '+')
-                # 处理其他特殊字符
-                name = re.sub(r'[^\w\(\)\+/\-]', '', name)
+                
+                # 2. 字符标准化映射表 - 明确处理每个差异
+                char_mappings = {
+                    '（': '(', '）': ')',  # 括号
+                    '|': '/',              # 分隔符统一为斜杠  
+                    '➕': '+',             # 特殊加号
+                    '：': ':',             # 冒号
+                }
+                
+                for old_char, new_char in char_mappings.items():
+                    name = name.replace(old_char, new_char)
+                
+                # 3. 只删除真正无用的字符，保留/和+
+                name = re.sub(r'[^\w\(\)/\+:]', '', name)
+                
                 return name
             
             # 创建schema的标准化索引
