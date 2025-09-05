@@ -100,74 +100,69 @@ class FeishuWriterV3:
         if not schema:
             return {}
             
-        try:
-            from data_processor import FIELD_MAPPINGS
-            reverse_map = {}
+        # 统一映射处理：一对一和一对多都是同一种逻辑
+        from data_processor import FIELD_MAPPINGS
+        reverse_map = {}
+        
+        # 字符标准化函数
+        def normalize_field_name(name: str) -> str:
+            """标准化字段名，处理字符差异"""
+            import re
             
-            # 字符标准化函数
-            def normalize_field_name(name: str) -> str:
-                """标准化字段名，处理字符差异"""
-                import re
+            # 处理空格
+            name = re.sub(r'\s+', '', name)
+            
+            # 字符标准化映射
+            char_mappings = {
+                '（': '(', '）': ')',  # 括号
+                '|': '/',              # 分隔符统一
+                '➕': '+',             # 特殊加号
+                '：': ':',             # 冒号
+            }
+            
+            for old_char, new_char in char_mappings.items():
+                name = name.replace(old_char, new_char)
+            
+            # 删除无用字符，保留有用的
+            name = re.sub(r'[^\w\(\)/\+:]', '', name)
+            return name
+        
+        # 创建schema标准化索引
+        normalized_schema = {normalize_field_name(k): (k, v) for k, v in schema.items()}
+        
+        # 统一映射处理：一对一和一对多都是同一种逻辑
+        matched_count = 0
+        failed_mappings = []
+        
+        for english_field, chinese_list in FIELD_MAPPINGS.items():
+            for chinese_field in chinese_list:
+                normalized_cn = normalize_field_name(chinese_field)
                 
-                # 处理空格
-                name = re.sub(r'\s+', '', name)
-                
-                # 字符标准化映射
-                char_mappings = {
-                    '（': '(', '）': ')',  # 括号
-                    '|': '/',              # 分隔符统一
-                    '➕': '+',             # 特殊加号
-                    '：': ':',             # 冒号
-                }
-                
-                for old_char, new_char in char_mappings.items():
-                    name = name.replace(old_char, new_char)
-                
-                # 删除无用字符，保留有用的
-                name = re.sub(r'[^\w\(\)/\+:]', '', name)
-                return name
-            
-            # 创建schema标准化索引
-            normalized_schema = {normalize_field_name(k): (k, v) for k, v in schema.items()}
-            
-            # 统一映射处理：一对一和一对多都是同一种逻辑
-            matched_count = 0
-            failed_mappings = []
-            
-            for english_field, chinese_list in FIELD_MAPPINGS.items():
-                for chinese_field in chinese_list:
-                    normalized_cn = normalize_field_name(chinese_field)
-                    
-                    if normalized_cn in normalized_schema:
-                        original_cn, field_info = normalized_schema[normalized_cn]
-                        reverse_map[english_field] = field_info
-                        matched_count += 1
-                        logger.debug(f"[飞书] 映射: {english_field} -> {original_cn} -> {field_info['id']}")
-                    elif chinese_field in schema:
-                        reverse_map[english_field] = schema[chinese_field]
-                        matched_count += 1
-                        logger.debug(f"[飞书] 直接映射: {english_field} -> {chinese_field} -> {schema[chinese_field]['id']}")
-                    else:
-                        failed_mappings.append((chinese_field, english_field))
-                        logger.debug(f"[飞书] 未找到中文字段: {chinese_field}")
-            
-            # 诊断信息
-            schema_fields = set(schema.keys())
-            config_fields = set()
-            for chinese_list in FIELD_MAPPINGS.values():
-                config_fields.update(chinese_list)
-            
-            unmapped = schema_fields - config_fields
-            if unmapped:
-                logger.warning(f"[飞书] schema中未映射字段: {sorted(unmapped)}")
-            
-            logger.info(f"[飞书] 映射完成: 成功{matched_count}个, 失败{len(failed_mappings)}个")
-            return reverse_map
-            
-        except ImportError:
-            logger.warning("[飞书] 无法导入FIELD_MAPPINGS，降级到FIELD_EN_MAP")
-            # 降级处理 - 使用旧的FIELD_EN_MAP
-            return self._build_reverse_mapping_legacy(schema)
+                if normalized_cn in normalized_schema:
+                    original_cn, field_info = normalized_schema[normalized_cn]
+                    reverse_map[english_field] = field_info
+                    matched_count += 1
+                    logger.debug(f"[飞书] 映射: {english_field} -> {original_cn} -> {field_info['id']}")
+                elif chinese_field in schema:
+                    reverse_map[english_field] = schema[chinese_field]
+                    matched_count += 1
+                    logger.debug(f"[飞书] 直接映射: {english_field} -> {chinese_field} -> {schema[chinese_field]['id']}")
+                else:
+                    failed_mappings.append((chinese_field, english_field))
+                    logger.debug(f"[飞书] 未找到中文字段: {chinese_field}")
+        
+        # 诊断信息
+        schema_fields = set(schema.keys())
+        config_fields = set()
+        for chinese_list in FIELD_MAPPINGS.values():
+            config_fields.update(chinese_list)
+        
+        unmapped = schema_fields - config_fields
+        if unmapped:
+            logger.warning(f"[飞书] schema中未映射字段: {sorted(unmapped)}")
+        
+        logger.info(f"[飞书] 映射完成: 成功{matched_count}个, 失败{len(failed_mappings)}个")
+        return reverse_map
 
     def _convert_value_by_type(self, value: Any, field_info: Dict[str, Any]) -> Any:
         """根据字段类型转换值"""
@@ -232,49 +227,20 @@ class FeishuWriterV3:
 
     def _convert_record(self, record: Dict[str, Any], schema: Dict[str, Dict[str, Any]], 
                        reverse_mapping: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """将单条记录转换为飞书API需要的格式 - 通用映射逻辑"""
+        """将单条记录转换为飞书API需要的格式 - 统一映射逻辑"""
         converted = {}
         
-        # 从配置中获取一对多映射（如果存在）
-        one_to_many_config = {}
-        try:
-            from data_processor import FIELD_MAPPING_CONFIG
-            one_to_many_config = FIELD_MAPPING_CONFIG.get("one_to_many", {})
-        except (ImportError, AttributeError):
-            # 如果没有配置，使用默认的空配置
-            pass
-        
-        logger.info(f"[Linus诊断] record keys: {list(record.keys())}")
         for field_name, value in record.items():
             if value is None:  # None值直接跳过
                 continue
             
-            # 检查是否配置了一对多映射
-            if field_name in one_to_many_config:
-                # 一对多映射：一个英文值写入多个中文字段
-                target_cn_fields = one_to_many_config[field_name]
-                mapped_count = 0
-                
-                for cn_field in target_cn_fields:
-                    if cn_field in schema:
-                        field_id = schema[cn_field]['id']
-                        converted[field_id] = self._convert_value_by_type(value, schema[cn_field])
-                        mapped_count += 1
-                        logger.debug(f"[飞书] 一对多映射: {field_name} -> {cn_field} -> {field_id}")
-                
-                if mapped_count > 0:
-                    logger.info(f"[飞书] 一对多映射成功: {field_name} 映射到 {mapped_count} 个字段")
-                else:
-                    logger.warning(f"[飞书] 一对多映射失败: {field_name} 的目标字段都不在schema中")
-                    
+            # 统一映射：reverse_mapping已经包含了一对一和一对多的处理结果
+            field_info = reverse_mapping.get(field_name)
+            if field_info:  # 找到映射的字段
+                field_id = field_info["id"]
+                converted[field_id] = self._convert_value_by_type(value, field_info)
             else:
-                # 通用的一对一映射逻辑
-                field_info = reverse_mapping.get(field_name)
-                if field_info:  # 找到映射的字段
-                    field_id = field_info["id"]
-                    converted[field_id] = self._convert_value_by_type(value, field_info)
-                else:
-                    logger.debug(f"[飞书] 未找到映射: {field_name}")
+                logger.debug(f"[飞书] 未找到映射: {field_name}")
                 
         return converted
             
@@ -349,7 +315,7 @@ class FeishuWriterV3:
                     .table_id(self.table_id) \
                     .request_body(BatchCreateAppTableRecordRequestBody.builder()
                         .records(batch)
-                        .build())
+                        .build()) \
                     .build()
                 
                 try:
@@ -424,11 +390,17 @@ class FeishuWriterV3:
                 result["sample_mapping"] = dict(list(reverse_mapping.items())[:5])
                 
                 try:
-                    from data_processor import FIELD_EN_MAP
+                    from data_processor import FIELD_MAPPINGS
+                    
+                    # 创建反向映射用于验证 (Chinese -> English)
+                    chinese_to_english = {}
+                    for english_name, chinese_list in FIELD_MAPPINGS.items():
+                        for chinese_name in chinese_list:
+                            chinese_to_english[chinese_name] = english_name
                     
                     # 创建映射报告
                     mapping_report = []
-                    for cn_name, en_name in FIELD_EN_MAP.items():
+                    for cn_name, en_name in chinese_to_english.items():
                         if cn_name in schema:
                             field_info = schema[cn_name]
                             mapping_report.append({
@@ -458,7 +430,7 @@ class FeishuWriterV3:
                         logger.warning(f"飞书字段映射: {missing_count}/{len(mapping_report)} 字段缺失, 示例: {missing_examples}")
                     
                 except ImportError:
-                    logger.warning("无法导入FIELD_EN_MAP用于验证")
+                    logger.warning("无法导入FIELD_MAPPINGS用于验证")
                 
         except Exception as e:
             result["valid"] = False
