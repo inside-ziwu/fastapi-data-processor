@@ -27,7 +27,7 @@ class ExcelReader(BaseReader):
     """Reader for Excel files."""
 
     def read(self, path: str, sheet_name=None, **kwargs) -> pl.DataFrame:
-        """Read Excel file with consistent data types across backends."""
+        """Read Excel file using native type inference of the backend."""
         # Handle sheet selection - calamine uses sheet_id, openpyxl uses sheet_name
         if sheet_name is None:
             sheet_name = kwargs.get("sheet", 0)
@@ -47,45 +47,29 @@ class ExcelReader(BaseReader):
             raise ImportError("Neither fastexcel nor openpyxl is available for Excel reading")
 
     def _read_with_fastexcel(self, path: str, sheet_name=None, sheet_id=None, **kwargs) -> pl.DataFrame:
-        """Read Excel using fastexcel with consistent date handling."""
-        # Use calamine engine (polars default) with minimal config to avoid unsupported parameters
-        # Then force string conversion to match openpyxl behavior
-        try:
-            # Try calamine first (polars default)
-            if sheet_id is not None:
-                df = pl.read_excel(path, sheet_id=sheet_id, **kwargs)
-            elif sheet_name is not None:
-                df = pl.read_excel(path, sheet_name=sheet_name, **kwargs)
-            else:
-                df = pl.read_excel(path, **kwargs)
-        except Exception as e:
-            # If calamine fails, try without extra parameters
-            logger.warning(f"Calamine read failed: {e}, trying basic read")
-            if sheet_id is not None:
-                df = pl.read_excel(path, sheet_id=sheet_id)
-            elif sheet_name is not None:
-                df = pl.read_excel(path, sheet_name=sheet_name)
-            else:
-                df = pl.read_excel(path)
-        
-        # Force all columns to string to match openpyxl behavior - consistent API
-        # Calamine returns dict {sheet_name: DataFrame}, we need to handle both cases
+        """Read Excel via fastexcel (calamine) and preserve native types."""
+        if sheet_id is not None:
+            df = pl.read_excel(path, sheet_id=sheet_id, **kwargs)
+        elif sheet_name is not None:
+            df = pl.read_excel(path, sheet_name=sheet_name, **kwargs)
+        else:
+            df = pl.read_excel(path, **kwargs)
+
+        # polars may return a mapping when reading multiple sheets without selection
         if isinstance(df, dict):
-            # Return first sheet if multiple sheets returned
-            df = list(df.values())[0]
-        return df.select([pl.col(col).cast(pl.Utf8) for col in df.columns])
+            df = next(iter(df.values()))
+        return df
 
     def _read_with_openpyxl(self, path: str, sheet_name, **kwargs) -> pl.DataFrame:
-        """Read Excel using openpyxl with same date behavior as fastexcel."""
+        """Read Excel using openpyxl and preserve native types."""
         import pandas as pd
         
-        # Read with pandas + openpyxl, but disable date parsing to match fastexcel
+        # Delegate type inference to pandas/openpyxl without forcing string casts
         df_pandas = pd.read_excel(
-            path, 
-            sheet_name=sheet_name, 
-            engine='openpyxl',
-            dtype=str,  # Force all columns to string to match fastexcel behavior
-            keep_default_na=False  # Don't convert empty strings to NaN
+            path,
+            sheet_name=sheet_name,
+            engine="openpyxl",
+            **kwargs,
         )
         
         # Convert to polars
