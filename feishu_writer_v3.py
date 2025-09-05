@@ -238,21 +238,26 @@ class FeishuWriterV3:
 
     def _convert_record(self, record: Dict[str, Any], schema: Dict[str, Dict[str, Any]], 
                        reverse_mapping: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """将单条记录转换为飞书API需要的格式 - 支持一对多映射"""
+        """将单条记录转换为飞书API需要的格式 - 通用映射逻辑"""
         converted = {}
         
-        # 一对多映射配置：一个英文键 -> 多个中文字段
-        one_to_many_mappings = {
-            'paid_cpl': ['直播付费CPL', '付费CPL（车云店+区域）'],  # 一个值写入两个CPL字段
-        }
+        # 从配置中获取一对多映射（如果存在）
+        one_to_many_config = {}
+        try:
+            from data_processor import FIELD_MAPPING_CONFIG
+            one_to_many_config = FIELD_MAPPING_CONFIG.get("one_to_many", {})
+        except (ImportError, AttributeError):
+            # 如果没有配置，使用默认的空配置
+            pass
         
         for field_name, value in record.items():
             if value is None:  # None值直接跳过
                 continue
-                
-            # 检查是否是一对多映射
-            if field_name in one_to_many_mappings:
-                target_cn_fields = one_to_many_mappings[field_name]
+            
+            # 检查是否配置了一对多映射
+            if field_name in one_to_many_config:
+                # 一对多映射：一个英文值写入多个中文字段
+                target_cn_fields = one_to_many_config[field_name]
                 mapped_count = 0
                 
                 for cn_field in target_cn_fields:
@@ -268,7 +273,7 @@ class FeishuWriterV3:
                     logger.warning(f"[飞书] 一对多映射失败: {field_name} 的目标字段都不在schema中")
                     
             else:
-                # 正常的一对一映射
+                # 通用的一对一映射逻辑
                 field_info = reverse_mapping.get(field_name)
                 if field_info:  # 找到映射的字段
                     field_id = field_info["id"]
