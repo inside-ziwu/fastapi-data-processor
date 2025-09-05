@@ -28,7 +28,8 @@ class LeadsTransform(BaseTransform):
             s = (s or "")
             # 去除所有空白及零宽字符、NBSP
             s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\u00a0]+", "", s)
-            s = s.replace("（", "(").replace("）", ")")
+            s = s.replace("（", "(").replace("）", ")").replace("：", ":")
+            s = re.sub(r"[^\w\u4e00-\u9fa5:]+", "", s)
             return s.strip().lower()
 
         targets = {
