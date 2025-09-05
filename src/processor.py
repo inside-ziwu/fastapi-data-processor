@@ -183,12 +183,19 @@ class DataProcessor:
                         logger.warning(f"[spending probe] failed to read token {tok}: {e}")
 
                 if not frames:
-                    # fallback: no valid sheet matched, read first sheet
-                    logger.warning("[spending probe] no sheet matched; falling back to first sheet")
-                    df = reader_class().read(file_path)
+                    # fallback: defer to generic reader path
+                    logger.warning("[spending probe] no sheet matched; falling back to generic reader")
+                    df = None
                 else:
                     import pandas as pd  # ensure in scope
-                    df = pl.from_pandas(pd.concat(frames, ignore_index=True))
+                    pdf = pd.concat(frames, ignore_index=True)
+                    # Reduce to required columns to avoid mixed-object issues on convert
+                    required_cols = ["NSC CODE", "Date", "Spending(Net)"]
+                    present = [c for c in required_cols if c in pdf.columns]
+                    if present:
+                        logger.info(f"[spending probe] selecting columns for conversion: {present}")
+                        pdf = pdf[present]
+                    df = pl.from_pandas(pdf)
             else:
                 # Fallback to generic reader below
                 df = None
