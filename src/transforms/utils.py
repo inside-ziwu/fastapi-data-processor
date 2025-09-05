@@ -86,6 +86,19 @@ def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = 
             if candidate in df.columns:
                 df = df.rename({candidate: "date"})
                 break
+        # Fallback: normalized name match (handles zero-width/nbspace/fullwidth)
+        if "date" not in df.columns:
+            import re
+            def _norm(s: str) -> str:
+                s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\u00a0]+", "", s or "")
+                s = s.replace("（", "(").replace("）", ")")
+                return s.lower()
+            norm_map = {_norm(c): c for c in df.columns}
+            for candidate in date_candidates:
+                key = _norm(candidate)
+                if key in norm_map:
+                    df = df.rename({norm_map[key]: "date"})
+                    break
 
     if "date" not in df.columns:
         raise ValueError("No date column found")
@@ -124,6 +137,18 @@ def ensure_optional_date_column(
             if candidate in df.columns:
                 df = df.rename({candidate: "date"})
                 break
+        if "date" not in df.columns:
+            import re
+            def _norm(s: str) -> str:
+                s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\u00a0]+", "", s or "")
+                s = s.replace("（", "(").replace("）", ")")
+                return s.lower()
+            norm_map = {_norm(c): c for c in df.columns}
+            for candidate in date_candidates:
+                key = _norm(candidate)
+                if key in norm_map:
+                    df = df.rename({norm_map[key]: "date"})
+                    break
 
     if "date" in df.columns:
         dt = df["date"].dtype

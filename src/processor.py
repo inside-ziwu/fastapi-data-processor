@@ -135,12 +135,14 @@ class DataProcessor:
                 sheet_names_raw = self.config.get("spending_sheet_names")
             if sheet_names_raw:
                 import pandas as pd
+                logger.info(f"[spending probe] sheet_names_raw={sheet_names_raw} (type={type(sheet_names_raw).__name__})")
 
                 # Normalize input into a list of tokens (strings or ints)
                 if isinstance(sheet_names_raw, list):
                     tokens = sheet_names_raw
                 else:
                     tokens = [s.strip() for s in str(sheet_names_raw).replace("，", ",").split(",") if s.strip()]
+                logger.info(f"[spending probe] tokens={tokens}")
 
                 def _norm_name(s: str) -> str:
                     return (
@@ -152,33 +154,42 @@ class DataProcessor:
 
                 frames = []
                 xls = pd.ExcelFile(file_path, engine="openpyxl")
+                logger.info(f"[spending probe] available sheets={xls.sheet_names}")
                 norm_map = {_norm_name(name): name for name in xls.sheet_names}
 
                 for tok in tokens:
-                    # numeric index support
-                    if isinstance(tok, int) or (isinstance(tok, str) and tok.isdigit()):
-                        idx = int(tok)
-                        if 0 <= idx < len(xls.sheet_names):
-                            frames.append(pd.read_excel(xls, sheet_name=idx, engine="openpyxl"))
-                        continue
+                    try:
+                        # numeric index support
+                        if isinstance(tok, int) or (isinstance(tok, str) and tok.isdigit()):
+                            idx = int(tok)
+                            if 0 <= idx < len(xls.sheet_names):
+                                logger.info(f"[spending probe] reading by index: {idx}")
+                                frames.append(pd.read_excel(xls, sheet_name=idx, engine="openpyxl"))
+                            continue
 
-                    tnorm = _norm_name(str(tok))
-                    # direct normalized equality
-                    if tnorm in norm_map:
-                        frames.append(pd.read_excel(xls, sheet_name=norm_map[tnorm], engine="openpyxl"))
-                        continue
+                        tnorm = _norm_name(str(tok))
+                        # direct normalized equality
+                        if tnorm in norm_map:
+                            original = norm_map[tnorm]
+                            logger.info(f"[spending probe] reading by name: {original}")
+                            frames.append(pd.read_excel(xls, sheet_name=original, engine="openpyxl"))
+                            continue
 
-                    # substring fuzzy match as last resort
-                    matched = None
-                    for sn_norm, original in norm_map.items():
-                        if tnorm in sn_norm:
-                            matched = original
-                            break
-                    if matched:
-                        frames.append(pd.read_excel(xls, sheet_name=matched, engine="openpyxl"))
+                        # substring fuzzy match as last resort
+                        matched = None
+                        for sn_norm, original in norm_map.items():
+                            if tnorm in sn_norm:
+                                matched = original
+                                break
+                        if matched:
+                            logger.info(f"[spending probe] reading by fuzzy: {matched}")
+                            frames.append(pd.read_excel(xls, sheet_name=matched, engine="openpyxl"))
+                    except Exception as e:
+                        logger.warning(f"[spending probe] failed to read token {tok}: {e}")
 
                 if not frames:
                     # fallback: no valid sheet matched, read first sheet
+                    logger.warning("[spending probe] no sheet matched; falling back to first sheet")
                     df = reader_class().read(file_path)
                 else:
                     import pandas as pd  # ensure in scope
