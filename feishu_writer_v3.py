@@ -170,28 +170,81 @@ class FeishuWriterV3:
             logger.warning("[飞书] 无法导入FIELD_EN_MAP，使用空映射")
             return {}
 
-    def _process_value_by_type(self, value: Any, field_info: Dict[str, Any]) -> Any:
-        """根据字段类型处理值 - 只做类型转换，不做清洗"""
-        ui_type = field_info.get("ui_type", "")
+    def _convert_record(self, record: Dict[str, Any], schema: Dict[str, Dict[str, Any]], 
+                       reverse_mapping: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """将单条记录转换为飞书API需要的格式"""
+        converted = {}
         
-        # 此时value已经是干净数据，只需类型转换
-        if ui_type == "Text":
-            return str(value)
-        elif ui_type == "Number":
-            return float(value)
-        elif ui_type == "DateTime":
-            if isinstance(value, int):
-                return value
-            dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
-            return int(dt.timestamp() * 1000)
-        elif ui_type == "Checkbox":
-            return bool(value)
-        elif ui_type == "SingleSelect":
-            return {"id": str(value)}
-        elif ui_type == "MultiSelect":
-            return [{"id": str(v)} for v in value] if isinstance(value, list) else [{"id": str(value)}]
-        else:
-            return str(value)
+        for field_name, value in record.items():
+            if value is None:  # None值直接跳过
+                continue
+                
+            field_info = reverse_mapping.get(field_name)
+            if not field_info:  # 找不到映射的字段也跳过
+                continue
+                
+            field_id = field_info["id"]
+            ui_type = field_info.get("ui_type", "Text")
+            
+            try:
+                # 根据飞书字段类型进行严格转换
+                if ui_type == "Text":
+                    converted[field_id] = str(value)
+                    
+                elif ui_type == "Number":
+                    # 确保是数字类型
+                    if isinstance(value, (int, float)):
+                        converted[field_id] = float(value)
+                    elif isinstance(value, str):
+                        # 字符串转数字，失败则设为0
+                        try:
+                            converted[field_id] = float(value.strip().replace(',', ''))
+                        except (ValueError, AttributeError):
+                            converted[field_id] = 0.0
+                    else:
+                        converted[field_id] = 0.0
+                        
+                elif ui_type == "DateTime":
+                    # 确保是Unix时间戳（毫秒）
+                    if isinstance(value, int):
+                        converted[field_id] = value
+                    elif isinstance(value, str):
+                        # 解析ISO格式日期字符串
+                        try:
+                            dt_str = value.replace('Z', '+00:00')
+                            dt = datetime.fromisoformat(dt_str)
+                            converted[field_id] = int(dt.timestamp() * 1000)
+                        except (ValueError, AttributeError):
+                            # 如果解析失败，使用当前时间
+                            converted[field_id] = int(datetime.now().timestamp() * 1000)
+                    else:
+                        # 其他类型使用当前时间
+                        converted[field_id] = int(datetime.now().timestamp() * 1000)
+                        
+                elif ui_type == "Checkbox":
+                    converted[field_id] = bool(value)
+                    
+                elif ui_type == "SingleSelect":
+                    # 单选需要{"id": "value"}格式
+                    converted[field_id] = {"id": str(value)}
+                    
+                elif ui_type == "MultiSelect":
+                    # 多选需要[{"id": "value"}]格式
+                    if isinstance(value, list):
+                        converted[field_id] = [{"id": str(v)} for v in value if v is not None]
+                    else:
+                        converted[field_id] = [{"id": str(value)}]
+                        
+                else:
+                    # 默认按文本处理
+                    converted[field_id] = str(value)
+                    
+            except Exception as e:
+                # 转换失败时记录错误并使用默认值
+                logger.warning(f"字段转换失败: {field_name}={value}[{type(value)}] -> {ui_type}: {e}")
+                converted[field_id] = str(value) if ui_type != "Number" else 0.0
+                
+        return converted
             
     def _has_meaningful_value(self, v: Any) -> bool:
         """True if value is not None and not empty string after strip; 0 is meaningful."""
@@ -227,28 +280,29 @@ class FeishuWriterV3:
             table_records = []
             
             for record in records:
-                fields_data = {}
+                # 使用新的转换函数处理整条记录
+                converted_fields = self._convert_record(record, schema, reverse_mapping)
                 
-                for field_name, value in record.items():
-                    if value is None:  # 干净数据，直接跳过None
-                        continue
-                        
-                    field_info = reverse_mapping.get(field_name)
-                    if field_info:
-                        processed_value = self._process_value_by_type(value, field_info)
-                        if processed_value is not None:
-                            fields_data[field_info["id"]] = processed_value
-                
-                if fields_data:  # 只有有效数据才写入
+                if converted_fields:  # 只有有效数据才写入
                     table_records.append(
                         AppTableRecord.builder()
-                        .fields(fields_data)
+                        .fields(converted_fields)
                         .build()
                     )
                     
             if not table_records:
                 logger.warning("[飞书] 没有有效记录可以写入")
                 return False
+                
+            # 写入前验证：检查第一条记录的数据类型
+            if table_records:
+                first_record = table_records[0]
+                if hasattr(first_record, '_fields') and first_record._fields:
+                    logger.info(f"[飞书] 准备写入 {len(table_records)} 条记录，第一条包含 {len(first_record._fields)} 个字段")
+                    # 只显示前3个字段的预览
+                    preview_fields = list(first_record._fields.items())[:3]
+                    for field_id, value in preview_fields:
+                        logger.debug(f"[飞书] 字段预览: {field_id}={value}[{type(value).__name__}]")
                 
             # 分批处理
             batch_size = 500
