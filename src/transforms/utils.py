@@ -102,7 +102,7 @@ def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = 
                     break
 
     if "date" not in df.columns:
-        raise ValueError("No date column found")
+        raise ValueError(f"No date column found. Available: {df.columns}")
 
     # Normalize dtype: always end up with pl.Date for joins to match
     dt = df["date"].dtype
