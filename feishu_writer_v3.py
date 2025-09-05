@@ -96,31 +96,26 @@ class FeishuWriterV3:
             return {}
             
     def _build_reverse_mapping(self, schema: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-        """构建英文到中文的反向映射"""
+        """构建英文到中文的反向映射 - 统一处理一对一和一对多"""
         if not schema:
             return {}
             
-        # 从data_processor.py导入映射表
         try:
-            from data_processor import FIELD_EN_MAP
+            from data_processor import FIELD_MAPPINGS
             reverse_map = {}
             
-            # 调试信息：显示schema中的字段名
-            logger.info(f"[飞书] Schema字段: {list(schema.keys())[:10]}...")
-            logger.info(f"[飞书] FIELD_EN_MAP: {list(FIELD_EN_MAP.items())[:5]}...")
-            
-            # 构建标准化映射：处理空格和特殊字符
+            # 字符标准化函数
             def normalize_field_name(name: str) -> str:
-                """终极修复版：正确处理所有字符差异，不删除有用字符"""
+                """标准化字段名，处理字符差异"""
                 import re
                 
-                # 1. 处理空格
+                # 处理空格
                 name = re.sub(r'\s+', '', name)
                 
-                # 2. 字符标准化映射表 - 明确处理每个差异
+                # 字符标准化映射
                 char_mappings = {
                     '（': '(', '）': ')',  # 括号
-                    '|': '/',              # 分隔符统一为斜杠  
+                    '|': '/',              # 分隔符统一
                     '➕': '+',             # 特殊加号
                     '：': ':',             # 冒号
                 }
@@ -128,86 +123,51 @@ class FeishuWriterV3:
                 for old_char, new_char in char_mappings.items():
                     name = name.replace(old_char, new_char)
                 
-                # 3. 只删除真正无用的字符，保留/和+
+                # 删除无用字符，保留有用的
                 name = re.sub(r'[^\w\(\)/\+:]', '', name)
-                
                 return name
             
-            # 创建schema的标准化索引
+            # 创建schema标准化索引
             normalized_schema = {normalize_field_name(k): (k, v) for k, v in schema.items()}
             
-            # 创建反向映射：英文键 -> 中文字段信息
+            # 统一映射处理：一对一和一对多都是同一种逻辑
             matched_count = 0
             failed_mappings = []
             
-            # 反向一对多映射配置：多个中文字段 -> 同一个英文
-            reverse_one_to_many = {
-                "直播付费CPL": "paid_cpl",
-                "付费CPL（车云店+区域）": "paid_cpl"
-            }
-            
-            # 处理反向一对多映射
-            for cn_name in reverse_one_to_many.keys():
-                normalized_cn = normalize_field_name(cn_name)
-                en_name = reverse_one_to_many[cn_name]
-                
-                if normalized_cn in normalized_schema:
-                    original_cn, field_info = normalized_schema[normalized_cn]
-                    reverse_map[en_name] = field_info  # 两个中文都映射到同一个英文
-                    matched_count += 1
-                    logger.info(f"[飞书] 反向一对多映射: {cn_name} -> {en_name} -> {field_info['id']}")
-                elif cn_name in schema:
-                    reverse_map[en_name] = schema[cn_name]
-                    matched_count += 1
-                    logger.info(f"[飞书] 反向一对多直接匹配: {cn_name} -> {en_name}")
-            
-            # 处理正常的一对一映射
-            for cn_name, en_name in FIELD_EN_MAP.items():
-                # 跳过已经在反向一对多中处理过的字段
-                if cn_name in reverse_one_to_many:
-                    continue
+            for english_field, chinese_list in FIELD_MAPPINGS.items():
+                for chinese_field in chinese_list:
+                    normalized_cn = normalize_field_name(chinese_field)
                     
-                normalized_cn = normalize_field_name(cn_name)
-                
-                if normalized_cn in normalized_schema:
-                    original_cn, field_info = normalized_schema[normalized_cn]
-                    reverse_map[en_name] = field_info
-                    matched_count += 1
-                    logger.debug(f"[飞书] 一对一映射: {en_name} -> {original_cn} -> {field_info['id']}")
-                elif cn_name in schema:
-                    # 直接匹配（兼容旧格式）
-                    reverse_map[en_name] = schema[cn_name]
-                    matched_count += 1
-                    logger.debug(f"[飞书] 一对一直接匹配: {en_name} -> {cn_name} -> {schema[cn_name]['id']}")
-                else:
-                    failed_mappings.append((cn_name, en_name))
-                    logger.debug(f"[飞书] 未找到中文字段: {cn_name} (标准化: {normalized_cn})")
+                    if normalized_cn in normalized_schema:
+                        original_cn, field_info = normalized_schema[normalized_cn]
+                        reverse_map[english_field] = field_info
+                        matched_count += 1
+                        logger.debug(f"[飞书] 映射: {english_field} -> {original_cn} -> {field_info['id']}")
+                    elif chinese_field in schema:
+                        reverse_map[english_field] = schema[chinese_field]
+                        matched_count += 1
+                        logger.debug(f"[飞书] 直接映射: {english_field} -> {chinese_field} -> {schema[chinese_field]['id']}")
+                    else:
+                        failed_mappings.append((chinese_field, english_field))
+                        logger.debug(f"[飞书] 未找到中文字段: {chinese_field}")
             
-            # **关键诊断：找出schema中未映射的字段**
-            schema_chinese = set(schema.keys())
-            mapping_chinese = set(FIELD_EN_MAP.keys())
-            unmapped_schema_fields = schema_chinese - mapping_chinese
+            # 诊断信息
+            schema_fields = set(schema.keys())
+            config_fields = set()
+            for chinese_list in FIELD_MAPPINGS.values():
+                config_fields.update(chinese_list)
             
-            # 报告完整映射结果
-            logger.info(f"[飞书] 映射统计：飞书schema共{len(schema_chinese)}个字段，映射表共{len(mapping_chinese)}个字段")
-            logger.info(f"[飞书] 成功匹配：{matched_count}个字段，映射失败：{len(failed_mappings)}个字段")
+            unmapped = schema_fields - config_fields
+            if unmapped:
+                logger.warning(f"[飞书] schema中未映射字段: {sorted(unmapped)}")
             
-            if unmapped_schema_fields:
-                logger.warning(f"[飞书] 飞书schema中未映射的字段（共{len(unmapped_schema_fields)}个）: {sorted(unmapped_schema_fields)}")
-            
-            if failed_mappings:
-                logger.warning(f"[飞书] 映射表中未找到的字段（共{len(failed_mappings)}个）: {failed_mappings}")
-            
-            # 显示前10个成功映射作为样本
-            if reverse_map:
-                sample = dict(list(reverse_map.items())[:10])
-                logger.info(f"[飞书] 成功映射示例: {sample}")
-            
+            logger.info(f"[飞书] 映射完成: 成功{matched_count}个, 失败{len(failed_mappings)}个")
             return reverse_map
             
         except ImportError:
-            logger.warning("[飞书] 无法导入FIELD_EN_MAP，使用空映射")
-            return {}
+            logger.warning("[飞书] 无法导入FIELD_MAPPINGS，降级到FIELD_EN_MAP")
+            # 降级处理 - 使用旧的FIELD_EN_MAP
+            return self._build_reverse_mapping_legacy(schema)
 
     def _convert_value_by_type(self, value: Any, field_info: Dict[str, Any]) -> Any:
         """根据字段类型转换值"""
