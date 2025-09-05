@@ -1,6 +1,7 @@
 """Leads data transformation."""
 
 import polars as pl
+import logging
 from typing import Any, Dict, List, Optional
 from .base import BaseTransform
 from .utils import _field_match
@@ -22,6 +23,7 @@ class LeadsTransform(BaseTransform):
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
         # 严格映射：仅接受这三列，但允许列名存在空格/全角差异（规范化后精确匹配）
         import re
+        logger = logging.getLogger(__name__)
         def _norm(s: str) -> str:
             s = (s or "")
             # 去除所有空白及零宽字符、NBSP
@@ -36,6 +38,12 @@ class LeadsTransform(BaseTransform):
         }
 
         norm_cols = {_norm(c): c for c in df.columns}
+        # Probe: log original and normalized headers for diagnosis
+        try:
+            logger.warning(f"[leads probe] original columns: {df.columns}")
+            logger.warning(f"[leads probe] normalized keys: {list(norm_cols.keys())}")
+        except Exception:
+            pass
         rename_map = {}
         missing = []
         for raw_name, out_name in targets.items():
@@ -46,6 +54,13 @@ class LeadsTransform(BaseTransform):
                 missing.append(raw_name)
 
         if missing:
+            # extra probe: show nearest matches by substring
+            nearest = {}
+            for want in ["主机厂经销商id列表", "留资日期", "直播间表单提交商机量(去重)"]:
+                wkey = _norm(want)
+                hits = [orig for key, orig in norm_cols.items() if wkey in key or key in wkey]
+                nearest[want] = hits
+            logger.warning(f"[leads probe] nearest candidates: {nearest}")
             raise ValueError(f"leads 缺少必要列: {missing}")
 
         df = df.rename(rename_map)

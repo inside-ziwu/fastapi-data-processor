@@ -207,7 +207,6 @@ class DataProcessor:
                 if ("date" not in df.columns) and ("日期" not in df.columns):
                     from pathlib import Path
                     fname = Path(file_path).stem
-                    import polars as pl
                     df = df.with_columns(pl.lit(fname).alias("日期"))
         if transform:
             df = transform.transform(df)
