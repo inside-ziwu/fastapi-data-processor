@@ -111,17 +111,17 @@ class FeishuWriterV3:
             
             # 构建标准化映射：处理空格和特殊字符
             def normalize_field_name(name: str) -> str:
-                """更智能的标准化：处理所有可能的变体"""
+                """修复版标准化：处理所有已知的字符差异"""
                 import re
                 # 处理空格
                 name = re.sub(r'\s+', '', name)
                 # 处理括号
                 name = name.replace('（', '(').replace('）', ')')
-                # 处理斜杠差异：| -> /
+                # 处理斜杠和分隔符：统一为/
                 name = name.replace('|', '/')
-                # 处理加号差异：➕ -> +
+                # 处理加号：统一为+
                 name = name.replace('➕', '+')
-                # 处理特殊字符
+                # 处理其他特殊字符
                 name = re.sub(r'[^\w\(\)\+/\-]', '', name)
                 return name
             
