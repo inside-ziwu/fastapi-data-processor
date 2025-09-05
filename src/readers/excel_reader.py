@@ -79,17 +79,19 @@ class ExcelReader(BaseReader):
         """Read Excel using openpyxl with same date behavior as fastexcel."""
         import pandas as pd
         
-        # Read with pandas + openpyxl, but disable date parsing to match fastexcel
+        # Read with pandas + openpyxl, disable date parsing and get raw data
         df_pandas = pd.read_excel(
             path, 
             sheet_name=sheet_name, 
             engine='openpyxl',
-            dtype=str,  # Force all columns to string to match fastexcel behavior
             keep_default_na=False  # Don't convert empty strings to NaN
         )
         
-        # Convert to polars
-        return pl.from_pandas(df_pandas)
+        # Convert to polars first
+        df_polars = pl.from_pandas(df_pandas)
+        
+        # Then force all columns to string using polars cast - same mechanism as calamine path
+        return df_polars.select([pl.col(col).cast(pl.Utf8) for col in df_polars.columns])
 
     def validate_path(self, path: str) -> bool:
         """Validate Excel file path."""
