@@ -182,6 +182,14 @@ FIELD_EN_MAP = {
     "T-1月私信转化率=留资/进私": "private_conversion_rate_t_minus_1"
 }
 
+# 字段映射配置（支持一对一和一对多映射）
+FIELD_MAPPING_CONFIG = {
+    "mappings": FIELD_EN_MAP,  # 复用现有映射
+    "one_to_many": {
+        "paid_cpl": ["直播付费CPL", "付费CPL（车云店+区域）"]
+    }
+}
+
 def normalize_symbol(s: str) -> str:
     return (
         s.replace("（", "(")
