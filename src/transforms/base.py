@@ -7,6 +7,7 @@ from .utils import (
     rename_columns,
     normalize_nsc_code,
     ensure_date_column,
+    ensure_optional_date_column,
     cast_numeric_columns,
     aggregate_data,
 )
@@ -54,6 +55,10 @@ class BaseTransform(ABC):
     def _ensure_date_column(self, df: pl.DataFrame, date_candidates: Optional[List[str]] = None) -> pl.DataFrame:
         """Ensure date column exists and is properly formatted."""
         return ensure_date_column(df, date_candidates)
+    
+    def _ensure_optional_date_column(self, df: pl.DataFrame, date_candidates: Optional[List[str]] = None) -> pl.DataFrame:
+        """Ensure date column if present (do not raise when missing)."""
+        return ensure_optional_date_column(df, date_candidates)
     
     def _cast_numeric_columns(self, df: pl.DataFrame, columns: List[str]) -> pl.DataFrame:
         """Cast specified columns to numeric types."""
