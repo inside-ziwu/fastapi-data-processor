@@ -333,7 +333,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         except Exception as e:
             logger.error(f"Settlement computation failed: {e}")
 
-        # 3c. Clean the dataframe - 彻底清理所有null值
+        # 3c. Clean the dataframe - 彻底清理所有null值（跳过日期/时间类型）
         for col_name in result_df.columns:
             col_type = result_df[col_name].dtype
             if col_type in [pl.Float32, pl.Float64]:
@@ -354,6 +354,9 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 result_df = result_df.with_columns(
                     pl.col(col_name).fill_null("").alias(col_name)
                 )
+            elif col_type in [pl.Date, pl.Datetime, pl.Time]:
+                # 日期/时间列不做数值填充，保持原状
+                continue
             else:
                 # 其他类型统一处理
                 result_df = result_df.with_columns(

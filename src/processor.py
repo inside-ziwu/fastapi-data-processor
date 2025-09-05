@@ -88,6 +88,9 @@ class DataProcessor:
         self, source_name: str, file_path: str
     ) -> Optional[pl.DataFrame]:
         """Process a single data source."""
+        # 参数健壮性：路径必须是字符串
+        if not isinstance(file_path, str):
+            raise ValueError(f"Invalid path for {source_name}: expected string path, got {type(file_path).__name__}")
         # Get appropriate transform first, so we can optimize reading (e.g., CSV column pruning)
         transform = self._get_transform_for_source(source_name)
 
@@ -105,9 +108,10 @@ class DataProcessor:
             sheets = pd.read_excel(file_path, sheet_name=None, engine="openpyxl")
             frames = []
             for sheet_name, pdf in sheets.items():
-                # 按需求：新增一列 '日期' = sheet 名称
+                # 按需求：若无'日期'，新增一列 '日期' = sheet 名称
                 pdf = pdf.copy()
-                pdf["日期"] = str(sheet_name)
+                if "日期" not in pdf.columns:
+                    pdf["日期"] = str(sheet_name)
                 frames.append(pdf)
             if not frames:
                 return pl.DataFrame()
@@ -149,6 +153,14 @@ class DataProcessor:
                 logger.warning(f"CSV subset inference failed for {source_name}: {e}. Reading full file.")
 
             df = reader.read(file_path, **read_kwargs)
+
+            # 对 message 的 CSV 与 Excel 保持一致：若无 '日期'，用文件名填充
+            if transform and transform.__class__.__name__.lower().startswith("message"):
+                if ("date" not in df.columns) and ("日期" not in df.columns):
+                    from pathlib import Path
+                    fname = Path(file_path).stem
+                    import polars as pl
+                    df = df.with_columns(pl.lit(fname).alias("日期"))
         if transform:
             df = transform.transform(df)
 

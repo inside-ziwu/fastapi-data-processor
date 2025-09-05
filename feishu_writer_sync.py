@@ -8,6 +8,7 @@ import logging
 import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ try:
     from lark_oapi.api.bitable.v1 import *
     SDK_AVAILABLE = True
 except ImportError as e:
-    SDK_AVAILABLE = False
+SDK_AVAILABLE = False
     logger.warning(
         f"飞书SDK导入失败，Feishu功能将不可用。错误: {e}。安装: pip install lark-oapi"
     )
@@ -65,6 +66,32 @@ class FeishuWriterSync:
         ):
             self.enabled = False
             logger.warning("[飞书] 配置不完整，写入功能已禁用。")
+
+    # ---- Module-level utility: normalize field names ----
+
+def _norm_field_name(name: str) -> str:
+    """标准化字段名，处理空格、全角/半角差异和特殊符号，对比用。
+
+    - 全角括号（）、竖线｜、斜杠／ 转半角
+    - 竖线统一为斜杠 /
+    - 特殊加号➕ 与全角冒号：替换
+    - 去空白，剔除非 [\w()/+:] 的字符
+    """
+    if name is None:
+        return ""
+    s = re.sub(r"\s+", "", str(name))
+    table = str.maketrans({
+        "（": "(",
+        "）": ")",
+        "|": "/",
+        "｜": "/",
+        "／": "/",
+        "➕": "+",
+        "：": ":",
+    })
+    s = s.translate(table)
+    s = re.sub(r"[^\w\(\)/+:]", "", s)
+    return s
 
     def get_table_schema(self) -> Dict[str, Dict[str, Any]]:
         """获取表格的字段schema - 同步版本"""
@@ -134,35 +161,9 @@ class FeishuWriterSync:
 
         reverse_map = {}
 
-        # 字符标准化函数
-        def normalize_field_name(name: str) -> str:
-            """标准化字段名，处理字符差异"""
-            import re
-
-            # 处理空格
-            name = re.sub(r"\s+", "", name)
-
-            # 字符标准化映射
-            char_mappings = {
-                "（": "(",
-                "）": ")",  # 括号
-                "|": "/",  # 分隔符统一（半角竖线）
-                "｜": "/",  # 分隔符统一（全角竖线）
-                "／": "/",  # 全角斜杠 -> 半角斜杠
-                "➕": "+",  # 特殊加号
-                "：": ":",  # 冒号
-            }
-
-            for old_char, new_char in char_mappings.items():
-                name = name.replace(old_char, new_char)
-
-            # 删除无用字符，保留有用的
-            name = re.sub(r"[^\w\(\)/+:]", "", name)
-            return name
-
         # 创建schema标准化索引
         normalized_schema = {
-            normalize_field_name(k): (k, v) for k, v in schema.items()
+            _norm_field_name(k): (k, v) for k, v in schema.items()
         }
 
         # 统一映射处理：一对一和一对多都是同一种逻辑
@@ -171,7 +172,7 @@ class FeishuWriterSync:
 
         for english_field, chinese_list in FIELD_MAPPINGS.items():
             for chinese_field in chinese_list:
-                normalized_cn = normalize_field_name(chinese_field)
+                normalized_cn = _norm_field_name(chinese_field)
 
                 if normalized_cn in normalized_schema:
                     original_cn, field_info = normalized_schema[normalized_cn]
@@ -280,23 +281,7 @@ class FeishuWriterSync:
         converted = {}
 
         # 预先构建“标准化后的schema索引”用于回退匹配，避免在循环中重复构建
-        def _norm(s: str) -> str:
-            import re
-            s = re.sub(r"\s+", "", s)
-            table = str.maketrans({
-                "（": "(",
-                "）": ")",
-                "|": "/",
-                "｜": "/",
-                "／": "/",
-                "➕": "+",
-                "：": ":",
-            })
-            s = s.translate(table)
-            s = re.sub(r"[^\w\(\)/+:]", "", s)
-            return s
-
-        normalized_schema = { _norm(k): k for k in schema.keys() }
+        normalized_schema = { _norm_field_name(k): k for k in schema.keys() }
 
         for field_name, value in record.items():
             if value is None:  # None值直接跳过
@@ -310,7 +295,7 @@ class FeishuWriterSync:
                     field_info = schema[field_name]
                 else:
                     # 回退2：使用预构建的标准化索引匹配
-                    norm = _norm(field_name)
+                    norm = _norm_field_name(field_name)
                     match = normalized_schema.get(norm)
                     if match:
                         field_info = schema[match]

@@ -7,8 +7,8 @@ from typing import Dict, List, Any, Optional
 def rename_columns(df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
     """Rename columns based on mapping with fuzzy matching.
 
-    保持“笨”且可预测：仅按提供的映射做模糊重命名；不做任何业务耦合的猜测。
-    重命名后若仍缺少关键键 `NSC_CODE`，抛出明确错误，强迫上层 Transform 明确其来源。
+    保持“笨”且可预测：仅按提供的映射做模糊重命名；不做任何业务耦合的校验。
+    关键列的存在性应由调用该函数的 Transform 自行保证。
     """
     rename_map = {}
     for src_col, expected_col in mapping.items():
@@ -20,12 +20,6 @@ def rename_columns(df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
 
     if rename_map:
         df = df.rename(rename_map)
-
-    # Validate NSC_CODE exists after renaming
-    if "NSC_CODE" not in df.columns:
-        raise ValueError(
-            f"NSC_CODE column not found after renaming. Available: {df.columns}"
-        )
 
     return df
 
