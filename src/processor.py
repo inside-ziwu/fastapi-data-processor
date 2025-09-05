@@ -57,45 +57,135 @@ class DataProcessor:
         Returns:
             Unified DataFrame with all data joined by NSC_CODE and date
         """
-        # Step 1: Process files one by one to avoid memory accumulation
-        processed_files = []
-        
+        # Step 1: Extraction-only processing for each source to avoid early aggregation
+        processed_files: list[tuple[str, pl.DataFrame]] = []
+
         for source_name, file_path in file_paths.items():
             try:
                 df = self._process_single_source(source_name, file_path)
                 if df is not None:
-                    # Process immediately and add to list, don't keep in memory
+                    # Keep extracted dataframe for later aggregation phase
                     processed_files.append((source_name, df))
                     logger.info(f"Processed {source_name}: {df.shape[0]} rows, {df.shape[1]} columns")
             except Exception as e:
                 logger.warning(f"Failed to process {source_name}: {e}")
                 continue
 
-        # Step 2: Stream merge to avoid memory accumulation
         if not processed_files:
             return pl.DataFrame()
 
-        return self._stream_merge_data_sources(processed_files)
+        # Step 2: Aggregate each non-dimension source by NSC_CODE(+date) as specified
+        aggregated = self._aggregate_sources(processed_files)
+
+        # Step 3: Stream merge aggregated sources; ensure account_base last
+        merged = self._stream_merge_data_sources(aggregated)
+
+        # Step 4: Finalize wide table (month/day, period tags, effective days, fill nulls)
+        finalized = self._finalize_wide_table(merged)
+        return finalized
 
     def _process_single_source(
         self, source_name: str, file_path: str
     ) -> Optional[pl.DataFrame]:
         """Process a single data source."""
+        # Get appropriate transform first, so we can optimize reading (e.g., CSV column pruning)
+        transform = self._get_transform_for_source(source_name)
+
         # Auto-detect reader
         reader_class = self.reader_registry.auto_detect_reader(file_path)
         if not reader_class:
             raise ValueError(f"No reader found for {file_path}")
 
-        # Read data
-        reader = reader_class()
-        df = reader.read(file_path)
+        # Special handling: message Excel wants merge-all-sheets with a '日期' column = sheet name
+        name_norm = (source_name or "").lower()
+        is_excel = file_path.lower().endswith((".xlsx", ".xls"))
+        if transform and transform.__class__.__name__.lower().startswith("message") and is_excel:
+            import pandas as pd
+            # read all sheets
+            sheets = pd.read_excel(file_path, sheet_name=None, engine="openpyxl")
+            frames = []
+            for sheet_name, pdf in sheets.items():
+                # 按需求：新增一列 '日期' = sheet 名称
+                pdf = pdf.copy()
+                pdf["日期"] = str(sheet_name)
+                frames.append(pdf)
+            if not frames:
+                return pl.DataFrame()
+            df = pl.from_pandas(pd.concat(frames, ignore_index=True))
+        # Special handling: spending Excel may have multiple specific sheets to merge
+        elif transform and transform.__class__.__name__.lower().startswith("spending") and is_excel:
+            sheet_names_raw = None
+            if isinstance(self.config, dict):
+                sheet_names_raw = self.config.get("spending_sheet_names")
+            if sheet_names_raw:
+                import pandas as pd
+                parts = [s.strip() for s in str(sheet_names_raw).replace("，", ",").split(",") if s.strip()]
+                frames = []
+                xls = pd.ExcelFile(file_path, engine="openpyxl")
+                for sn in parts:
+                    if sn in xls.sheet_names:
+                        frames.append(pd.read_excel(xls, sheet_name=sn, engine="openpyxl"))
+                if not frames:
+                    # fallback: no valid sheet matched, read first sheet
+                    df = reader_class().read(file_path)
+                else:
+                    import pandas as pd  # ensure in scope
+                    df = pl.from_pandas(pd.concat(frames, ignore_index=True))
+            else:
+                df = reader_class().read(file_path)
+        else:
+            # Read data (optimize CSV for large files by selecting only needed columns)
+            reader = reader_class()
 
-        # Get appropriate transform
-        transform = self._get_transform_for_source(source_name)
+            read_kwargs: dict[str, Any] = {}
+            try:
+                if file_path.lower().endswith(".csv") and getattr(transform, "mapping", None):
+                    desired_source_fields = list(transform.mapping.keys())
+                    subset_cols = self._infer_csv_subset_columns(file_path, desired_source_fields)
+                    if subset_cols:
+                        read_kwargs["columns"] = subset_cols
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.warning(f"CSV subset inference failed for {source_name}: {e}. Reading full file.")
+
+            df = reader.read(file_path, **read_kwargs)
         if transform:
             df = transform.transform(df)
 
         return df
+
+    def _infer_csv_subset_columns(self, path: str, desired_fields: list[str]) -> list[str]:
+        """Read CSV header only and infer a minimal subset of columns to load.
+
+        Uses the same fuzzy rule as transforms.utils._field_match to map desired source
+        fields to actual header names, avoiding full-file load for wide CSVs.
+        """
+        import csv
+        from .transforms.utils import _field_match
+
+        # Read a small sample to sniff dialect
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            sample = f.read(8192)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample)
+            except Exception:
+                dialect = csv.excel
+            reader = csv.reader(f, dialect)
+            header = next(reader)
+
+        actual_cols = list(header)
+        subset: list[str] = []
+        for want in desired_fields:
+            for col in actual_cols:
+                if _field_match(want, col):
+                    subset.append(col)
+                    break
+
+        # Deduplicate while preserving order
+        seen = set()
+        subset_unique = [c for c in subset if not (c in seen or seen.add(c))]
+        return subset_unique
 
     def _get_transform_for_source(
         self, source_name: str
@@ -134,9 +224,18 @@ class DataProcessor:
             return processed_files[0][1]
         
         # Stream merge: join files one by one to minimize memory usage
-        result_df = processed_files[0][1]
-        
-        for source_name, df in processed_files[1:]:
+        # Ensure account_base is merged at the very end (by NSC_CODE only)
+        def is_account_base(name: str) -> bool:
+            n = (name or "").lower()
+            return "account_base" in n or n == "accountbase" or n.endswith("_base")
+
+        ordered = [item for item in processed_files if not is_account_base(item[0])] + [
+            item for item in processed_files if is_account_base(item[0])
+        ]
+
+        result_df = ordered[0][1]
+
+        for source_name, df in ordered[1:]:
             try:
                 # Use how='left' to preserve all rows from first file
                 result_df = self._safe_join(result_df, df, source_name)
@@ -148,22 +247,138 @@ class DataProcessor:
                 
         return result_df
 
-    def _merge_data_sources(
-        self, data_sources: Dict[str, pl.DataFrame]
-    ) -> pl.DataFrame:
-        """Merge all data sources into unified DataFrame."""
-        if not data_sources:
-            return pl.DataFrame()
+    def _finalize_wide_table(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Add month/day fields, T/T-1 tagging, effective day counts, and fill nulls.
 
-        # Start with first data source
-        result = list(data_sources.values())[0]
+        - period tagging: largest month -> 'T', second largest -> 'T-1'. Others left empty.
+        - effective days computed per NSC_CODE within T and T-1 months as (max(day)-min(day)+1).
+        - numeric nulls filled with 0 to satisfy "merge missing default 0" requirement.
+        """
+        if df.is_empty() or ("date" not in df.columns):
+            # Still fill numeric nulls for consistency
+            return self._fill_numeric_nulls(df)
 
-        # Join with remaining sources
-        for source_name, df in list(data_sources.items())[1:]:
-            result = self._safe_join(result, df, source_name)
+        # month/day columns
+        df = df.with_columns(
+            pl.col("date").dt.month().alias("month"),
+            pl.col("date").dt.day().alias("day"),
+        )
 
-        # Apply final analysis computations
-        return self.analysis_engine.apply_computations(result)
+        # Determine T and T-1 months globally
+        months = (
+            df.select(pl.col("month").drop_nans().drop_nulls().cast(pl.Int64))
+            .unique()
+            .sort("month")
+            .to_series()
+            .to_list()
+        )
+        t_month = max(months) if months else None
+        t_1_month = sorted(months)[-2] if months and len(months) >= 2 else None
+
+        # Tag period
+        if t_month is not None:
+            df = df.with_columns(
+                pl.when(pl.col("month") == pl.lit(t_month))
+                .then(pl.lit("T"))
+                .when((t_1_month is not None) & (pl.col("month") == pl.lit(t_1_month)))
+                .then(pl.lit("T-1"))
+                .otherwise(pl.lit(None))
+                .alias("period")
+            )
+
+        # Compute effective days per NSC_CODE for T and T-1
+        eff_t = None
+        eff_t1 = None
+        if t_month is not None:
+            eff_t = (
+                df.filter(pl.col("month") == pl.lit(t_month))
+                .group_by(["NSC_CODE"])
+                .agg((pl.max("day") - pl.min("day") + 1).alias("T_effective_days"))
+            )
+        if t_1_month is not None:
+            eff_t1 = (
+                df.filter(pl.col("month") == pl.lit(t_1_month))
+                .group_by(["NSC_CODE"])
+                .agg((pl.max("day") - pl.min("day") + 1).alias("T_minus_1_effective_days"))
+            )
+
+        # Attach effective days (left joins by NSC_CODE)
+        if eff_t is not None:
+            df = (
+                df.lazy()
+                .join(eff_t.lazy(), on=["NSC_CODE"], how="left")
+                .collect(streaming=True)
+            )
+        if eff_t1 is not None:
+            df = (
+                df.lazy()
+                .join(eff_t1.lazy(), on=["NSC_CODE"], how="left")
+                .collect(streaming=True)
+            )
+
+        # Fill numeric nulls with 0
+        df = self._fill_numeric_nulls(df)
+        return df
+
+    def _fill_numeric_nulls(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return df
+        updates = []
+        for name in df.columns:
+            dtype = df.schema[name]
+            if dtype in (pl.Float32, pl.Float64):
+                updates.append(pl.col(name).fill_null(0.0).alias(name))
+            elif dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64):
+                updates.append(pl.col(name).fill_null(0).alias(name))
+        if updates:
+            df = df.with_columns(updates)
+        return df
+
+    def _aggregate_sources(self, extracted: List[tuple[str, pl.DataFrame]]) -> List[tuple[str, pl.DataFrame]]:
+        """Aggregate each source as required:
+
+        - For all sources except account_base: group by NSC_CODE+date (if date exists),
+          sum numeric columns defined by Transform.sum_columns. If no sum columns,
+          reduce to unique keys only.
+        - For account_base: keep as-is (dimension table).
+        """
+        aggregated: list[tuple[str, pl.DataFrame]] = []
+        for source_name, df in extracted:
+            name = (source_name or "").lower()
+            if "account_base" in name:
+                aggregated.append((source_name, df))
+                continue
+
+            transform = self._get_transform_for_source(source_name)
+            sum_cols = []
+            if transform and hasattr(transform, "sum_columns"):
+                sum_cols = [c for c in transform.sum_columns if c in df.columns]
+
+            # determine keys
+            if "date" not in df.columns:
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Skip aggregating '{source_name}': missing 'date' column; "
+                    "to avoid multi-date duplication in later joins."
+                )
+                # Strictly skip non-dimension sources without date to prevent row explosion
+                continue
+
+            keys = ["NSC_CODE", "date"]
+
+            if sum_cols:
+                agg_exprs = [pl.col(c).sum().alias(c) for c in sum_cols]
+                grouped = df.group_by(keys).agg(agg_exprs)
+                aggregated.append((source_name, grouped))
+            else:
+                # no numeric to sum -> return only the key columns (deduplicated)
+                if keys:
+                    key_df = df.select([c for c in keys if c in df.columns]).unique()
+                    aggregated.append((source_name, key_df))
+                else:
+                    aggregated.append((source_name, pl.DataFrame()))
+
+        return aggregated
 
     def _safe_join(
         self, left: pl.DataFrame, right: pl.DataFrame, source_name: str

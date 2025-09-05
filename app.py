@@ -254,7 +254,9 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             
             try:
                 # Run the synchronous, CPU-bound function in a thread pool
-                processor = DataProcessor()
+                # 将可选配置透传给 Processor（如 spending_sheet_names 等）
+                proc_cfg = {"spending_sheet_names": spending_sheet_names}
+                processor = DataProcessor(proc_cfg)
                 result_df = await loop.run_in_executor(
                     None,  # Use the default executor
                     processor.process_pipeline,
@@ -317,7 +319,21 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 inf_count += result_df[col_name].is_infinite().sum()
         cleaned_count = nan_count + inf_count
 
-        # 3. Clean the dataframe - 彻底清理所有null值
+        # 3a. Rename columns to final Chinese names
+        try:
+            from src.outputs.naming import rename_for_output
+            result_df = rename_for_output(result_df)
+        except Exception as e:
+            logger.warning(f"Output renaming skipped due to error: {e}")
+
+        # 3b. Settlement computation per 经销商ID (two-month window)
+        try:
+            from src.analysis.settlement import compute_settlement_cn
+            result_df = compute_settlement_cn(result_df, dimension)
+        except Exception as e:
+            logger.error(f"Settlement computation failed: {e}")
+
+        # 3c. Clean the dataframe - 彻底清理所有null值
         for col_name in result_df.columns:
             col_type = result_df[col_name].dtype
             if col_type in [pl.Float32, pl.Float64]:

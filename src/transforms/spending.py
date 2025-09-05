@@ -25,6 +25,8 @@ class SpendingTransform(BaseTransform):
 
         # numeric cleanup for spending
         df = self._cast_numeric_columns(df, self.sum_columns)
-        df = self._aggregate_data(df, ["NSC_CODE", "date"], self.sum_columns)
+        # Extraction-only — no aggregation
+        wanted = ["NSC_CODE", "date"] + self.sum_columns
+        present = [c for c in wanted if c in df.columns]
+        df = df.select(present)
         return df
-

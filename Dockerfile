@@ -2,18 +2,14 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libmagic1 \
-        libmagic-mgc \
-    && rm -rf /var/lib/apt/lists/*
+# 无额外系统依赖，保持镜像轻量
+RUN apt-get update && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 验证关键依赖
+# 验证关键依赖（可选）
 RUN python -c "import lark_oapi; print('lark-oapi available')"
-RUN python -c "import magic; print('python-magic available')" || echo "python-magic not available, will use fallback"
 
 COPY . .
 

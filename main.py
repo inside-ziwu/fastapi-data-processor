@@ -45,28 +45,34 @@ async def process_data_files(
     logger.info(f"平台: {platform.platform()}")
     logger.info(f"工作目录: {Path.cwd()}")
     
-    # 检查关键依赖
-    try:
-        import magic
-        logger.info("✅ python-magic: 可用")
-        # 测试实际功能
-        test_mime = magic.from_file('/etc/passwd', mime=True)
-        logger.info(f"✅ magic功能测试: {test_mime}")
-    except ImportError as e:
-        logger.warning(f"❌ python-magic: 不可用 - {e}")
-        logger.warning("将使用扩展名检测降级方案")
-    except Exception as e:
-        logger.warning(f"❌ python-magic: 功能异常 - {e}")
+    # 依赖诊断简化：不再检测 python-magic，统一按扩展名解析
     
     logger.info(f"待处理文件数: {len(file_paths)}")
     logger.info("=== 开始处理 ===")
 
-    # Initialize processor
-    processor = DataProcessor()
+    # Initialize processor with full config (so spending_sheet_names etc. are available)
+    processor = DataProcessor(config)
 
     try:
         # Process all data sources
         result_df = processor.process_pipeline(file_paths)
+
+        # Finalize output names (Chinese standardization)
+        try:
+            from src.outputs.naming import rename_for_output
+
+            result_df = rename_for_output(result_df)
+        except Exception as e:
+            logger.warning(f"Output renaming skipped due to error: {e}")
+
+        # Compute settlement (结算) summary over T/T-1 months
+        try:
+            from src.analysis.settlement import compute_settlement_cn
+            # CLI 没有传入维度参数，默认按经销商ID
+            summary_df = compute_settlement_cn(result_df, None)
+            result_df = summary_df
+        except Exception as e:
+            logger.error(f"Settlement computation failed: {e}")
 
         logger.info(f"Processing complete. Result shape: {result_df.shape}")
         logger.info(f"Result columns: {result_df.columns}")

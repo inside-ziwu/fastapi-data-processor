@@ -36,45 +36,13 @@ class MessageTransform(BaseTransform):
         # Step 4: Cast numeric columns
         df = self._cast_numeric_columns(df, self.sum_columns)
 
-        # Step 5: Group by present key columns and aggregate
-        group_keys = [c for c in ["NSC_CODE", "date"] if c in df.columns]
-        df = self._aggregate_data(df, group_keys, self.sum_columns)
-
-        # Step 6: Add computed columns
-        df = self.add_computed_columns(df)
+        # Step 5: Extraction-only — no aggregation
+        wanted = ["NSC_CODE"] + (["date"] if "date" in df.columns else []) + self.sum_columns
+        present = [c for c in wanted if c in df.columns]
+        df = df.select(present)
 
         return df
-
-    def add_computed_columns(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Add message-specific computed columns."""
-        # Add conversion rates if we have the required columns
-        if (
-            "private_leads_count" in df.columns
-            and "private_open_count" in df.columns
-            and df["private_open_count"].sum() > 0
-        ):
-
-            df = df.with_columns(
-                (
-                    pl.col("private_leads_count")
-                    / pl.col("private_open_count")
-                ).alias("private_conversion_rate")
-            )
-
-        if (
-            "private_open_count" in df.columns
-            and "enter_private_count" in df.columns
-            and df["enter_private_count"].sum() > 0
-        ):
-
-            df = df.with_columns(
-                (
-                    pl.col("private_open_count")
-                    / pl.col("enter_private_count")
-                ).alias("open_rate")
-            )
-
-        return df
+        
 
 
 def create_message_transform() -> MessageTransform:

@@ -7,7 +7,5 @@ requests==2.31.0
 pyarrow==21.0.0
 httpx==0.27.2
 lark-oapi==1.4.22
-python-magic==0.4.27
-fastexcel; python_version < '3.13'
 flake8
 black

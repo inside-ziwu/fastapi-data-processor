@@ -7,9 +7,8 @@ from typing import Dict, List, Any, Optional
 def rename_columns(df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
     """Rename columns based on mapping with fuzzy matching.
 
-    - Uses provided mapping as the single source of truth.
-    - If NSC_CODE is still missing after the first pass, try a conservative
-      fallback matching over common NSC synonyms to avoid brittle failures.
+    保持“笨”且可预测：仅按提供的映射做模糊重命名；不做任何业务耦合的猜测。
+    重命名后若仍缺少关键键 `NSC_CODE`，抛出明确错误，强迫上层 Transform 明确其来源。
     """
     rename_map = {}
     for src_col, expected_col in mapping.items():
@@ -21,24 +20,6 @@ def rename_columns(df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
 
     if rename_map:
         df = df.rename(rename_map)
-
-    # If NSC_CODE still missing, attempt a conservative fallback
-    if "NSC_CODE" not in df.columns:
-        nsc_candidates = []
-        for c in df.columns:
-            c_norm = c.replace(" ", "").lower()
-            if any(
-                token in c_norm
-                for token in (
-                    "nsc", "经销商id", "主机厂经销商id", "经销商id列表", "主机厂经销商id列表"
-                )
-            ):
-                nsc_candidates.append(c)
-
-        if nsc_candidates:
-            # Pick the longest match (most specific) deterministically
-            best = sorted(nsc_candidates, key=lambda x: len(x), reverse=True)[0]
-            df = df.rename({best: "NSC_CODE"})
 
     # Validate NSC_CODE exists after renaming
     if "NSC_CODE" not in df.columns:
@@ -115,13 +96,19 @@ def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = 
     if "date" not in df.columns:
         raise ValueError("No date column found")
 
-    # Convert to date format only if it's a string
-    if df["date"].dtype == pl.Utf8:
+    # Normalize dtype: always end up with pl.Date for joins to match
+    dt = df["date"].dtype
+    if dt == pl.Utf8:
+        # common formats: YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
         df = df.with_columns(
             pl.col("date")
+            .str.replace_all("/", "-")
+            .str.replace_all(r"\.", "-")
             .str.strptime(pl.Date, "%Y-%m-%d", strict=False)
             .alias("date")
         )
+    elif dt == pl.Datetime:
+        df = df.with_columns(pl.col("date").cast(pl.Date).alias("date"))
 
     return df
 
@@ -145,10 +132,17 @@ def ensure_optional_date_column(
                 break
 
     if "date" in df.columns:
-        if df["date"].dtype == pl.Utf8:
+        dt = df["date"].dtype
+        if dt == pl.Utf8:
             df = df.with_columns(
-                pl.col("date").str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("date")
+                pl.col("date")
+                .str.replace_all("/", "-")
+                .str.replace_all(r"\.", "-")
+                .str.strptime(pl.Date, "%Y-%m-%d", strict=False)
+                .alias("date")
             )
+        elif dt == pl.Datetime:
+            df = df.with_columns(pl.col("date").cast(pl.Date).alias("date"))
 
     return df
 
