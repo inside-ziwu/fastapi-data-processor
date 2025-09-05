@@ -72,8 +72,9 @@ class ExcelReader(BaseReader):
         else:
             df = result
             
-        # Force all columns to string to match openpyxl behavior
-        return df.select([pl.col(col).cast(pl.Utf8) for col in df.columns])
+        # Return as-is - let polars handle type inference naturally to avoid dtype warnings
+        # Type consistency will be handled at the application level if needed
+        return df
 
     def _read_with_openpyxl(self, path: str, sheet_name, **kwargs) -> pl.DataFrame:
         """Read Excel using openpyxl with same date behavior as fastexcel."""
@@ -87,11 +88,8 @@ class ExcelReader(BaseReader):
             keep_default_na=False  # Don't convert empty strings to NaN
         )
         
-        # Convert to polars first
-        df_polars = pl.from_pandas(df_pandas)
-        
-        # Then force all columns to string using polars cast - same mechanism as calamine path
-        return df_polars.select([pl.col(col).cast(pl.Utf8) for col in df_polars.columns])
+        # Convert to polars and return as-is - let polars handle type inference naturally
+        return pl.from_pandas(df_pandas)
 
     def validate_path(self, path: str) -> bool:
         """Validate Excel file path."""
