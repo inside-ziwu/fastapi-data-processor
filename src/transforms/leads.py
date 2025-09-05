@@ -60,11 +60,13 @@ class LeadsTransform(BaseTransform):
             for want in ["主机厂经销商id列表", "留资日期", "直播间表单提交商机量(去重)"]:
                 wkey = _norm(want)
                 hits = [orig for key, orig in norm_cols.items() if wkey in key or key in wkey]
-                nearest[want] = hits
+            nearest[want] = hits
             logger.warning(f"[leads probe] nearest candidates: {nearest}")
             raise ValueError(f"leads 缺少必要列: {missing}")
 
         df = df.rename(rename_map)
+        logger.warning(f"[leads probe] rename_map applied: {rename_map}")
+        logger.warning(f"[leads probe] columns after rename: {df.columns}")
         df = self._normalize_nsc_code(df)
         df = self._ensure_date_column(df, ["date", "留资日期", "日期"]) 
 
