@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 验证关键依赖
 RUN python -c "import lark_oapi; print('lark-oapi available')"
+RUN python -c "import magic; print('python-magic available')" || echo "python-magic not available, will use fallback"
 
 COPY . .
 

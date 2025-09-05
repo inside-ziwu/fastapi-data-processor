@@ -28,29 +28,52 @@ class ExcelReader(BaseReader):
 
     def read(self, path: str, sheet_name=None, **kwargs) -> pl.DataFrame:
         """Read Excel file with consistent data types across backends."""
-        # Default to first sheet if not specified
+        # Handle sheet selection - calamine uses sheet_id, openpyxl uses sheet_name
         if sheet_name is None:
             sheet_name = kwargs.get("sheet", 0)
-
+        
         if FASTEXCEL_AVAILABLE:
-            return self._read_with_fastexcel(path, sheet_name, **kwargs)
+            # Calamine engine prefers sheet_id over sheet_name for index access
+            if isinstance(sheet_name, int):
+                return self._read_with_calamine(path, sheet_id=sheet_name, **kwargs)
+            else:
+                return self._read_with_calamine(path, sheet_name=sheet_name, **kwargs)
         elif OPENPYXL_AVAILABLE:
             logger.warning("fastexcel not available, using openpyxl fallback")
-            return self._read_with_openpyxl(path, sheet_name, **kwargs)
+            # Remove fastexcel-specific kwargs before passing to openpyxl
+            openpyxl_kwargs = {k: v for k, v in kwargs.items() if k not in ['xlsx2csv_options', 'ignore_formats']}
+            return self._read_with_openpyxl(path, sheet_name, **openpyxl_kwargs)
         else:
             raise ImportError("Neither fastexcel nor openpyxl is available for Excel reading")
 
-    def _read_with_fastexcel(self, path: str, sheet_name, **kwargs) -> pl.DataFrame:
-        """Read Excel using fastexcel with consistent date handling."""
+    def _read_with_calamine(self, path: str, sheet_name=None, sheet_id=None, **kwargs) -> pl.DataFrame:
+        """Read Excel using calamine engine with consistent date handling."""
+        # Use polars 1.8.2 API with calamine engine
+        # Remove calamine-unsupported options
+        calamine_kwargs = {k: v for k, v in kwargs.items() if k not in ['ignore_errors', 'truncate_ragged_lines']}
+        
         read_config = {
-            "xlsx2csv_options": {"ignore_formats": ["date"]},  # Dates as strings/numbers
-            "read_csv_options": {
-                "ignore_errors": True,
-                "truncate_ragged_lines": True,
-            },
-            **kwargs,
+            "engine": "calamine",
+            **calamine_kwargs,
         }
-        return pl.read_excel(path, sheet_name=sheet_name, **read_config)
+        
+        # Handle sheet selection - prefer sheet_id over sheet_name for calamine
+        if sheet_id is not None:
+            result = pl.read_excel(path, sheet_id=sheet_id, **read_config)
+        elif sheet_name is not None:
+            result = pl.read_excel(path, sheet_name=sheet_name, **read_config)
+        else:
+            result = pl.read_excel(path, **read_config)
+        
+        # Calamine returns dict {sheet_name: DataFrame}, we need to return single DataFrame
+        if isinstance(result, dict):
+            # Return first sheet if multiple sheets returned
+            df = list(result.values())[0]
+        else:
+            df = result
+            
+        # Force all columns to string to match openpyxl behavior
+        return df.select([pl.col(col).cast(pl.Utf8) for col in df.columns])
 
     def _read_with_openpyxl(self, path: str, sheet_name, **kwargs) -> pl.DataFrame:
         """Read Excel using openpyxl with same date behavior as fastexcel."""
