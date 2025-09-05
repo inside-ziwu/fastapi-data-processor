@@ -279,6 +279,25 @@ class FeishuWriterSync:
         """将单条记录转换为飞书API需要的格式 - 统一映射逻辑"""
         converted = {}
 
+        # 预先构建“标准化后的schema索引”用于回退匹配，避免在循环中重复构建
+        def _norm(s: str) -> str:
+            import re
+            s = re.sub(r"\s+", "", s)
+            table = str.maketrans({
+                "（": "(",
+                "）": ")",
+                "|": "/",
+                "｜": "/",
+                "／": "/",
+                "➕": "+",
+                "：": ":",
+            })
+            s = s.translate(table)
+            s = re.sub(r"[^\w\(\)/+:]", "", s)
+            return s
+
+        normalized_schema = { _norm(k): k for k in schema.keys() }
+
         for field_name, value in record.items():
             if value is None:  # None值直接跳过
                 continue
@@ -290,25 +309,8 @@ class FeishuWriterSync:
                 if field_name in schema:
                     field_info = schema[field_name]
                 else:
-                    # 回退2：对字段名做轻量标准化后再匹配（处理全角/空格/括号等差异）
-                    def _norm(s: str) -> str:
-                        import re
-                        s = re.sub(r"\s+", "", s)
-                        table = str.maketrans({
-                            "（": "(",
-                            "）": ")",
-                            "|": "/",
-                            "｜": "/",
-                            "／": "/",
-                            "➕": "+",
-                            "：": ":",
-                        })
-                        s = s.translate(table)
-                        s = re.sub(r"[^\w\(\)/+:]", "", s)
-                        return s
-
+                    # 回退2：使用预构建的标准化索引匹配
                     norm = _norm(field_name)
-                    normalized_schema = { _norm(k): k for k in schema.keys() }
                     match = normalized_schema.get(norm)
                     if match:
                         field_info = schema[match]
