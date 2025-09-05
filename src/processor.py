@@ -105,6 +105,15 @@ class DataProcessor:
         # Special handling: message Excel wants merge-all-sheets with a '日期' column = sheet name
         name_norm = (source_name or "").lower()
         is_excel = file_path.lower().endswith((".xlsx", ".xls"))
+        # Heuristic: some providers append suffixes after .xlsx (e.g., .xlsx~tplv...)
+        # Try opening as Excel if spending and extension check failed
+        if (not is_excel) and ("spending" in name_norm or "ad" in name_norm):
+            try:
+                import pandas as pd
+                pd.ExcelFile(file_path, engine="openpyxl")
+                is_excel = True
+            except Exception:
+                is_excel = False
         if transform and transform.__class__.__name__.lower().startswith("message") and is_excel:
             import pandas as pd
             # read all sheets
