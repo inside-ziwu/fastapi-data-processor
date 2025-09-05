@@ -30,14 +30,15 @@ class MessageTransform(BaseTransform):
         # Step 2: Normalize NSC_CODE column
         df = self._normalize_nsc_code(df)
 
-        # Step 3: Ensure date column exists
-        df = self._ensure_date_column(df, ["日期", "date", "time", "私信日期", "消息日期"])
+        # Step 3: Ensure date column if present; message数据有时无日期
+        df = self._ensure_optional_date_column(df, ["日期", "date", "time", "私信日期", "消息日期"]) 
 
         # Step 4: Cast numeric columns
         df = self._cast_numeric_columns(df, self.sum_columns)
 
-        # Step 5: Group by key columns and aggregate
-        df = self._aggregate_data(df, ["NSC_CODE", "date"], self.sum_columns)
+        # Step 5: Group by present key columns and aggregate
+        group_keys = [c for c in ["NSC_CODE", "date"] if c in df.columns]
+        df = self._aggregate_data(df, group_keys, self.sum_columns)
 
         # Step 6: Add computed columns
         df = self.add_computed_columns(df)

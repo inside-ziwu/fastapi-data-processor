@@ -103,6 +103,33 @@ def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = 
     return df
 
 
+def ensure_optional_date_column(
+    df: pl.DataFrame, date_candidates: Optional[List[str]] = None
+) -> pl.DataFrame:
+    """Ensure date column if present; do not raise when missing.
+
+    - Renames first matching candidate to 'date'.
+    - Parses to pl.Date if column is Utf8; otherwise leaves as-is.
+    - If no candidate found, returns df unchanged.
+    """
+    if date_candidates is None:
+        date_candidates = ["日期", "date", "time", "开播日期", "直播日期", "日期时间"]
+
+    if "date" not in df.columns:
+        for candidate in date_candidates:
+            if candidate in df.columns:
+                df = df.rename({candidate: "date"})
+                break
+
+    if "date" in df.columns:
+        if df["date"].dtype == pl.Utf8:
+            df = df.with_columns(
+                pl.col("date").str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("date")
+            )
+
+    return df
+
+
 def cast_numeric_columns(df: pl.DataFrame, columns: List[str]) -> pl.DataFrame:
     """Cast specified columns to numeric types, handling commas and empty strings."""
     for col in columns:
