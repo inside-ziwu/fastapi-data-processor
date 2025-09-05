@@ -27,7 +27,7 @@ def json_date_serializer(obj):
 import polars as pl
 
 from src import DataProcessor
-from feishu_writer_v3 import FeishuWriterV3
+from feishu_writer_sync import FeishuWriterV3
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
