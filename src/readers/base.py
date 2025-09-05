@@ -80,22 +80,12 @@ class ReaderRegistry:
             ".txt": "csv"  # TXT treated as CSV
         }
         
-        # Extract real extension, handling polluted filenames like file.xlsx~extra-stuff
-        try:
-            basename = os.path.basename(path).lower()
-            
-            # Find the first valid extension in the filename
-            for ext in EXTENSION_MAP:
-                # Look for extension followed by dot, space, or end of string
-                # This handles both "file.xlsx" and "file.xlsx~pollution"
-                ext_pos = basename.find(ext)
-                if ext_pos != -1:
-                    # Make sure this is a real extension, not part of the name
-                    # Check if it's followed by dot, space, or end of string
-                    next_char_pos = ext_pos + len(ext)
-                    if next_char_pos >= len(basename) or basename[next_char_pos] in ' .~':
-                        return self._readers.get(EXTENSION_MAP[ext])
-        except Exception:
-            pass
+        # Remove pollution after ~ and check clean extension
+        basename = os.path.basename(path).lower()
+        clean_basename = basename.split('~')[0]  # Remove pollution
+        
+        for ext, reader_key in EXTENSION_MAP.items():
+            if clean_basename.endswith(ext):
+                return self._readers.get(reader_key)
                 
         return None
