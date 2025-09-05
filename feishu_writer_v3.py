@@ -149,20 +149,25 @@ class FeishuWriterV3:
                     failed_mappings.append((cn_name, en_name))
                     logger.debug(f"[飞书] 未找到中文字段: {cn_name} (标准化: {normalized_cn})")
             
-            # 报告映射结果
-            logger.info(f"[飞书] 构建反向映射：共 {len(FIELD_EN_MAP)} 个映射，成功匹配 {matched_count} 个字段")
+            # **关键诊断：找出schema中未映射的字段**
+            schema_chinese = set(schema.keys())
+            mapping_chinese = set(FIELD_EN_MAP.keys())
+            unmapped_schema_fields = schema_chinese - mapping_chinese
+            
+            # 报告完整映射结果
+            logger.info(f"[飞书] 映射统计：飞书schema共{len(schema_chinese)}个字段，映射表共{len(mapping_chinese)}个字段")
+            logger.info(f"[飞书] 成功匹配：{matched_count}个字段，映射失败：{len(failed_mappings)}个字段")
+            
+            if unmapped_schema_fields:
+                logger.warning(f"[飞书] 飞书schema中未映射的字段（共{len(unmapped_schema_fields)}个）: {sorted(unmapped_schema_fields)}")
             
             if failed_mappings:
-                logger.warning(f"[飞书] 映射失败的字段: {failed_mappings[:10]}")
-                
-                # 显示schema中可用的中文字段
-                chinese_fields = [k for k in schema.keys() if any('\u4e00' <= c <= '\u9fff' for c in k)]
-                logger.info(f"[飞书] 可用的中文字段: {chinese_fields}")
+                logger.warning(f"[飞书] 映射表中未找到的字段（共{len(failed_mappings)}个）: {failed_mappings}")
             
-            # 显示前10个成功映射
+            # 显示前10个成功映射作为样本
             if reverse_map:
                 sample = dict(list(reverse_map.items())[:10])
-                logger.info(f"[飞书] 反向映射示例: {sample}")
+                logger.info(f"[飞书] 成功映射示例: {sample}")
             
             return reverse_map
             
