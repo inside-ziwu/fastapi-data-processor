@@ -118,8 +118,12 @@ class DataProcessor:
         is_excel = file_path.lower().endswith((".xlsx", ".xls", ".xlsm"))
         sheets_used: list[str] = []
         # Heuristic: providers may append suffixes after .xlsx or hide real type.
-        # Try opening as Excel if extension check failed for message/spending/ad.
-        if (not is_excel) and ("spending" in name_norm or "ad" in name_norm or "message" in name_norm or "msg" in name_norm):
+        # Try opening as Excel if extension check failed for message/spending/ad/account*.
+        if (not is_excel) and (
+            ("spending" in name_norm) or (" ad" in name_norm) or name_norm.endswith("_ad") or name_norm == "ad"
+            or ("message" in name_norm) or ("msg" in name_norm)
+            or ("account" in name_norm)
+        ):
             try:
                 import pandas as pd
                 pd.ExcelFile(file_path, engine="openpyxl")
@@ -331,6 +335,13 @@ class DataProcessor:
 
             if level_df is not None and store_df is not None:
                 df = level_df.join(store_df, on="NSC_CODE", how="outer")
+                try:
+                    ln = int(level_df.height)
+                    sn = int(store_df.height)
+                    nn = int(df.select(pl.col("store_name").is_not_null().sum()).to_series(0)[0]) if "store_name" in df.columns else 0
+                    logger.info(f"[account_base] merged level rows={ln}, store rows={sn}, store_name_non_null={nn}")
+                except Exception:
+                    pass
             elif level_df is not None:
                 df = level_df
             elif store_df is not None:

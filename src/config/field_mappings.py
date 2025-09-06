@@ -63,6 +63,7 @@ ACCOUNT_BASE_MAP = {
     # 统一为 NSC_CODE 以保证后续 Join 与标准化生效
     "NSC Code": "NSC_CODE",
     "抖音id": "store_name",
+    "抖音ID": "store_name",
 }
 
 # 飞书多维表格字段映射（支持一对一和一对多映射）
