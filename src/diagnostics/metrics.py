@@ -225,9 +225,9 @@ def log_message_date_distribution(df: pl.DataFrame) -> None:
         ym_records = [{"_ym": r[0], **{k: r[i+1] for i, k in enumerate([c for c in [c_enter, c_open, c_leads] if c])}} for r in ym.iter_rows()]
 
         # Date min/max and null ratio
-        min_d = df.select(pl.col("date").min()).to_series(0)[0]
-        max_d = df.select(pl.col("date").max()).to_series(0)[0]
-        nulls = int(df.select(pl.col("date").is_null().sum()).to_series(0)[0])
+        min_d = df.select(pl.col(date_col).cast(pl.Date).min()).to_series(0)[0]
+        max_d = df.select(pl.col(date_col).cast(pl.Date).max()).to_series(0)[0]
+        nulls = int(df.select(pl.col(date_col).is_null().sum()).to_series(0)[0])
         ratio = (nulls / df.height) if df.height else 0.0
 
         logger.info(
