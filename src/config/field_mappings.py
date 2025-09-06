@@ -60,7 +60,8 @@ SPENDING_MAP = {
 ACCOUNT_BASE_MAP = {
     "NSC_id": "NSC_CODE",
     "第二期层级": "level",
-    "NSC Code": "NSC_Code",
+    # 统一为 NSC_CODE 以保证后续 Join 与标准化生效
+    "NSC Code": "NSC_CODE",
     "抖音id": "store_name",
 }
 
