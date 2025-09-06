@@ -65,8 +65,11 @@ async def process_data_files(
 
         # Finalize output names (Chinese standardization)
         try:
-            from src.outputs.naming import rename_for_output
-
+            from src.outputs.naming import rename_for_output, normalize_join_suffixes
+            # Normalize join-suffixed columns using provided file keys as valid suffixes
+            _suffixes = set(file_paths.keys())
+            logger.info(f"[output] Valid join suffixes: {sorted(list(_suffixes))}")
+            result_df = normalize_join_suffixes(result_df, _suffixes)
             result_df = rename_for_output(result_df)
         except Exception as e:
             logger.warning(f"Output renaming skipped due to error: {e}")

@@ -63,6 +63,48 @@ OUTPUT_NAME_MAP: dict[str, str] = {
 }
 
 
+def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = None) -> pl.DataFrame:
+    """Normalize suffixed columns produced by outer joins back to their base names.
+
+    Responsibility: ONLY handle join suffixes like `<base>_<source_key>` where:
+    - `<base>` is a known internal name present in OUTPUT_NAME_MAP.
+    - `<source_key>` is explicitly provided via valid_suffixes (e.g., input file keys).
+
+    This keeps rename_for_output dumb and precise.
+    """
+    if df.is_empty():
+        return df
+
+    if not valid_suffixes:
+        return df
+
+    suffixes = {s.strip().lower() for s in valid_suffixes if s and isinstance(s, str)}
+    rename_map: dict[str, str] = {}
+    existing = set(df.columns)
+
+    for c in df.columns:
+        if "_" not in c:
+            continue
+        base, suf = c.rsplit("_", 1)
+        if suf.strip().lower() not in suffixes:
+            continue
+        if base not in OUTPUT_NAME_MAP:
+            continue
+        # Only normalize when base does not already exist to avoid duplicates
+        if base in existing:
+            continue
+        rename_map[c] = base
+
+    if not rename_map:
+        return df
+
+    try:
+        return df.rename(rename_map)
+    except Exception:
+        # Best effort: if rename fails (unlikely), return original df
+        return df
+
+
 def rename_for_output(df: pl.DataFrame) -> pl.DataFrame:
     """Rename columns to Chinese output names and drop duplicates after renaming.
 
@@ -73,17 +115,19 @@ def rename_for_output(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
 
-    # Build rename map for present columns only (supports suffixed columns like 'enter_private_count_msg')
+    # Build rename map for present columns only (exact match ONLY)
+    # Avoid creating duplicates: if target name already exists (either currently in df or planned), skip.
     rename_map: dict[str, str] = {}
+    planned_targets: set[str] = set()
+    existing: set[str] = set(df.columns)
     for c in df.columns:
         if c in OUTPUT_NAME_MAP:
-            rename_map[c] = OUTPUT_NAME_MAP[c]
-            continue
-        # Try stripping a single trailing suffix after the last underscore
-        if "_" in c:
-            base, _suffix = c.rsplit("_", 1)
-            if base in OUTPUT_NAME_MAP:
-                rename_map[c] = OUTPUT_NAME_MAP[base]
+            target = OUTPUT_NAME_MAP[c]
+            if (target in existing) or (target in planned_targets):
+                # Skip to prevent duplicate target columns during rename
+                continue
+            rename_map[c] = target
+            planned_targets.add(target)
     if not rename_map:
         return df
 
