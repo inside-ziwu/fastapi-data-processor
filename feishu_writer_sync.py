@@ -18,7 +18,7 @@ try:
     from lark_oapi.api.bitable.v1 import *
     SDK_AVAILABLE = True
 except ImportError as e:
-SDK_AVAILABLE = False
+    SDK_AVAILABLE = False
     logger.warning(
         f"飞书SDK导入失败，Feishu功能将不可用。错误: {e}。安装: pip install lark-oapi"
     )
