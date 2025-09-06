@@ -301,10 +301,29 @@ class DataProcessor:
                 pdf = pd.read_excel(xls, sheet_name=sheet_name, engine="openpyxl")
                 # Ensure all column headers are strings to avoid Polars conversion errors
                 try:
-                    pdf.columns = [str(c) for c in pdf.columns]
+                    cols = [str(c) for c in pdf.columns]
+                    # Ensure unique column names
+                    seen: dict[str, int] = {}
+                    uniq: list[str] = []
+                    for c in cols:
+                        if c in seen:
+                            seen[c] += 1
+                            uniq.append(f"{c}_{seen[c]}")
+                        else:
+                            seen[c] = 0
+                            uniq.append(c)
+                    pdf.columns = uniq
                 except Exception:
                     pass
-                pldf = pl.from_pandas(pdf)
+                # Robust conversion to polars
+                try:
+                    pldf = pl.from_pandas(pdf)
+                except Exception:
+                    try:
+                        data = {str(k): list(pdf[k].values) for k in pdf.columns}
+                        pldf = pl.DataFrame(data)
+                    except Exception as e:
+                        raise e
                 # Rename columns using transform mapping (fuzzy)
                 try:
                     pldf = transform._rename_columns(pldf, transform.mapping)  # type: ignore[attr-defined]
