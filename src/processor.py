@@ -315,35 +315,26 @@ class DataProcessor:
                     pdf.columns = uniq
                 except Exception:
                     pass
-                # Pre-coerce key/text columns in pandas to strings to avoid mixed-type issues
+                # Pre-coerce ALL columns to strings to avoid mixed-type issues
                 try:
-                    import unicodedata as _ud
-                    def _norm_header(h: str) -> str:
-                        s = _ud.normalize("NFKC", str(h or "")).lower().replace(" ", "")
-                        s = s.replace("（", "(").replace("）", ")")
-                        return s
-                    norm_map = {_norm_header(c): c for c in pdf.columns}
-                    # NSC code candidates
-                    for key in ["nsc_id", "nsccode", "nsc code", "nsc_code", "经销商id", "主机厂经销商id", "主机厂经销商id列表"]:
-                        k = _norm_header(key)
-                        if k in norm_map:
-                            col = norm_map[k]
-                            pdf[col] = pdf[col].apply(lambda v: "" if pd.isna(v) else (v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray)) else str(v)))
-                            break
-                    # Store name (抖音) candidates
-                    for key in ["抖音id", "抖音ID", "抖音号", "店铺名", "门店名", "抖音id_"]:
-                        k = _norm_header(key)
-                        if k in norm_map:
-                            col = norm_map[k]
-                            pdf[col] = pdf[col].apply(lambda v: "" if pd.isna(v) else (v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray)) else str(v)))
-                            break
-                    # level (ensure text)
-                    for key in ["第二期层级", "层级", "level"]:
-                        k = _norm_header(key)
-                        if k in norm_map:
-                            col = norm_map[k]
-                            pdf[col] = pdf[col].apply(lambda v: "" if pd.isna(v) else (v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray)) else str(v)))
-                            break
+                    def _to_str(v):
+                        try:
+                            import math
+                            import numpy as _np
+                            if v is None:
+                                return None
+                            # pandas NA/NaN
+                            if isinstance(v, float) and math.isnan(v):
+                                return None
+                            if hasattr(v, "__array__") and _np.isnan(v).item() is True:  # type: ignore[attr-defined]
+                                return None
+                            if isinstance(v, (bytes, bytearray)):
+                                return v.decode("utf-8", "ignore")
+                            return str(v)
+                        except Exception:
+                            return str(v) if v is not None else None
+                    for _c in list(pdf.columns):
+                        pdf[_c] = pdf[_c].apply(_to_str)
                 except Exception:
                     pass
                 # Robust conversion to polars
@@ -351,8 +342,12 @@ class DataProcessor:
                     pldf = pl.from_pandas(pdf)
                 except Exception:
                     try:
-                        data = {str(k): list(pdf[k].values) for k in pdf.columns}
-                        pldf = pl.DataFrame(data)
+                        # Build string series with strict=False to tolerate None/ints
+                        cols_series = []
+                        for k in pdf.columns:
+                            vals = [None if (isinstance(v, float) and (v != v)) else v for v in list(pdf[k].values)]
+                            cols_series.append(pl.Series(str(k), vals, dtype=pl.Utf8, strict=False))
+                        pldf = pl.DataFrame(cols_series)
                     except Exception as e:
                         raise e
                 cols = set(pldf.columns)
