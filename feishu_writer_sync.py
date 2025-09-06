@@ -133,6 +133,7 @@ class FeishuWriterSync:
                 for field in response.data.items:
                     schema[field.field_name] = {
                         "id": field.field_id,
+                        "name": field.field_name,
                         "type": field.type,
                         "ui_type": field.ui_type,
                         "property": field.property or {},
@@ -302,13 +303,10 @@ class FeishuWriterSync:
                         field_info = schema[match]
 
             if field_info:  # 找到映射的字段
-                field_id = field_info.get("id")
-                if field_id:
-                    converted[field_id] = self._convert_value_by_type(
-                        value, field_info
-                    )
-                else:
-                    logger.debug(f"[飞书] 字段无ID，忽略: {field_name}")
+                key_name = field_info.get("name") or field_name
+                converted[key_name] = self._convert_value_by_type(
+                    value, field_info
+                )
             else:
                 logger.debug(f"[飞书] 未找到映射: {field_name}")
 
@@ -379,7 +377,7 @@ class FeishuWriterSync:
                         )
 
             # 分批处理
-            batch_size = 500
+            batch_size = 100
             total_success = 0
             total_total = len(table_records)
 
