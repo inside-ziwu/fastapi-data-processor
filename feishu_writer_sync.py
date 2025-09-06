@@ -18,7 +18,7 @@ try:
     from lark_oapi.api.bitable.v1 import *
     SDK_AVAILABLE = True
 except ImportError as e:
-    SDK_AVAILABLE = False
+SDK_AVAILABLE = False
     logger.warning(
         f"飞书SDK导入失败，Feishu功能将不可用。错误: {e}。安装: pip install lark-oapi"
     )
@@ -47,6 +47,25 @@ def _norm_field_name(name: str) -> str:
     s = s.translate(table)
     s = re.sub(r"[^\w()/+:]", "", s)
     return s
+
+# ---- Module-level: Pre-write transforms for specific Chinese fields ----
+# 某些“率”字段在飞书Number字段里以百分比展示，若保留[0,1]小数，
+# 在0小数位的显示设置下会显示为0。这里仅在写入飞书前进行放大到百分比。
+RATE_PERCENT_FIELDS = {
+    # Component rates (two naming styles)
+    "组件点击率",
+    "T月组件点击率",
+    "T-1月组件点击率",
+    "组件点击率=点击|曝光",
+    "T月组件点击率=点击|曝光",
+    "T-1月组件点击率=点击|曝光",
+    "组件留资率",
+    "T月组件留资率",
+    "T-1月组件留资率",
+    "组件留资率=留资|曝光",
+    "T月组件留资率=留资|曝光",
+    "T-1月组件留资率=留资|曝光",
+}
 
 
 class FeishuWriterSync:
@@ -304,9 +323,14 @@ class FeishuWriterSync:
 
             if field_info:  # 找到映射的字段
                 key_name = field_info.get("name") or field_name
-                converted[key_name] = self._convert_value_by_type(
-                    value, field_info
-                )
+                # 写入前转换：特定“率”字段放大为百分比
+                v = value
+                try:
+                    if key_name in RATE_PERCENT_FIELDS and isinstance(v, (int, float)):
+                        v = float(v) * 100.0
+                except Exception:
+                    pass
+                converted[key_name] = self._convert_value_by_type(v, field_info)
             else:
                 logger.debug(f"[飞书] 未找到映射: {field_name}")
 

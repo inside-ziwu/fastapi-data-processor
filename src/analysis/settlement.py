@@ -62,23 +62,28 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
         group_mode = "id"
 
     if id_col not in df.columns:
-        # 当按层级聚合但缺少层级列时，按规范创建“未知”层级，保证不崩溃且有兜底分组
+        # 不再强行创建“未知”层级；缺少层级时直接跳过该聚合
         if group_mode == "level":
-            df = df.with_columns(pl.lit("未知").alias("层级"))
+            import logging as _logging
+            _logging.getLogger(__name__).warning("按层级聚合但缺少'层级'列，已跳过该聚合")
+            return pl.DataFrame()
         else:
             raise ValueError(f"缺少列: {id_col}")
 
-    # 层级兜底：仅将空/缺失置为“未知”，不限制取值集合，不改动非空原值
+    # 层级处理：将空/缺失层级标记为“未知”（后续若聚合结果全为0将自动丢弃该行）
     if group_mode == "level":
         if "层级" not in df.columns:
-            df = df.with_columns(pl.lit("未知").alias("层级"))
-        else:
-            df = df.with_columns(
-                pl.when(pl.col("层级").is_null() | (pl.col("层级").cast(pl.Utf8).str.strip_chars() == ""))
-                .then(pl.lit("未知"))
-                .otherwise(pl.col("层级"))
-                .alias("层级")
+            import logging as _logging
+            _logging.getLogger(__name__).warning("按层级聚合但缺少'层级'列，已跳过该聚合")
+            return pl.DataFrame()
+        df = df.with_columns(
+            pl.when(
+                pl.col("层级").is_null() | (pl.col("层级").cast(pl.Utf8).str.strip_chars() == "")
             )
+            .then(pl.lit("未知"))
+            .otherwise(pl.col("层级"))
+            .alias("层级")
+        )
 
     # Resolve source columns: prefer clean english, fallback to Chinese UI names
     def pick(*cands: str) -> str | None:
@@ -502,8 +507,23 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
     final_cols = key_cols + [c for c in ordered_metrics if c in result.columns]
     final_df = result.select(final_cols)
 
-    # 最终选择后再次按层级排序（若分组为层级），确保输出稳定：降序，未知置底
+    # 丢弃“未知”层级的全零行；再按层级排序（未知置底）
     if group_mode == "level" and "层级" in final_df.columns:
+        # Drop '未知' row if all numeric metrics are zero/None
+        try:
+            num_cols = [
+                c for c in final_df.columns
+                if final_df.schema[c] in (pl.Float32, pl.Float64, pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64)
+                and c != "层级"
+            ]
+            if num_cols:
+                final_df = final_df.with_columns(
+                    pl.sum_horizontal([pl.col(c).cast(pl.Float64, strict=False) for c in num_cols]).alias("__row_sum__")
+                )
+                final_df = final_df.filter(~((pl.col("层级") == "未知") & (pl.col("__row_sum__") <= 0.0)))
+                final_df = final_df.drop("__row_sum__")
+        except Exception:
+            pass
         final_df = (
             final_df
             .with_columns(
