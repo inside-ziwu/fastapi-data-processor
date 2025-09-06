@@ -348,38 +348,7 @@ class DataProcessor:
                     pass
                 # Robust conversion to polars
                 try:
-                    # Pre-coerce key/text columns in pandas to strings to avoid mixed-type issues
-                try:
-                    import unicodedata as _ud
-                    def _norm_header(h: str) -> str:
-                        s = _ud.normalize("NFKC", str(h or "")).lower().replace(" ", "")
-                        s = s.replace("（", "(").replace("）", ")")
-                        return s
-                    norm_map = {_norm_header(c): c for c in pdf.columns}
-                    # NSC code candidates
-                    for key in ["nsc_id", "nsccode", "nsc code", "nsc_code", "经销商id", "主机厂经销商id", "主机厂经销商id列表"]:
-                        k = _norm_header(key)
-                        if k in norm_map:
-                            col = norm_map[k]
-                            pdf[col] = pdf[col].apply(lambda v: "" if pd.isna(v) else (v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray)) else str(v)))
-                            break
-                    # Store name (抖音) candidates
-                    for key in ["抖音id", "抖音ID", "抖音号", "店铺名", "门店名", "抖音id_"]:
-                        k = _norm_header(key)
-                        if k in norm_map:
-                            col = norm_map[k]
-                            pdf[col] = pdf[col].apply(lambda v: "" if pd.isna(v) else (v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray)) else str(v)))
-                            break
-                    # level (ensure text)
-                    for key in ["第二期层级", "层级", "level"]:
-                        k = _norm_header(key)
-                        if k in norm_map:
-                            col = norm_map[k]
-                            pdf[col] = pdf[col].apply(lambda v: "" if pd.isna(v) else (v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray)) else str(v)))
-                            break
-                except Exception:
-                    pass
-                pldf = pl.from_pandas(pdf)
+                    pldf = pl.from_pandas(pdf)
                 except Exception:
                     try:
                         data = {str(k): list(pdf[k].values) for k in pdf.columns}
