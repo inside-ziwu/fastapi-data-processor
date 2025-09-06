@@ -294,6 +294,19 @@ class DataProcessor:
             import pandas as pd
             # Read all sheets and pick columns via mapping per sheet
             xls = pd.ExcelFile(file_path, engine="openpyxl")
+            # Strict header mapping definitions (no fuzzy)
+            import unicodedata as _ud
+            def _std(s: str) -> str:
+                return _ud.normalize("NFKC", str(s or "")).strip().lower()
+            NSC_ALIASES = {
+                _std(x)
+                for x in [
+                    "NSC CODE", "NSC Code", "NSC_id", "NSC Code", "reg_dealer",
+                    "主机厂经销商id列表", "主机厂经销商ID", "主机厂经销商id",
+                ]
+            }
+            LEVEL_ALIASES = {_std("第二期层级")}
+            STORE_ALIASES = {_std("抖音id"), _std("抖音ID")}
             level_frames: list[pl.DataFrame] = []
             store_frames: list[pl.DataFrame] = []
             for sheet_name in xls.sheet_names:
@@ -358,6 +371,31 @@ class DataProcessor:
                         pldf = pl.DataFrame(data)
                     except Exception as e:
                         raise e
+                # Strict rename to NSC_CODE/level/store_name before selection
+                try:
+                    rename_map = {}
+                    found = {"NSC_CODE": None, "level": None, "store_name": None}
+                    for c in pldf.columns:
+                        key = _std(c)
+                        if key in NSC_ALIASES:
+                            rename_map[c] = "NSC_CODE"
+                            found["NSC_CODE"] = c
+                        elif key in LEVEL_ALIASES:
+                            rename_map[c] = "level"
+                            found["level"] = c
+                        elif key in STORE_ALIASES:
+                            rename_map[c] = "store_name"
+                            found["store_name"] = c
+                    if rename_map:
+                        pldf = pldf.rename(rename_map)
+                    try:
+                        logger.info(
+                            f"[account_base] sheet '{sheet_name}' headers -> NSC_CODE:{found['NSC_CODE']}, level:{found['level']}, store_name:{found['store_name']}"
+                        )
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
                 cols = set(pldf.columns)
                 if {"NSC_CODE", "level"}.issubset(cols):
                     level_frames.append(pldf.select(["NSC_CODE", "level"]))
