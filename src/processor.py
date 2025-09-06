@@ -74,9 +74,10 @@ class DataProcessor:
         if not processed_files:
             return pl.DataFrame()
 
-        # Structural fix: merge DR sources before aggregation
-        dr_items = [(name, df) for name, df in processed_files if "dr" in (name or "").lower()]
-        other_items = [(name, df) for name, df in processed_files if "dr" not in (name or "").lower()]
+        # Structural fix: merge DR sources before aggregation (explicit config keys)
+        dr_keys: List[str] = self.config.get("dr_sources", ["DR1_file", "DR2_file"]) if isinstance(self.config, dict) else ["DR1_file", "DR2_file"]
+        dr_items = [(name, df) for name, df in processed_files if name in dr_keys]
+        other_items = [(name, df) for name, df in processed_files if name not in dr_keys]
         if dr_items:
             try:
                 dr_df = pl.concat([df for _, df in dr_items], how="vertical")
@@ -90,23 +91,8 @@ class DataProcessor:
         # Step 2: Aggregate each non-dimension source by NSC_CODE(+date) as specified
         aggregated = self._aggregate_sources(processed_files)
 
-        # Diagnostics: NSC_CODE coverage per source (env-controlled)
-        if self._diag_enabled():
-            try:
-                self._log_nsc_coverage(aggregated, None)
-            except Exception as e:
-                logger.debug(f"NSC coverage pre-merge diag failed: {e}")
-
         # Step 3: Stream merge aggregated sources; ensure account_base last
         merged = self._stream_merge_data_sources(aggregated)
-
-        # Diagnostics: NSC_CODE coverage after merge vs account_base (env-controlled)
-        if self._diag_enabled():
-            try:
-                self._log_nsc_coverage(aggregated, merged)
-                self._log_level_distribution(merged)
-            except Exception as e:
-                logger.debug(f"NSC coverage post-merge diag failed: {e}")
 
         # Step 4: Finalize wide table (month/day, period tags, effective days, fill nulls)
         finalized = self._finalize_wide_table(merged)
@@ -643,21 +629,7 @@ class DataProcessor:
             )
             return left
 
-        # Diagnostics: suffix masking — overlapping columns (excluding keys) that will be suffixed
-        try:
-            if self._diag_enabled():
-                left_cols = set(left.columns)
-                right_cols = set(right.columns)
-                overlap = (left_cols & right_cols) - set(common_keys)
-                if overlap:
-                    sample = list(overlap)
-                    if len(sample) > 12:
-                        sample = sample[:12] + ["..."]
-                    logger.info(
-                        f"Join overlap with '{source_name}' (suffix _{source_name} will apply): count={len(overlap)}, cols={sample}"
-                    )
-        except Exception:
-            pass
+        # suffix masking diagnostics removed from core
 
         # Prefer lazy streaming join for performance/scalability
         try:
