@@ -20,6 +20,11 @@ class AccountBaseTransform(BaseTransform):
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
         df = self._rename_columns(df, self.mapping)
         df = self._normalize_nsc_code(df)
+
+        # Hotfix: Cast store_name to string to avoid mixed type errors
+        if "store_name" in df.columns:
+            df = df.with_columns(pl.col("store_name").cast(pl.Utf8))
+
         # 仅保留明确需求字段
         wanted = [v for v in self.mapping.values()]
         wanted_unique = []
