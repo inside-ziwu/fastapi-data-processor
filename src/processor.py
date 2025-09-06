@@ -131,6 +131,8 @@ class DataProcessor:
             # read all sheets
             sheets = pd.read_excel(file_path, sheet_name=None, engine="openpyxl")
             frames = []
+            # 对照日志：记录 sheet 名与解析到的日期
+            sheet_date_pairs: list[tuple[str, str]] = []
             for sheet_name, pdf in sheets.items():
                 sheets_used.append(str(sheet_name))
                 # 从 sheet 名推断日期：始终写入（覆盖） 'date'（ISO），失败时写入'日期'文本并告警
@@ -141,32 +143,55 @@ class DataProcessor:
                 s = s.replace("/", "-").replace(".", "-")
                 s = re.sub(r"\s+", "", s)
                 iso_val: Optional[str] = None
-                # YYYY-MM-DD
-                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
-                    iso_val = s
-                # YYYY-M(M) → pad month; day=01
-                elif re.fullmatch(r"\d{4}-\d{1,2}", s):
-                    parts = s.split("-")
-                    iso_val = f"{parts[0]}-{int(parts[1]):02d}-01"
-                # YYYY → assume Jan-01
-                elif re.fullmatch(r"\d{4}", s):
-                    iso_val = f"{s}-01-01"
-
-                if iso_val:
-                    pdf["date"] = iso_val
+                # 优先在 sheet 名中检索完整日期（到日）
+                m = re.search(r"(20\d{2})-(\d{1,2})-(\d{1,2})", s)
+                if m:
+                    y, mo, da = m.group(1), int(m.group(2)), int(m.group(3))
+                    iso_val = f"{y}-{mo:02d}-{da:02d}"
+                elif re.search(r"^\d{8}$", s):
+                    iso_val = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
                 else:
-                    pdf["日期"] = sheet_str
+                    m = re.search(r"(20\d{2})(\d{2})(\d{2})", s)
+                    if m:
+                        y, mo, da = m.group(1), int(m.group(2)), int(m.group(3))
+                        iso_val = f"{y}-{mo:02d}-{da:02d}"
+                    else:
+                        # 仅有“年-月”，补01
+                        m = re.search(r"(20\d{2})-(\d{1,2})", s)
+                        if m:
+                            y, mo = m.group(1), int(m.group(2))
+                            iso_val = f"{y}-{mo:02d}-01"
+                        else:
+                            # 仅“年”，补01-01
+                            m = re.search(r"(20\d{2})", s)
+                            if m:
+                                y = m.group(1)
+                                iso_val = f"{y}-01-01"
+                if iso_val:
+                    # 写入“日期”列为 pandas datetime64，保持原始粒度（到日）
                     try:
-                        if os.getenv("PROCESSOR_WARN_OPTIONAL_FIELDS", "1").strip().lower() in {"1", "true", "yes", "on"}:
-                            logger.warning(
-                                f"[message] 未能从sheet名解析日期: '{sheet_str}' → 回退写入'日期'文本列"
-                            )
+                        pdf["日期"] = pd.to_datetime(iso_val, format="%Y-%m-%d")
+                    except Exception:
+                        pdf["日期"] = iso_val
+                    sheet_date_pairs.append((sheet_str, iso_val))
+                    try:
+                        logger.info(f"[message] Sheet '{sheet_str}' → 日期 {iso_val}")
                     except Exception:
                         pass
+                else:
+                    # 严格模式：sheet 必须包含可解析日期
+                    raise ValueError(f"[message] 无法从 sheet 名解析日期: '{sheet_str}' in file: {file_path}")
                 frames.append(pdf)
             if not frames:
                 return pl.DataFrame()
             df = pl.from_pandas(pd.concat(frames, ignore_index=True))
+            # 打印对照日志
+            try:
+                if sheet_date_pairs:
+                    pairs_str = ", ".join([f"'{n}'→{d}" for n, d in sheet_date_pairs])
+                    logger.info(f"[message] Sheet 日期映射: {pairs_str}")
+            except Exception:
+                pass
         # Special handling: spending Excel may have multiple specific sheets to merge
         elif transform and transform.__class__.__name__.lower().startswith("spending") and is_excel:
             sheet_names_raw = None
@@ -316,12 +341,7 @@ class DataProcessor:
             if is_excel and not sheets_used:
                 sheets_used = ["0"]
 
-            # 对 message 的 CSV 与 Excel 保持一致：若无 '日期'，用文件名填充
-            if transform and transform.__class__.__name__.lower().startswith("message"):
-                if ("date" not in df.columns) and ("日期" not in df.columns):
-                    from pathlib import Path
-                    fname = Path(file_path).stem
-                    df = df.with_columns(pl.lit(fname).alias("日期"))
+            # 移除消息 CSV 的文件名兜底日期逻辑——严格依赖数据内提供的日期列
         if transform:
             df = transform.transform(df)
 
