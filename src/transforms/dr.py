@@ -53,7 +53,7 @@ class DRTransform(BaseTransform):
         df = df.with_columns(
             pl.when(pl.col("_leads_type_norm") == "自然")
             .then(pl.lit("自然"))
-            .when(pl.col("_leads_type_norm") == "付费")
+            .when(pl.col("_leads_type_norm").is_in(["付费", "广告"]))
             .then(pl.lit("付费"))
             .otherwise(pl.lit("未知")).alias("leads_type_norm")
         )
