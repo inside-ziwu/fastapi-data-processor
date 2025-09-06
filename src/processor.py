@@ -329,6 +329,19 @@ class DataProcessor:
                     pldf = transform._rename_columns(pldf, transform.mapping)  # type: ignore[attr-defined]
                 except Exception:
                     pass
+                # Cast key/text columns to Utf8 (robust to mixed types like int IDs)
+                try:
+                    casts = []
+                    if "NSC_CODE" in pldf.columns:
+                        casts.append(pl.col("NSC_CODE").cast(pl.Utf8, strict=False).alias("NSC_CODE"))
+                    if "store_name" in pldf.columns:
+                        casts.append(pl.col("store_name").cast(pl.Utf8, strict=False).alias("store_name"))
+                    if "level" in pldf.columns:
+                        casts.append(pl.col("level").cast(pl.Utf8, strict=False).alias("level"))
+                    if casts:
+                        pldf = pldf.with_columns(casts)
+                except Exception:
+                    pass
                 cols = set(pldf.columns)
                 if {"NSC_CODE", "level"}.issubset(cols):
                     level_frames.append(pldf.select(["NSC_CODE", "level"]))
@@ -358,6 +371,15 @@ class DataProcessor:
                 )
 
             if level_df is not None and store_df is not None:
+                # Ensure Utf8 types before join
+                try:
+                    level_df = level_df.with_columns(pl.col("NSC_CODE").cast(pl.Utf8, strict=False))
+                    store_df = store_df.with_columns([
+                        pl.col("NSC_CODE").cast(pl.Utf8, strict=False),
+                        pl.col("store_name").cast(pl.Utf8, strict=False),
+                    ])
+                except Exception:
+                    pass
                 df = level_df.join(store_df, on="NSC_CODE", how="outer")
                 try:
                     ln = int(level_df.height)
