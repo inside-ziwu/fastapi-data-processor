@@ -74,6 +74,19 @@ class DataProcessor:
         if not processed_files:
             return pl.DataFrame()
 
+        # Structural fix: merge DR sources before aggregation
+        dr_items = [(name, df) for name, df in processed_files if "dr" in (name or "").lower()]
+        other_items = [(name, df) for name, df in processed_files if "dr" not in (name or "").lower()]
+        if dr_items:
+            try:
+                dr_df = pl.concat([df for _, df in dr_items], how="vertical")
+                logger.info(
+                    f"Combined DR sources: {', '.join(name for name, _ in dr_items)} -> rows={dr_df.shape[0]}, cols={dr_df.shape[1]}"
+                )
+                processed_files = other_items + [("dr", dr_df)]
+            except Exception as e:
+                logger.warning(f"Failed to combine DR sources: {e}. Proceeding without combination.")
+
         # Step 2: Aggregate each non-dimension source by NSC_CODE(+date) as specified
         aggregated = self._aggregate_sources(processed_files)
 
@@ -629,6 +642,22 @@ class DataProcessor:
                 f"left has {left.columns}, right has {right.columns}"
             )
             return left
+
+        # Diagnostics: suffix masking — overlapping columns (excluding keys) that will be suffixed
+        try:
+            if self._diag_enabled():
+                left_cols = set(left.columns)
+                right_cols = set(right.columns)
+                overlap = (left_cols & right_cols) - set(common_keys)
+                if overlap:
+                    sample = list(overlap)
+                    if len(sample) > 12:
+                        sample = sample[:12] + ["..."]
+                    logger.info(
+                        f"Join overlap with '{source_name}' (suffix _{source_name} will apply): count={len(overlap)}, cols={sample}"
+                    )
+        except Exception:
+            pass
 
         # Prefer lazy streaming join for performance/scalability
         try:
