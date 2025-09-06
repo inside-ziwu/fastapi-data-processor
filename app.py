@@ -27,6 +27,12 @@ def json_date_serializer(obj):
 import polars as pl
 
 from src import DataProcessor
+from src.diagnostics.metrics import (
+    log_settlement_inputs,
+    log_level_distribution,
+    log_suffix_masking,
+    log_account_base_conflicts,
+)
 from feishu_writer_sync import FeishuWriterV3
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -325,6 +331,15 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             result_df = rename_for_output(result_df)
         except Exception as e:
             logger.warning(f"Output renaming skipped due to error: {e}")
+
+        # Diagnostics (opt-in) — keep outside core logic
+        try:
+            log_settlement_inputs(result_df)
+            log_level_distribution(result_df)
+            log_suffix_masking(result_df, local_paths.keys())
+            log_account_base_conflicts(result_df)
+        except Exception as e:
+            logger.error(f"Diagnostics failed: {e}", exc_info=True)
 
         # 3b. Settlement computation per 经销商ID (two-month window)
         try:

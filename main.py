@@ -13,6 +13,12 @@ from typing import Dict, Optional
 import platform
 
 from src import DataProcessor
+from src.diagnostics.metrics import (
+    log_settlement_inputs,
+    log_level_distribution,
+    log_suffix_masking,
+    log_account_base_conflicts,
+)
 from src.config import FIELD_MAPPINGS
 from feishu_writer_sync import FeishuWriterV3
 
@@ -64,6 +70,15 @@ async def process_data_files(
             result_df = rename_for_output(result_df)
         except Exception as e:
             logger.warning(f"Output renaming skipped due to error: {e}")
+
+        # Diagnostics (opt-in via env) before settlement
+        try:
+            log_settlement_inputs(result_df)
+            log_level_distribution(result_df)
+            log_suffix_masking(result_df, file_paths.keys())
+            log_account_base_conflicts(result_df)
+        except Exception as e:
+            logger.error(f"Diagnostics failed: {e}", exc_info=True)
 
         # Compute settlement (结算) summary over T/T-1 months
         try:
