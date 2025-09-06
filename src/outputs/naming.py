@@ -73,8 +73,17 @@ def rename_for_output(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
 
-    # Build rename map for present columns only
-    rename_map = {c: OUTPUT_NAME_MAP[c] for c in df.columns if c in OUTPUT_NAME_MAP}
+    # Build rename map for present columns only (supports suffixed columns like 'enter_private_count_msg')
+    rename_map: dict[str, str] = {}
+    for c in df.columns:
+        if c in OUTPUT_NAME_MAP:
+            rename_map[c] = OUTPUT_NAME_MAP[c]
+            continue
+        # Try stripping a single trailing suffix after the last underscore
+        if "_" in c:
+            base, _suffix = c.rsplit("_", 1)
+            if base in OUTPUT_NAME_MAP:
+                rename_map[c] = OUTPUT_NAME_MAP[base]
     if not rename_map:
         return df
 
