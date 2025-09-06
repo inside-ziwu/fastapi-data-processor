@@ -355,24 +355,6 @@ class DataProcessor:
                         pldf = pl.DataFrame(data)
                     except Exception as e:
                         raise e
-                # Rename columns using transform mapping (fuzzy)
-                try:
-                    pldf = transform._rename_columns(pldf, transform.mapping)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-                # Cast key/text columns to Utf8 (robust to mixed types like int IDs)
-                try:
-                    casts = []
-                    if "NSC_CODE" in pldf.columns:
-                        casts.append(pl.col("NSC_CODE").cast(pl.Utf8, strict=False).alias("NSC_CODE"))
-                    if "store_name" in pldf.columns:
-                        casts.append(pl.col("store_name").cast(pl.Utf8, strict=False).alias("store_name"))
-                    if "level" in pldf.columns:
-                        casts.append(pl.col("level").cast(pl.Utf8, strict=False).alias("level"))
-                    if casts:
-                        pldf = pldf.with_columns(casts)
-                except Exception:
-                    pass
                 cols = set(pldf.columns)
                 if {"NSC_CODE", "level"}.issubset(cols):
                     level_frames.append(pldf.select(["NSC_CODE", "level"]))
