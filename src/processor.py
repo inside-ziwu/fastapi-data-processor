@@ -192,7 +192,20 @@ class DataProcessor:
                 frames.append(pdf)
             if not frames:
                 return pl.DataFrame()
-            df = pl.from_pandas(pd.concat(frames, ignore_index=True))
+            # 合并并清洗 pandas 对象列，避免 bytes/int 混杂触发 Arrow 转换异常
+            pdf = pd.concat(frames, ignore_index=True)
+            try:
+                obj_cols = [c for c in pdf.columns if str(pdf[c].dtype) == "object"]
+                if obj_cols:
+                    for c in obj_cols:
+                        pdf[c] = pdf[c].apply(
+                            lambda v: (
+                                v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray)) else (None if v is None else str(v))
+                            )
+                        )
+            except Exception:
+                pass
+            df = pl.from_pandas(pdf)
             # 打印对照日志
             try:
                 if sheet_date_pairs:
