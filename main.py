@@ -77,6 +77,7 @@ async def process_data_files(
             log_level_distribution(result_df)
             log_suffix_masking(result_df, file_paths.keys())
             log_account_base_conflicts(result_df)
+            log_message_date_distribution(result_df)
         except Exception as e:
             logger.error(f"Diagnostics failed: {e}", exc_info=True)
 

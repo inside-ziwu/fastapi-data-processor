@@ -32,6 +32,7 @@ from src.diagnostics.metrics import (
     log_level_distribution,
     log_suffix_masking,
     log_account_base_conflicts,
+    log_message_date_distribution,
 )
 from feishu_writer_sync import FeishuWriterV3
 
@@ -338,6 +339,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             log_level_distribution(result_df)
             log_suffix_masking(result_df, local_paths.keys())
             log_account_base_conflicts(result_df)
+            log_message_date_distribution(result_df)
         except Exception as e:
             logger.error(f"Diagnostics failed: {e}", exc_info=True)
 
