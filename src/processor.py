@@ -5,6 +5,8 @@ from typing import Dict, List, Optional, Any
 import polars as pl
 from pathlib import Path
 import os
+import re
+import unicodedata
 
 from .readers import ReaderRegistry, registry as reader_registry
 from .transforms import BaseTransform
@@ -131,10 +133,39 @@ class DataProcessor:
             frames = []
             for sheet_name, pdf in sheets.items():
                 sheets_used.append(str(sheet_name))
-                # 按需求：若无'日期'，新增一列 '日期' = sheet 名称
+                # 从 sheet 名推断日期：优先写入 'date'（ISO），失败时回退为 '日期' 文本
                 pdf = pdf.copy()
-                if "日期" not in pdf.columns:
-                    pdf["日期"] = str(sheet_name)
+                has_date_col = ("date" in pdf.columns) or ("日期" in pdf.columns)
+                if not has_date_col:
+                    sheet_str = str(sheet_name or "").strip()
+                    # 规范化
+                    s = unicodedata.normalize("NFKC", sheet_str)
+                    s = s.replace("年", "-").replace("月", "-").replace("日", "")
+                    s = s.replace("/", "-").replace(".", "-")
+                    s = re.sub(r"\s+", "", s)
+                    iso_val: Optional[str] = None
+                    # YYYY-MM-DD
+                    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+                        iso_val = s
+                    # YYYY-M(M) → pad month/day=01
+                    elif re.fullmatch(r"\d{4}-\d{1,2}", s):
+                        parts = s.split("-")
+                        iso_val = f"{parts[0]}-{int(parts[1]):02d}-01"
+                    # YYYY → assume first day of year (rare; fallback)
+                    elif re.fullmatch(r"\d{4}", s):
+                        iso_val = f"{s}-01-01"
+
+                    if iso_val:
+                        pdf["date"] = iso_val
+                    else:
+                        pdf["日期"] = sheet_str
+                        try:
+                            if os.getenv("PROCESSOR_WARN_OPTIONAL_FIELDS", "1").strip().lower() in {"1", "true", "yes", "on"}:
+                                logger.warning(
+                                    f"[message] 未能从sheet名解析日期: '{sheet_str}' → 回退写入'日期'文本列"
+                                )
+                        except Exception:
+                            pass
                 frames.append(pdf)
             if not frames:
                 return pl.DataFrame()
