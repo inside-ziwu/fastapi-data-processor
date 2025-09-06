@@ -79,9 +79,9 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
         return df
 
     suffixes = {s.strip().lower() for s in valid_suffixes if s and isinstance(s, str)}
-    rename_map: dict[str, str] = {}
+    # Collect candidate columns per base
     existing = set(df.columns)
-
+    base_to_cols: dict[str, list[str]] = {}
     for c in df.columns:
         if "_" not in c:
             continue
@@ -90,19 +90,48 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
             continue
         if base not in OUTPUT_NAME_MAP:
             continue
-        # Only normalize when base does not already exist to avoid duplicates
+        base_to_cols.setdefault(base, []).append(c)
+
+    if not base_to_cols:
+        return df
+
+    # For each base: if base already exists, skip. If one candidate -> rename. If multiple -> sum horizontally.
+    for base, cols in base_to_cols.items():
         if base in existing:
             continue
-        rename_map[c] = base
-
-    if not rename_map:
-        return df
-
-    try:
-        return df.rename(rename_map)
-    except Exception:
-        # Best effort: if rename fails (unlikely), return original df
-        return df
+        if len(cols) == 1:
+            try:
+                df = df.rename({cols[0]: base})
+                existing.add(base)
+                existing.discard(cols[0])
+            except Exception:
+                continue
+        else:
+            # Merge multiple suffixed columns into one base: sum numerics, coalesce non-numerics (first non-null as string)
+            try:
+                num_sum = pl.sum_horizontal([
+                    pl.col(c).cast(pl.Float64, strict=False) for c in cols
+                ]).alias(f"__{base}__sum")
+                df = df.with_columns(num_sum)
+                # Prefer numeric sum when any numeric present, else coalesce first non-null as string
+                if df[f"__{base}__sum"].null_count() < df.height:
+                    df = df.rename({f"__{base}__sum": base})
+                else:
+                    # Fallback: coalesce as string
+                    co = pl.coalesce([pl.col(c).cast(pl.Utf8) for c in cols]).alias(base)
+                    df = df.drop(f"__{base}__sum").with_columns(co)
+                df = df.drop(cols)
+                existing.add(base)
+                for c in cols:
+                    existing.discard(c)
+            except Exception:
+                # Best effort: if merge fails, keep original columns
+                try:
+                    df = df.drop(f"__{base}__sum")
+                except Exception:
+                    pass
+                continue
+    return df
 
 
 def rename_for_output(df: pl.DataFrame) -> pl.DataFrame:

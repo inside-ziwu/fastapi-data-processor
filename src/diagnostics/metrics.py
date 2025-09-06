@@ -189,7 +189,8 @@ def log_message_date_distribution(df: pl.DataFrame) -> None:
         return
     logger = logging.getLogger(__name__)
     try:
-        if "date" not in df.columns:
+        date_col = _pick(df, ["date", "日期"]) or "date"
+        if date_col not in df.columns:
             logger.info("Message diag: no date column present in wide table")
             return
         c_enter = _pick(df, ["进私人数"]) 
@@ -214,7 +215,7 @@ def log_message_date_distribution(df: pl.DataFrame) -> None:
         # Monthly distribution
         ym = (
             df.select([
-                pl.col("date").cast(pl.Date).dt.strftime("%Y-%m").alias("_ym"),
+                pl.col(date_col).cast(pl.Date).dt.strftime("%Y-%m").alias("_ym"),
                 *(pl.col(c).alias(c) for c in [c_enter, c_open, c_leads] if c),
             ])
             .group_by("_ym")
