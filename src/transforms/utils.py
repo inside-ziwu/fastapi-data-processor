@@ -104,17 +104,140 @@ def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = None) -> pl.DataFrame:
-    """Ensure date column exists and is properly formatted (fail-fast).
+def _norm_header_key(s: str) -> str:
+    s = re.sub(r"[\u200b\u200c\u200d\ufeff\u00a0]+", "", s or "")
+    s = unicodedata.normalize("NFKC", s)
+    return (
+        s.replace(" ", "").replace("（", "(").replace("）", ")").replace("：", ":").lower()
+    )
 
-    Parsing strategy:
-    - Accept common headers (中文/英文) and rename to 'date'.
-    - NFKC normalize text, trim, unify separators '/', '.' -> '-', remove '年/月/日'.
-    - Accept 'YYYYMMDD' 8-digit form.
-    - Accept ISO datetime strings (keep date part).
-    - Accept Excel serial numbers (rough range) as days from 1899-12-30.
-    - Finally require non-null dates; raise if all null.
+
+def _to_date_py(v: Any) -> Optional[date]:
+    """Best-effort Python parser for dirty date values (single cell)."""
+    if v is None:
+        return None
+    # Excel serial (rough bounds)
+    if isinstance(v, (int, float)):
+        iv = int(v)
+        if 20000 <= iv <= 80000:
+            base = date(1899, 12, 30)
+            try:
+                return base + timedelta(days=iv)
+            except Exception:
+                return None
+        else:
+            return None
+    # String-like
+    s = str(v)
+    s = unicodedata.normalize("NFKC", s).strip()
+    # Keep only date part if datetime-like
+    if "T" in s:
+        s = s.split("T", 1)[0]
+    if " " in s:
+        s = s.split(" ", 1)[0]
+    # Chinese date
+    s = s.replace("年", "-").replace("月", "-").replace("日", "")
+    # Unify separators
+    s = s.replace("/", "-").replace(".", "-")
+    # 8-digit compact form
+    if re.fullmatch(r"\d{8}", s):
+        s = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+    # ISO date or datetime
+    try:
+        return date.fromisoformat(s)
+    except Exception:
+        try:
+            return datetime.fromisoformat(s).date()
+        except Exception:
+            return None
+
+
+def _normalize_and_parse_date_column(
+    df: pl.DataFrame, date_candidates: Optional[List[str]], required: bool
+) -> pl.DataFrame:
+    """Shared implementation for ensuring/normalizing a date column.
+
+    - Renames the first matching candidate to 'date' (header match normalized).
+    - Parses to pl.Date via vector ops where possible; falls back to Python for edge cases.
+    - If required=True and all values null after parsing, raises.
     """
+    date_candidates = date_candidates or [
+        "日期",
+        "留资日期",
+        "date",
+        "time",
+        "开播日期",
+        "直播日期",
+        "日期时间",
+        "register_time",
+        "register date",
+    ]
+
+    # Rename to 'date' if not present
+    if "date" not in df.columns:
+        for candidate in date_candidates:
+            if candidate in df.columns:
+                df = df.rename({candidate: "date"})
+                break
+        if "date" not in df.columns:
+            norm_map = {_norm_header_key(c): c for c in df.columns}
+            for candidate in date_candidates:
+                key = _norm_header_key(candidate)
+                if key in norm_map:
+                    df = df.rename({norm_map[key]: "date"})
+                    break
+
+    if "date" not in df.columns:
+        if required:
+            raise ValueError(f"No date column found. Available: {df.columns}")
+        return df
+
+    # Already Date
+    if df["date"].dtype == pl.Date:
+        return df
+    # Cast from Datetime
+    if df["date"].dtype == pl.Datetime:
+        return df.with_columns(pl.col("date").cast(pl.Date).alias("date"))
+
+    # Vectorized normalization of strings (best effort)
+    s = pl.col("date").cast(pl.Utf8)
+    norm = (
+        s.str.replace_all(r"[\u200b\u200c\u200d\ufeff\u00a0]", "")
+        .str.replace_all("年", "-")
+        .str.replace_all("月", "-")
+        .str.replace_all("日", "")
+        .str.replace_all("/", "-")
+        .str.replace_all(r"\.", "-")
+        .str.strip_chars()
+    )
+    # Try multiple parse formats and coalesce
+    d1 = norm.str.strptime(pl.Date, "%Y-%m-%d", strict=False)
+    d2 = norm.str.strptime(pl.Date, "%Y%m%d", strict=False)
+    # As datetime and cast to date (handles time part)
+    dt1 = norm.str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False).cast(pl.Date)
+    dt2 = norm.str.strptime(pl.Datetime, "%Y/%m/%d %H:%M:%S", strict=False).cast(pl.Date)
+    parsed = pl.coalesce([d1, d2, dt1, dt2])
+
+    df = df.with_columns(parsed.alias("date"))
+
+    # Fallback to Python for leftover nulls (Excel serials and oddballs)
+    if int(df.select(pl.col("date").is_null().sum()).to_series(0)[0]) > 0:
+        df = df.with_columns(
+            pl.when(pl.col("date").is_null())
+            .then(pl.col("date").map_elements(_to_date_py, return_dtype=pl.Date))
+            .otherwise(pl.col("date"))
+            .alias("date")
+        )
+
+    if required and int(df.select(pl.col("date").is_null().sum()).to_series(0)[0]) == df.height:
+        raise ValueError("Date parsing failed: all values are null after normalization")
+
+    return df
+
+
+def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = None) -> pl.DataFrame:
+    """Ensure date column exists and is properly formatted (fail-fast)."""
+    return _normalize_and_parse_date_column(df, date_candidates, required=True)
     if date_candidates is None:
         date_candidates = ["日期", "留资日期", "date", "time", "开播日期", "直播日期", "日期时间"]
 
@@ -198,72 +321,8 @@ def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = 
 def ensure_optional_date_column(
     df: pl.DataFrame, date_candidates: Optional[List[str]] = None
 ) -> pl.DataFrame:
-    """Ensure date column if present; do not raise when missing.
-
-    Same parsing strategy as ensure_date_column, but never raises if missing
-    or all-null; caller decides how to handle.
-    """
-    if date_candidates is None:
-        date_candidates = ["日期", "留资日期", "date", "time", "开播日期", "直播日期", "日期时间"]
-
-    if "date" not in df.columns:
-        for candidate in date_candidates:
-            if candidate in df.columns:
-                df = df.rename({candidate: "date"})
-                break
-        if "date" not in df.columns:
-            def _norm(s: str) -> str:
-                s = re.sub(r"[\u200b\u200c\u200d\ufeff\u00a0]+", "", s or "")
-                s = unicodedata.normalize("NFKC", s)
-                return s.replace(" ", "").replace("（", "(").replace("）", ")").replace("：", ":").lower()
-            norm_map = {_norm(c): c for c in df.columns}
-            for candidate in date_candidates:
-                key = _norm(candidate)
-                if key in norm_map:
-                    df = df.rename({norm_map[key]: "date"})
-                    break
-
-    if "date" in df.columns:
-        dt = df["date"].dtype
-        if dt == pl.Date:
-            return df
-        elif dt == pl.Datetime:
-            df = df.with_columns(pl.col("date").cast(pl.Date).alias("date"))
-        else:
-            def _to_date_py(v: Any) -> Optional[date]:
-                if v is None:
-                    return None
-                if isinstance(v, (int, float)):
-                    iv = int(v)
-                    if 20000 <= iv <= 80000:
-                        base = date(1899, 12, 30)
-                        try:
-                            return base + timedelta(days=iv)
-                        except Exception:
-                            return None
-                    else:
-                        return None
-                s = str(v)
-                s = unicodedata.normalize("NFKC", s).strip()
-                if "T" in s:
-                    s = s.split("T", 1)[0]
-                if " " in s:
-                    s = s.split(" ", 1)[0]
-                s = s.replace("年", "-").replace("月", "-").replace("日", "")
-                s = s.replace("/", "-").replace(".", "-")
-                if re.fullmatch(r"\d{8}", s):
-                    s = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
-                try:
-                    return date.fromisoformat(s)
-                except Exception:
-                    try:
-                        return datetime.fromisoformat(s).date()
-                    except Exception:
-                        return None
-
-            df = df.with_columns(pl.col("date").map_elements(_to_date_py, return_dtype=pl.Date).alias("date"))
-
-    return df
+    """Ensure date column if present; do not raise when missing."""
+    return _normalize_and_parse_date_column(df, date_candidates, required=False)
 
 
 def cast_numeric_columns(df: pl.DataFrame, columns: List[str]) -> pl.DataFrame:
