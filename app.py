@@ -330,12 +330,8 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         try:
             from src.outputs.naming import rename_for_output, normalize_join_suffixes
             # Normalize join suffixes using request's file keys
-            try:
-                # Extract keys similarly to the incoming payload
-                keys = set([k for k in files.keys()]) if 'files' in locals() and isinstance(files, dict) else None
-            except Exception:
-                keys = None
-            _suffixes = keys or set()
+            # Use actual processed file keys for suffix normalization
+            _suffixes = set(local_paths.keys())
             logger.info(f"[output] Valid join suffixes: {sorted(list(_suffixes))}")
             result_df = normalize_join_suffixes(result_df, _suffixes)
             result_df = rename_for_output(result_df)
