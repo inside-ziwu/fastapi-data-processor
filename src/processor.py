@@ -299,6 +299,11 @@ class DataProcessor:
             for sheet_name in xls.sheet_names:
                 sheets_used.append(str(sheet_name))
                 pdf = pd.read_excel(xls, sheet_name=sheet_name, engine="openpyxl")
+                # Ensure all column headers are strings to avoid Polars conversion errors
+                try:
+                    pdf.columns = [str(c) for c in pdf.columns]
+                except Exception:
+                    pass
                 pldf = pl.from_pandas(pdf)
                 # Rename columns using transform mapping (fuzzy)
                 try:
