@@ -342,12 +342,20 @@ class DataProcessor:
                     pldf = pl.from_pandas(pdf)
                 except Exception:
                     try:
-                        # Build string series with strict=False to tolerate None/ints
-                        cols_series = []
+                        import pandas as _pd
+                        data = {}
                         for k in pdf.columns:
-                            vals = [None if (isinstance(v, float) and (v != v)) else v for v in list(pdf[k].values)]
-                            cols_series.append(pl.Series(str(k), vals, dtype=pl.Utf8, strict=False))
-                        pldf = pl.DataFrame(cols_series)
+                            series = pdf[k]
+                            vals = []
+                            for v in list(series.values):
+                                if v is None or (isinstance(v, float) and v != v):
+                                    vals.append(None)
+                                elif isinstance(v, (bytes, bytearray)):
+                                    vals.append(v.decode("utf-8", "ignore"))
+                                else:
+                                    vals.append(str(v))
+                            data[str(k)] = vals
+                        pldf = pl.DataFrame(data)
                     except Exception as e:
                         raise e
                 cols = set(pldf.columns)
