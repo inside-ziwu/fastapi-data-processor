@@ -97,50 +97,66 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
 
     # For each base: if base already exists and is textual (store_name/level), coalesce; else merge/rename.
     TEXT_BASES = {"store_name", "level"}
+    def _clean_text_expr(colname: str) -> pl.Expr:
+        return (
+            pl.when(pl.col(colname).is_null() | (pl.col(colname).cast(pl.Utf8).str.strip_chars() == ""))
+            .then(None)
+            .otherwise(pl.col(colname).cast(pl.Utf8))
+        )
     for base, cols in base_to_cols.items():
         if base in existing:
             if base in TEXT_BASES:
                 try:
-                    # Coalesce base with suffixed textual columns
-                    co = pl.coalesce([pl.col(base).cast(pl.Utf8)] + [pl.col(c).cast(pl.Utf8) for c in cols]).alias(base)
+                    # Coalesce base with suffixed textual columns; treat empty string as null
+                    co = pl.coalesce([_clean_text_expr(base)] + [_clean_text_expr(c) for c in cols]).alias(base)
                     df = df.with_columns(co).drop(cols)
                     for c in cols:
                         existing.discard(c)
                 except Exception:
                     pass
             continue
-        if len(cols) == 1:
+        # base not in existing yet
+        if base in TEXT_BASES:
             try:
-                df = df.rename({cols[0]: base})
-                existing.add(base)
-                existing.discard(cols[0])
-            except Exception:
-                continue
-        else:
-            # Merge multiple suffixed columns into one base: sum numerics, coalesce non-numerics (first non-null as string)
-            try:
-                num_sum = pl.sum_horizontal([
-                    pl.col(c).cast(pl.Float64, strict=False) for c in cols
-                ]).alias(f"__{base}__sum")
-                df = df.with_columns(num_sum)
-                # Prefer numeric sum when any numeric present, else coalesce first non-null as string
-                if df[f"__{base}__sum"].null_count() < df.height:
-                    df = df.rename({f"__{base}__sum": base})
-                else:
-                    # Fallback: coalesce as string
-                    co = pl.coalesce([pl.col(c).cast(pl.Utf8) for c in cols]).alias(base)
-                    df = df.drop(f"__{base}__sum").with_columns(co)
-                df = df.drop(cols)
+                co = pl.coalesce([_clean_text_expr(c) for c in cols]).alias(base)
+                df = df.with_columns(co).drop(cols)
                 existing.add(base)
                 for c in cols:
                     existing.discard(c)
             except Exception:
-                # Best effort: if merge fails, keep original columns
-                try:
-                    df = df.drop(f"__{base}__sum")
-                except Exception:
-                    pass
                 continue
+        else:
+            if len(cols) == 1:
+                try:
+                    df = df.rename({cols[0]: base})
+                    existing.add(base)
+                    existing.discard(cols[0])
+                except Exception:
+                    continue
+            else:
+                # Merge multiple suffixed columns into one base: sum numerics, coalesce non-numerics (first non-null as string)
+                try:
+                    num_sum = pl.sum_horizontal([
+                        pl.col(c).cast(pl.Float64, strict=False) for c in cols
+                    ]).alias(f"__{base}__sum")
+                    df = df.with_columns(num_sum)
+                    # Prefer numeric sum when any numeric present, else coalesce as string
+                    if df[f"__{base}__sum"].null_count() < df.height:
+                        df = df.rename({f"__{base}__sum": base})
+                    else:
+                        # Fallback: coalesce as string (treat empty as null)
+                        co = pl.coalesce([_clean_text_expr(c) for c in cols]).alias(base)
+                        df = df.drop(f"__{base}__sum").with_columns(co)
+                    df = df.drop(cols)
+                    existing.add(base)
+                    for c in cols:
+                        existing.discard(c)
+                except Exception:
+                    try:
+                        df = df.drop(f"__{base}__sum")
+                    except Exception:
+                        pass
+                    continue
     return df
 
 
