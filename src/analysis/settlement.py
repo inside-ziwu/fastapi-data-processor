@@ -59,7 +59,23 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
         group_mode = "id"
 
     if id_col not in df.columns:
-        raise ValueError(f"缺少列: {id_col}")
+        # 当按层级聚合但缺少层级列时，按规范创建“未知”层级，保证不崩溃且有兜底分组
+        if group_mode == "level":
+            df = df.with_columns(pl.lit("未知").alias("层级"))
+        else:
+            raise ValueError(f"缺少列: {id_col}")
+
+    # 层级兜底：仅将空/缺失置为“未知”，不限制取值集合，不改动非空原值
+    if group_mode == "level":
+        if "层级" not in df.columns:
+            df = df.with_columns(pl.lit("未知").alias("层级"))
+        else:
+            df = df.with_columns(
+                pl.when(pl.col("层级").is_null() | (pl.col("层级").cast(pl.Utf8).str.strip_chars() == ""))
+                .then(pl.lit("未知"))
+                .otherwise(pl.col("层级"))
+                .alias("层级")
+            )
 
     # Resolve source columns: prefer clean english, fallback to Chinese UI names
     def pick(*cands: str) -> str | None:
@@ -391,6 +407,17 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
     if ensure_zero_cols:
         result = result.with_columns(ensure_zero_cols)
 
+    # 层级排序：降序，且“未知”置底
+    if group_mode == "level" and "层级" in result.columns:
+        result = (
+            result
+            .with_columns(
+                pl.when(pl.col("层级") == "未知").then(1).otherwise(0).alias("_unk_sort")
+            )
+            .sort(by=["_unk_sort", "层级"], descending=[False, True])
+            .drop(["_unk_sort"])
+        )
+
     # Final selection: strict header as requested
     key_cols = [id_col]
     if group_mode == "id":
@@ -443,4 +470,16 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
 
     # Keep only available ordered metrics (some may be absent if sources missing)
     final_cols = key_cols + [c for c in ordered_metrics if c in result.columns]
-    return result.select(final_cols)
+    final_df = result.select(final_cols)
+
+    # 最终选择后再次按层级排序（若分组为层级），确保输出稳定：降序，未知置底
+    if group_mode == "level" and "层级" in final_df.columns:
+        final_df = (
+            final_df
+            .with_columns(
+                pl.when(pl.col("层级") == "未知").then(1).otherwise(0).alias("_unk_sort")
+            )
+            .sort(by=["_unk_sort", "层级"], descending=[False, True])
+            .drop(["_unk_sort"])
+        )
+    return final_df

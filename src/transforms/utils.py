@@ -25,16 +25,36 @@ def rename_columns(df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
 
 
 def _field_match(src: str, col: str) -> bool:
-    """Check if column matches source field name."""
-    # Normalize strings for comparison
-    src_norm = src.replace(" ", "").lower()
-    col_norm = col.replace(" ", "").lower()
+    """Check if column matches source field name with robust normalization.
 
-    # Check for exact match or substring match
+    - Normalizes full-width/half-width characters via NFKC.
+    - Removes all whitespace (including zero-width and NBSP).
+    - Unifies common punctuation variants and drops non-alnum/non-CJK symbols (keeps content inside brackets).
+    - Enables tolerant matches like '小风车点击次数（不含小雪花）' vs '小风车点击次数(不含小雪花)'.
+    """
+    import re
+    import unicodedata
+
+    def _norm(s: str) -> str:
+        s = s or ""
+        # Normalize to unify full-width and half-width forms
+        s = unicodedata.normalize("NFKC", s)
+        s = s.lower()
+        # Remove all whitespace variants (space, zero-width, NBSP, etc.)
+        s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\u00a0]+", "", s)
+        # Unify a few common punctuation variants explicitly
+        s = s.replace("（", "(").replace("）", ")").replace("：", ":")
+        # Drop non-alnum/non-CJK characters (parentheses removed but content preserved)
+        s = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", s)
+        return s
+
+    src_norm = _norm(src)
+    col_norm = _norm(col)
+
     return (
         src_norm == col_norm
-        or src_norm in col_norm
-        or col_norm in src_norm
+        or (src_norm and src_norm in col_norm)
+        or (col_norm and col_norm in src_norm)
     )
 
 
