@@ -64,7 +64,6 @@ ACCOUNT_BASE_MAP = {
     "NSC Code": "NSC_CODE",
     "抖音id": "store_name",
     "抖音ID": "store_name",
-    "抖音号": "store_name",
 }
 
 # 飞书多维表格字段映射（支持一对一和一对多映射）
