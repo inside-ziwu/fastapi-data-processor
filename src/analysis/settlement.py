@@ -230,7 +230,7 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
         "T-1月直播线索量": pick("live_leads", "直播线索量"),
         "T-1月锚点曝光量": pick("anchor_exposure", "锚点曝光量"),
         "T-1月组件点击次数": pick("component_clicks", "组件点击次数"),
-        "T-1月组件留资人数（获取线索量）": pick("short_video_leads", "组件留资人数（获取线素量）", "组件留资人数（获取线索量）"),
+        "T-1月组件留资人数（获取线索量）": pick("short_video_leads", "组件留资人数（获取线索量）"),
         "T-1月短视频条数": pick("short_video_count", "短视频条数"),
         "T-1月短视频播放量": pick("short_video_plays", "短视频播放量"),
         "T-1月 车云店+区域投放总金额": spend_src,
@@ -283,6 +283,12 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
     # Derived ratios and daily averages
     def col(name: str) -> pl.Expr:
         return pl.col(name) if name in grouped.columns else pl.lit(0.0)
+
+    def col_any(*names: str) -> pl.Expr:
+        for n in names:
+            if n in grouped.columns:
+                return pl.col(n)
+        return pl.lit(0.0)
 
     total_eff_days = col("T月有效天数") + col("T-1月有效天数")
 
@@ -347,13 +353,31 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
         _safe_div(col("T月小风车点击次数(总)"), col("T月有效直播场次(总)")).alias("T月场均小风车点击次数"),
         _safe_div(col("T-1月小风车点击次数(总)"), col("T-1月有效直播场次(总)")).alias("T-1月场均小风车点击次数"),
 
-        _safe_div(col("组件点击次数"), col("锚点曝光量")).alias("组件点击率"),
-        _safe_div(col("T月组件点击次数"), col("T月锚点曝光量")).alias("T月组件点击率"),
-        _safe_div(col("T-1月组件点击次数"), col("T-1月锚点曝光量")).alias("T-1月组件点击率"),
+        _safe_div(
+            col_any("组件点击次数(总)", "组件点击次数"),
+            col_any("锚点曝光量(总)", "锚点曝光量"),
+        ).alias("组件点击率"),
+        _safe_div(
+            col_any("T月组件点击次数(总)", "T月组件点击次数"),
+            col_any("T月锚点曝光量(总)", "T月锚点曝光量"),
+        ).alias("T月组件点击率"),
+        _safe_div(
+            col_any("T-1月组件点击次数(总)", "T-1月组件点击次数"),
+            col_any("T-1月锚点曝光量(总)", "T-1月锚点曝光量"),
+        ).alias("T-1月组件点击率"),
 
-        _safe_div(col("组件留资人数（获取线索量）"), col("锚点曝光量")).alias("组件留资率"),
-        _safe_div(col("T月组件留资人数（获取线索量）"), col("T月锚点曝光量")).alias("T月组件留资率"),
-        _safe_div(col("T-1月组件留资人数（获取线索量）"), col("T-1月锚点曝光量")).alias("T-1月组件留资率"),
+        _safe_div(
+            col_any("组件留资人数（获取线索量）(总)", "组件留资人数（获取线索量）"),
+            col_any("锚点曝光量(总)", "锚点曝光量"),
+        ).alias("组件留资率"),
+        _safe_div(
+            col_any("T月组件留资人数（获取线索量）(总)", "T月组件留资人数（获取线索量）"),
+            col_any("T月锚点曝光量(总)", "T月锚点曝光量"),
+        ).alias("T月组件留资率"),
+        _safe_div(
+            col_any("T-1月组件留资人数（获取线索量）(总)", "T-1月组件留资人数（获取线索量）"),
+            col_any("T-1月锚点曝光量(总)", "T-1月锚点曝光量"),
+        ).alias("T-1月组件留资率"),
 
         # Message daily averages
         _safe_div(col("进私人数(总)"), total_eff_days).alias("日均进私人数"),
