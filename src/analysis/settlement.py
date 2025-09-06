@@ -165,6 +165,62 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
         if ("T月有效天数" not in df.columns) and ("T-1月有效天数" not in df.columns):
             logger.warning("结算提示：缺失有效天数列(T月有效天数/T-1月有效天数)。相关日均指标将按0计算。")
 
+    # Diagnostics: pre-aggregation period distribution and key metric sums (env-controlled)
+    def _diag_enabled() -> bool:
+        val = os.getenv("PROCESSOR_DIAG", "1").strip().lower()
+        return val in {"1", "true", "yes", "on"}
+
+    if _diag_enabled():
+        try:
+            total_rows = int(df.height)
+            t_rows = int(df.filter(pl.col("period") == "T").height) if "period" in df.columns else 0
+            t1_rows = int(df.filter(pl.col("period") == "T-1").height) if "period" in df.columns else 0
+
+            diag_sources = {
+                "自然线索量": pick("natural_leads", "自然线索"),
+                "付费线索量": pick("paid_leads", "付费线索"),
+                "车云店付费线索": pick("store_paid_leads", "车云店付费线索"),
+                "区域加码付费线索": pick("area_paid_leads", "区域加码付费线索"),
+                "本地线索量": local_src,
+                "组件点击次数": pick("component_clicks", "组件点击次数"),
+                "锚点曝光量": pick("anchor_exposure", "锚点曝光量"),
+                "组件留资人数（获取线索量）": pick("short_video_leads", "组件留资人数（获取线索量）"),
+                "进私人数": pick("enter_private_count", "进私人数"),
+                "私信开口人数": pick("private_open_count", "私信开口人数"),
+                "咨询留资人数": pick("private_leads_count", "咨询留资人数"),
+                "投放金额": spend_src,
+            }
+
+            def sum_for(tag: str, src: str | None) -> float:
+                if not src or src not in df.columns:
+                    return 0.0
+                if "period" not in df.columns:
+                    return float(df.select(pl.col(src).sum()).to_series(0)[0] or 0.0)
+                if tag == "both":
+                    expr = pl.when(pl.col("period").is_in(["T", "T-1"]))\
+                        .then(pl.col(src)).otherwise(0).sum()
+                elif tag == "T":
+                    expr = pl.when(pl.col("period") == "T").then(pl.col(src)).otherwise(0).sum()
+                else:
+                    expr = pl.when(pl.col("period") == "T-1").then(pl.col(src)).otherwise(0).sum()
+                try:
+                    return float(df.select(expr).to_series(0)[0] or 0.0)
+                except Exception:
+                    return 0.0
+
+            sums_payload: dict[str, dict[str, float]] = {}
+            for mname, src_col in diag_sources.items():
+                sums_payload[mname] = {
+                    "both": sum_for("both", src_col),
+                    "T": sum_for("T", src_col),
+                    "T-1": sum_for("T-1", src_col),
+                }
+            logger.info(
+                f"Settlement diag: period rows total={total_rows}, T={t_rows}, T-1={t1_rows}; metric sums={sums_payload}"
+            )
+        except Exception:
+            pass
+
     metrics_both = {
         "自然线索量": pick("natural_leads", "自然线索"),
         "付费线索量": pick("paid_leads", "付费线索"),
