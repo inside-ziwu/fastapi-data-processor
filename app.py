@@ -358,6 +358,12 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 result_df = add_feishu_rate_aliases(result_df)
             except Exception:
                 pass
+            # 关键率列诊断
+            try:
+                from src.diagnostics.metrics import log_core_rates
+                log_core_rates(result_df)
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Settlement computation failed: {e}")
 

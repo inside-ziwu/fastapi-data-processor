@@ -96,6 +96,12 @@ async def process_data_files(
             except Exception:
                 pass
             result_df = summary_df
+            # Log core rate columns presence and stats
+            try:
+                from src.diagnostics.metrics import log_core_rates
+                log_core_rates(result_df)
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Settlement computation failed: {e}")
 
