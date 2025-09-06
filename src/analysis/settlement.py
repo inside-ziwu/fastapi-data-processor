@@ -33,7 +33,10 @@ def _sum_period(col: str, tag: str) -> pl.Expr:
 
 
 def _safe_div(num: pl.Expr, den: pl.Expr) -> pl.Expr:
-    return pl.when((den != 0) & den.is_not_null()).then(num / den).otherwise(0.0)
+    # Cast to Float64 to avoid integer-division surprises and ensure stable dtype
+    numf = num.cast(pl.Float64)
+    denf = den.cast(pl.Float64)
+    return pl.when((denf != 0) & denf.is_not_null()).then(numf / denf).otherwise(0.0)
 
 
 def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.DataFrame:
