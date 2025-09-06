@@ -23,8 +23,27 @@ class ExcelReader(BaseReader):
             engine="openpyxl",
             **pandas_kwargs,
         )
-
-        return pl.from_pandas(df_pd)
+        # Ensure string unique headers
+        try:
+            cols = [str(c) for c in df_pd.columns]
+            seen = {}
+            uniq = []
+            for c in cols:
+                if c in seen:
+                    seen[c] += 1
+                    uniq.append(f"{c}_{seen[c]}")
+                else:
+                    seen[c] = 0
+                    uniq.append(c)
+            df_pd.columns = uniq
+        except Exception:
+            pass
+        try:
+            return pl.from_pandas(df_pd)
+        except Exception:
+            # Fallback: dict-of-lists
+            data = {str(k): list(df_pd[k].values) for k in df_pd.columns}
+            return pl.DataFrame(data)
 
     def validate_path(self, path: str) -> bool:
         return path.lower().endswith((".xlsx", ".xls"))
