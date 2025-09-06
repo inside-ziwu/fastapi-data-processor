@@ -30,8 +30,8 @@ class MessageTransform(BaseTransform):
         # Step 2: Normalize NSC_CODE column
         df = self._normalize_nsc_code(df)
 
-        # Step 3: Ensure date column if present; message数据有时无日期
-        df = self._ensure_optional_date_column(df, ["日期", "date", "time", "私信日期", "消息日期"]) 
+        # Step 3: Ensure date column (strict) — fail-fast if missing/invalid
+        df = self._ensure_date_column(df, ["日期", "date", "time", "私信日期", "消息日期"]) 
 
         # Step 4: Cast numeric columns
         df = self._cast_numeric_columns(df, self.sum_columns)

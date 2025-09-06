@@ -2,6 +2,9 @@
 
 import polars as pl
 from typing import Dict, List, Any, Optional
+import re
+import unicodedata
+from datetime import date, datetime, timedelta
 
 
 def rename_columns(df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
@@ -102,7 +105,16 @@ def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = None) -> pl.DataFrame:
-    """Ensure date column exists and is properly formatted."""
+    """Ensure date column exists and is properly formatted (fail-fast).
+
+    Parsing strategy:
+    - Accept common headers (中文/英文) and rename to 'date'.
+    - NFKC normalize text, trim, unify separators '/', '.' -> '-', remove '年/月/日'.
+    - Accept 'YYYYMMDD' 8-digit form.
+    - Accept ISO datetime strings (keep date part).
+    - Accept Excel serial numbers (rough range) as days from 1899-12-30.
+    - Finally require non-null dates; raise if all null.
+    """
     if date_candidates is None:
         date_candidates = ["日期", "留资日期", "date", "time", "开播日期", "直播日期", "日期时间"]
 
@@ -114,12 +126,10 @@ def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = 
                 break
         # Fallback: normalized name match (handles zero-width/nbspace/fullwidth)
         if "date" not in df.columns:
-            import re
             def _norm(s: str) -> str:
-                s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\u00a0]+", "", s or "")
-                s = s.replace("（", "(").replace("）", ")").replace("：", ":")
-                s = re.sub(r"[^\w\u4e00-\u9fa5:]+", "", s)
-                return s.lower()
+                s = re.sub(r"[\u200b\u200c\u200d\ufeff\u00a0]+", "", s or "")
+                s = unicodedata.normalize("NFKC", s)
+                return s.replace(" ", "").replace("（", "(").replace("）", ")").replace("：", ":").lower()
             norm_map = {_norm(c): c for c in df.columns}
             for candidate in date_candidates:
                 key = _norm(candidate)
@@ -130,19 +140,57 @@ def ensure_date_column(df: pl.DataFrame, date_candidates: Optional[List[str]] = 
     if "date" not in df.columns:
         raise ValueError(f"No date column found. Available: {df.columns}")
 
-    # Normalize dtype: always end up with pl.Date for joins to match
+    # Normalize dtype: always end up with pl.Date
     dt = df["date"].dtype
-    if dt == pl.Utf8:
-        # common formats: YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
-        df = df.with_columns(
-            pl.col("date")
-            .str.replace_all("/", "-")
-            .str.replace_all(r"\.", "-")
-            .str.strptime(pl.Date, "%Y-%m-%d", strict=False)
-            .alias("date")
-        )
+    if dt == pl.Date:
+        return df
     elif dt == pl.Datetime:
         df = df.with_columns(pl.col("date").cast(pl.Date).alias("date"))
+    else:
+        def _to_date_py(v: Any) -> Optional[date]:
+            if v is None:
+                return None
+            # Excel serial (rough bounds)
+            if isinstance(v, (int, float)):
+                iv = int(v)
+                if 20000 <= iv <= 80000:
+                    base = date(1899, 12, 30)
+                    try:
+                        return base + timedelta(days=iv)
+                    except Exception:
+                        return None
+                else:
+                    return None
+            # String-like
+            s = str(v)
+            s = unicodedata.normalize("NFKC", s).strip()
+            # Keep only date part if datetime-like
+            if "T" in s:
+                s = s.split("T", 1)[0]
+            if " " in s:
+                s = s.split(" ", 1)[0]
+            # Chinese date
+            s = s.replace("年", "-").replace("月", "-").replace("日", "")
+            # Unify separators
+            s = s.replace("/", "-").replace(".", "-")
+            # 8-digit compact form
+            if re.fullmatch(r"\d{8}", s):
+                s = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+            # ISO date
+            try:
+                return date.fromisoformat(s)
+            except Exception:
+                # Try datetime
+                try:
+                    return datetime.fromisoformat(s).date()
+                except Exception:
+                    return None
+
+        df = df.with_columns(pl.col("date").map_elements(_to_date_py, return_dtype=pl.Date).alias("date"))
+
+    # Fail-fast if all nulls
+    if int(df.select(pl.col("date").is_null().sum()).to_series(0)[0]) == df.height:
+        raise ValueError("Date parsing failed: all values are null after normalization")
 
     return df
 
@@ -152,9 +200,8 @@ def ensure_optional_date_column(
 ) -> pl.DataFrame:
     """Ensure date column if present; do not raise when missing.
 
-    - Renames first matching candidate to 'date'.
-    - Parses to pl.Date if column is Utf8; otherwise leaves as-is.
-    - If no candidate found, returns df unchanged.
+    Same parsing strategy as ensure_date_column, but never raises if missing
+    or all-null; caller decides how to handle.
     """
     if date_candidates is None:
         date_candidates = ["日期", "留资日期", "date", "time", "开播日期", "直播日期", "日期时间"]
@@ -165,12 +212,10 @@ def ensure_optional_date_column(
                 df = df.rename({candidate: "date"})
                 break
         if "date" not in df.columns:
-            import re
             def _norm(s: str) -> str:
-                s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\u00a0]+", "", s or "")
-                s = s.replace("（", "(").replace("）", ")").replace("：", ":")
-                s = re.sub(r"[^\w\u4e00-\u9fa5:]+", "", s)
-                return s.lower()
+                s = re.sub(r"[\u200b\u200c\u200d\ufeff\u00a0]+", "", s or "")
+                s = unicodedata.normalize("NFKC", s)
+                return s.replace(" ", "").replace("（", "(").replace("）", ")").replace("：", ":").lower()
             norm_map = {_norm(c): c for c in df.columns}
             for candidate in date_candidates:
                 key = _norm(candidate)
@@ -180,16 +225,43 @@ def ensure_optional_date_column(
 
     if "date" in df.columns:
         dt = df["date"].dtype
-        if dt == pl.Utf8:
-            df = df.with_columns(
-                pl.col("date")
-                .str.replace_all("/", "-")
-                .str.replace_all(r"\.", "-")
-                .str.strptime(pl.Date, "%Y-%m-%d", strict=False)
-                .alias("date")
-            )
+        if dt == pl.Date:
+            return df
         elif dt == pl.Datetime:
             df = df.with_columns(pl.col("date").cast(pl.Date).alias("date"))
+        else:
+            def _to_date_py(v: Any) -> Optional[date]:
+                if v is None:
+                    return None
+                if isinstance(v, (int, float)):
+                    iv = int(v)
+                    if 20000 <= iv <= 80000:
+                        base = date(1899, 12, 30)
+                        try:
+                            return base + timedelta(days=iv)
+                        except Exception:
+                            return None
+                    else:
+                        return None
+                s = str(v)
+                s = unicodedata.normalize("NFKC", s).strip()
+                if "T" in s:
+                    s = s.split("T", 1)[0]
+                if " " in s:
+                    s = s.split(" ", 1)[0]
+                s = s.replace("年", "-").replace("月", "-").replace("日", "")
+                s = s.replace("/", "-").replace(".", "-")
+                if re.fullmatch(r"\d{8}", s):
+                    s = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+                try:
+                    return date.fromisoformat(s)
+                except Exception:
+                    try:
+                        return datetime.fromisoformat(s).date()
+                    except Exception:
+                        return None
+
+            df = df.with_columns(pl.col("date").map_elements(_to_date_py, return_dtype=pl.Date).alias("date"))
 
     return df
 

@@ -178,3 +178,59 @@ def log_account_base_conflicts(df: pl.DataFrame) -> None:
             logger.warning("Account base conflicts detected: " + "; ".join(msgs))
     except Exception:
         logger.error("Account base conflict diagnostics failed", exc_info=True)
+
+
+def log_message_date_distribution(df: pl.DataFrame) -> None:
+    """Log message columns date coverage and distribution.
+
+    Works on the daily wide table after rename_for_output but before settlement.
+    """
+    if not _diag_enabled():
+        return
+    logger = logging.getLogger(__name__)
+    try:
+        if "date" not in df.columns:
+            logger.info("Message diag: no date column present in wide table")
+            return
+        c_enter = _pick(df, ["进私人数"]) 
+        c_open = _pick(df, ["私信开口人数"]) 
+        c_leads = _pick(df, ["咨询留资人数"]) 
+        if not any([c_enter, c_open, c_leads]):
+            logger.info("Message diag: message columns not present in wide table")
+            return
+
+        # Totals (ignoring period)
+        def _sum(col: str | None) -> float:
+            if not col or col not in df.columns:
+                return 0.0
+            return float(df.select(pl.col(col).sum()).to_series(0)[0] or 0.0)
+
+        totals = {
+            "进私人数": _sum(c_enter),
+            "私信开口人数": _sum(c_open),
+            "咨询留资人数": _sum(c_leads),
+        }
+
+        # Monthly distribution
+        ym = (
+            df.select([
+                pl.col("date").cast(pl.Date).dt.strftime("%Y-%m").alias("_ym"),
+                *(pl.col(c).alias(c) for c in [c_enter, c_open, c_leads] if c),
+            ])
+            .group_by("_ym")
+            .agg([pl.col(c).sum().alias(c) for c in [c_enter, c_open, c_leads] if c])
+            .sort("_ym")
+        )
+        ym_records = [{"_ym": r[0], **{k: r[i+1] for i, k in enumerate([c for c in [c_enter, c_open, c_leads] if c])}} for r in ym.iter_rows()]
+
+        # Date min/max and null ratio
+        min_d = df.select(pl.col("date").min()).to_series(0)[0]
+        max_d = df.select(pl.col("date").max()).to_series(0)[0]
+        nulls = int(df.select(pl.col("date").is_null().sum()).to_series(0)[0])
+        ratio = (nulls / df.height) if df.height else 0.0
+
+        logger.info(
+            f"Message date diag: totals={totals}, month_bins={ym_records[-6:]}, date_range=({min_d},{max_d}), null_ratio={ratio:.4f}"
+        )
+    except Exception:
+        logger.error("Message date diagnostics failed", exc_info=True)
