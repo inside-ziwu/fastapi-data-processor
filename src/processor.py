@@ -4,6 +4,7 @@ import logging
 from typing import Dict, List, Optional, Any
 import polars as pl
 from pathlib import Path
+import os
 
 from .readers import ReaderRegistry, registry as reader_registry
 from .transforms import BaseTransform
@@ -66,7 +67,6 @@ class DataProcessor:
                 if df is not None:
                     # Keep extracted dataframe for later aggregation phase
                     processed_files.append((source_name, df))
-                    logger.info(f"Processed {source_name}: {df.shape[0]} rows, {df.shape[1]} columns")
             except Exception as e:
                 logger.warning(f"Failed to process {source_name}: {e}")
                 continue
@@ -77,8 +77,22 @@ class DataProcessor:
         # Step 2: Aggregate each non-dimension source by NSC_CODE(+date) as specified
         aggregated = self._aggregate_sources(processed_files)
 
+        # Diagnostics: NSC_CODE coverage per source (env-controlled)
+        if self._diag_enabled():
+            try:
+                self._log_nsc_coverage(aggregated, None)
+            except Exception as e:
+                logger.debug(f"NSC coverage pre-merge diag failed: {e}")
+
         # Step 3: Stream merge aggregated sources; ensure account_base last
         merged = self._stream_merge_data_sources(aggregated)
+
+        # Diagnostics: NSC_CODE coverage after merge vs account_base (env-controlled)
+        if self._diag_enabled():
+            try:
+                self._log_nsc_coverage(aggregated, merged)
+            except Exception as e:
+                logger.debug(f"NSC coverage post-merge diag failed: {e}")
 
         # Step 4: Finalize wide table (month/day, period tags, effective days, fill nulls)
         finalized = self._finalize_wide_table(merged)
@@ -100,6 +114,7 @@ class DataProcessor:
         # Special handling: message Excel wants merge-all-sheets with a '日期' column = sheet name
         name_norm = (source_name or "").lower()
         is_excel = file_path.lower().endswith((".xlsx", ".xls"))
+        sheets_used: list[str] = []
         # Heuristic: some providers append suffixes after .xlsx (e.g., .xlsx~tplv...)
         # Try opening as Excel if spending and extension check failed
         if (not is_excel) and ("spending" in name_norm or "ad" in name_norm):
@@ -115,6 +130,7 @@ class DataProcessor:
             sheets = pd.read_excel(file_path, sheet_name=None, engine="openpyxl")
             frames = []
             for sheet_name, pdf in sheets.items():
+                sheets_used.append(str(sheet_name))
                 # 按需求：若无'日期'，新增一列 '日期' = sheet 名称
                 pdf = pdf.copy()
                 if "日期" not in pdf.columns:
@@ -130,14 +146,12 @@ class DataProcessor:
                 sheet_names_raw = self.config.get("spending_sheet_names")
             if sheet_names_raw:
                 import pandas as pd
-                logger.info(f"[spending probe] sheet_names_raw={sheet_names_raw} (type={type(sheet_names_raw).__name__})")
 
                 # Normalize input into a list of tokens (strings or ints)
                 if isinstance(sheet_names_raw, list):
                     tokens = sheet_names_raw
                 else:
                     tokens = [s.strip() for s in str(sheet_names_raw).replace("，", ",").split(",") if s.strip()]
-                logger.info(f"[spending probe] tokens={tokens}")
 
                 def _norm_name(s: str) -> str:
                     return (
@@ -149,7 +163,6 @@ class DataProcessor:
 
                 frames = []
                 xls = pd.ExcelFile(file_path, engine="openpyxl")
-                logger.info(f"[spending probe] available sheets={xls.sheet_names}")
                 norm_map = {_norm_name(name): name for name in xls.sheet_names}
 
                 for tok in tokens:
@@ -158,16 +171,16 @@ class DataProcessor:
                         if isinstance(tok, int) or (isinstance(tok, str) and tok.isdigit()):
                             idx = int(tok)
                             if 0 <= idx < len(xls.sheet_names):
-                                logger.info(f"[spending probe] reading by index: {idx}")
                                 frames.append(pd.read_excel(xls, sheet_name=idx, engine="openpyxl"))
+                                sheets_used.append(xls.sheet_names[idx])
                             continue
 
                         tnorm = _norm_name(str(tok))
                         # direct normalized equality
                         if tnorm in norm_map:
                             original = norm_map[tnorm]
-                            logger.info(f"[spending probe] reading by name: {original}")
                             frames.append(pd.read_excel(xls, sheet_name=original, engine="openpyxl"))
+                            sheets_used.append(original)
                             continue
 
                         # substring fuzzy match as last resort
@@ -177,14 +190,14 @@ class DataProcessor:
                                 matched = original
                                 break
                         if matched:
-                            logger.info(f"[spending probe] reading by fuzzy: {matched}")
                             frames.append(pd.read_excel(xls, sheet_name=matched, engine="openpyxl"))
+                            sheets_used.append(matched)
                     except Exception as e:
-                        logger.warning(f"[spending probe] failed to read token {tok}: {e}")
+                        # Swallow and continue to next token
+                        continue
 
                 if not frames:
                     # fallback: defer to generic reader path
-                    logger.warning("[spending probe] no sheet matched; falling back to generic reader")
                     df = None
                 else:
                     import pandas as pd  # ensure in scope
@@ -193,7 +206,6 @@ class DataProcessor:
                     required_cols = ["NSC CODE", "Date", "Spending(Net)"]
                     present = [c for c in required_cols if c in pdf.columns]
                     if present:
-                        logger.info(f"[spending probe] selecting columns for conversion: {present}")
                         pdf = pdf[present]
                     df = pl.from_pandas(pdf)
             else:
@@ -220,6 +232,9 @@ class DataProcessor:
                 logger.warning(f"CSV subset inference failed for {source_name}: {e}. Reading full file.")
 
             df = reader.read(file_path, **read_kwargs)
+            # default first sheet marker for excel when not explicitly handled
+            if is_excel and not sheets_used:
+                sheets_used = ["0"]
 
             # 对 message 的 CSV 与 Excel 保持一致：若无 '日期'，用文件名填充
             if transform and transform.__class__.__name__.lower().startswith("message"):
@@ -229,6 +244,17 @@ class DataProcessor:
                     df = df.with_columns(pl.lit(fname).alias("日期"))
         if transform:
             df = transform.transform(df)
+
+        # Unified concise per-file info
+        try:
+            sheets_info = f"[{', '.join(sheets_used)}]" if sheets_used else "-"
+            logger.info(
+                f"Processed {source_name}: rows={df.shape[0]}, cols={df.shape[1]}, sheets={sheets_info}, columns={df.columns}"
+            )
+        except Exception:
+            logger.info(
+                f"Processed {source_name}: rows={df.shape[0]}, cols={df.shape[1]}, sheets=-"
+            )
 
         return df
 
@@ -264,6 +290,49 @@ class DataProcessor:
         seen = set()
         subset_unique = [c for c in subset if not (c in seen or seen.add(c))]
         return subset_unique
+
+    def _diag_enabled(self) -> bool:
+        val = os.getenv("PROCESSOR_DIAG", "1").strip().lower()
+        return val in {"1", "true", "yes", "on"}
+
+    def _log_nsc_coverage(
+        self,
+        aggregated: List[tuple[str, pl.DataFrame]],
+        merged: Optional[pl.DataFrame],
+    ) -> None:
+        """Log NSC_CODE coverage counts per source and after merge.
+
+        Prints only counts, never values.
+        """
+        def uniq_nsc(df: pl.DataFrame) -> int:
+            return (
+                df.select("NSC_CODE").unique().height
+                if (df is not None and "NSC_CODE" in df.columns and df.height > 0)
+                else 0
+            )
+
+        parts = []
+        ab_df: Optional[pl.DataFrame] = None
+        for name, df in aggregated:
+            cnt = uniq_nsc(df)
+            parts.append(f"{name}:{cnt}")
+            if "account_base" in (name or "").lower():
+                ab_df = df
+
+        logger.info(f"NSC_CODE coverage per source (aggregated): {', '.join(parts)}")
+        if merged is not None:
+            merged_cnt = uniq_nsc(merged)
+            msg = f"NSC_CODE merged coverage: {merged_cnt}"
+            if ab_df is not None and "NSC_CODE" in ab_df.columns:
+                try:
+                    ab_set = set(ab_df.select("NSC_CODE").unique().to_series().to_list())
+                    merged_set = set(merged.select("NSC_CODE").unique().to_series().to_list())
+                    inter = len(merged_set & ab_set)
+                    missing_in_ab = len(merged_set - ab_set)
+                    msg += f", account_base: {len(ab_set)}, intersect: {inter}, missing_in_account_base: {missing_in_ab}"
+                except Exception:
+                    pass
+            logger.info(msg)
 
     def _get_transform_for_source(
         self, source_name: str
