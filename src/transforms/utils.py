@@ -152,6 +152,11 @@ def _to_date_py(v: Any) -> Optional[date]:
             return None
 
 
+def _to_date_iso(v: Any) -> Optional[str]:
+    """Wrapper that returns ISO 'YYYY-MM-DD' string or None via _to_date_py."""
+    d = _to_date_py(v)
+    return d.isoformat() if d else None
+
 def _normalize_and_parse_date_column(
     df: pl.DataFrame, date_candidates: Optional[List[str]], required: bool
 ) -> pl.DataFrame:
@@ -230,13 +235,20 @@ def _normalize_and_parse_date_column(
 
     # Fallback to Python for leftover nulls (Excel serials and oddballs)
     if int(df.select(pl.col("date").is_null().sum()).to_series(0)[0]) > 0:
-        # Critical fix: fallback must use RAW values, not the already-null parsed column
+        # Use ISO string fallback to avoid dtype mismatches; then parse once.
         df = df.with_columns(
             pl.when(pl.col("date").is_null())
-            .then(pl.col(RAW_COL).map_elements(_to_date_py, return_dtype=pl.Date))
-            .otherwise(pl.col("date"))
-            .alias("date")
+            .then(pl.col(RAW_COL).map_elements(_to_date_iso, return_dtype=pl.Utf8))
+            .otherwise(pl.col("date").cast(pl.Utf8))
+            .alias("__date_str__")
         )
+        df = df.with_columns(
+            pl.col("__date_str__").str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("date")
+        )
+        try:
+            df = df.drop("__date_str__")
+        except Exception:
+            pass
 
     # Drop helper column if present
     if RAW_COL in df.columns:
