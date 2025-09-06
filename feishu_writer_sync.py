@@ -67,6 +67,16 @@ RATE_PERCENT_FIELDS = {
     "T-1月组件留资率=留资|曝光",
 }
 
+# Build Chinese->English mapping once from FIELD_MAPPINGS (best-effort)
+try:
+    from src.config import FIELD_MAPPINGS as _FM
+    CHINESE_TO_ENGLISH = {}
+    for _en, _cn_list in _FM.items():
+        for _cn in _cn_list:
+            CHINESE_TO_ENGLISH[_norm_field_name(_cn)] = _en
+except Exception:
+    CHINESE_TO_ENGLISH = {}
+
 
 class FeishuWriterSync:
     """Synchronous Feishu writer - no fake async."""
@@ -271,15 +281,48 @@ class FeishuWriterSync:
                 return bool(value)
 
             elif ui_type == "SingleSelect":
-                # 单选需要{"id": "value"}格式
-                return {"id": str(value)}
+                # 单选需要{"id": "option_id"}；支持用显示名匹配已有选项
+                if isinstance(value, dict) and "id" in value:
+                    return {"id": str(value["id"])}
+                label = str(value)
+                # 尝试在属性中查找匹配选项
+                try:
+                    props = field_info.get("property") or {}
+                    options = props.get("options") or props.get("option") or []
+                    norm_label = _norm_field_name(label)
+                    for opt in options:
+                        name = opt.get("name") or opt.get("text") or opt.get("label") or ""
+                        if _norm_field_name(name) == norm_label:
+                            oid = opt.get("id") or opt.get("option_id") or opt.get("value")
+                            if oid:
+                                return {"id": str(oid)}
+                except Exception:
+                    pass
+                # 回退：直接写入原始字符串作为id（可能无法命中现有选项）
+                return {"id": label}
 
             elif ui_type == "MultiSelect":
-                # 多选需要[{"id": "value"}]格式
-                if isinstance(value, list):
-                    return [{"id": str(v)} for v in value if v is not None]
-                else:
-                    return [{"id": str(value)}]
+                # 多选需要[{"id": option_id}]；支持用显示名列表匹配
+                vals = value if isinstance(value, list) else [value]
+                out = []
+                try:
+                    props = field_info.get("property") or {}
+                    options = props.get("options") or props.get("option") or []
+                    norm_map = { _norm_field_name(opt.get("name") or opt.get("text") or opt.get("label") or ""):
+                                 (opt.get("id") or opt.get("option_id") or opt.get("value")) for opt in options }
+                except Exception:
+                    options = []
+                    norm_map = {}
+                for v in vals:
+                    if v is None:
+                        continue
+                    if isinstance(v, dict) and "id" in v:
+                        out.append({"id": str(v["id"])})
+                        continue
+                    label = str(v)
+                    oid = norm_map.get(_norm_field_name(label))
+                    out.append({"id": str(oid) if oid else label})
+                return out
 
             else:
                 # 默认按文本处理
@@ -332,7 +375,20 @@ class FeishuWriterSync:
                     pass
                 converted[key_name] = self._convert_value_by_type(v, field_info)
             else:
-                logger.debug(f"[飞书] 未找到映射: {field_name}")
+                # 尝试通过中文→英文→schema反查
+                try:
+                    en = CHINESE_TO_ENGLISH.get(_norm_field_name(field_name))
+                    if en and (en in reverse_mapping):
+                        field_info = reverse_mapping[en]
+                        key_name = field_info.get("name") or field_name
+                        v = value
+                        if key_name in RATE_PERCENT_FIELDS and isinstance(v, (int, float)):
+                            v = float(v) * 100.0
+                        converted[key_name] = self._convert_value_by_type(v, field_info)
+                    else:
+                        logger.debug(f"[飞书] 未找到映射: {field_name}")
+                except Exception:
+                    logger.debug(f"[飞书] 未找到映射: {field_name}")
 
         return converted
 
