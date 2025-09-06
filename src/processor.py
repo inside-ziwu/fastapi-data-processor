@@ -91,6 +91,7 @@ class DataProcessor:
         if self._diag_enabled():
             try:
                 self._log_nsc_coverage(aggregated, merged)
+                self._log_level_distribution(merged)
             except Exception as e:
                 logger.debug(f"NSC coverage post-merge diag failed: {e}")
 
@@ -211,6 +212,58 @@ class DataProcessor:
             else:
                 # Fallback to generic reader below
                 df = None
+        # Special handling: account_base Excel with two sheets (level + store)
+        elif transform and transform.__class__.__name__.lower().startswith("accountbase") and is_excel:
+            import pandas as pd
+            # Read all sheets and pick columns via mapping per sheet
+            xls = pd.ExcelFile(file_path, engine="openpyxl")
+            level_frames: list[pl.DataFrame] = []
+            store_frames: list[pl.DataFrame] = []
+            for sheet_name in xls.sheet_names:
+                sheets_used.append(str(sheet_name))
+                pdf = pd.read_excel(xls, sheet_name=sheet_name, engine="openpyxl")
+                pldf = pl.from_pandas(pdf)
+                # Rename columns using transform mapping (fuzzy)
+                try:
+                    pldf = transform._rename_columns(pldf, transform.mapping)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                cols = set(pldf.columns)
+                if {"NSC_CODE", "level"}.issubset(cols):
+                    level_frames.append(pldf.select(["NSC_CODE", "level"]))
+                if {"NSC_CODE", "store_name"}.issubset(cols):
+                    store_frames.append(pldf.select(["NSC_CODE", "store_name"]))
+
+            level_df = None
+            if level_frames:
+                level_df = pl.concat(level_frames, how="vertical").with_columns(
+                    pl.col("NSC_CODE").cast(pl.Utf8),
+                    pl.col("level").cast(pl.Utf8),
+                )
+                # Prefer first non-null level per NSC_CODE
+                level_df = (
+                    level_df.group_by("NSC_CODE").agg(pl.col("level").drop_nulls().first().alias("level"))
+                )
+
+            store_df = None
+            if store_frames:
+                store_df = pl.concat(store_frames, how="vertical").with_columns(
+                    pl.col("NSC_CODE").cast(pl.Utf8),
+                    pl.col("store_name").cast(pl.Utf8),
+                )
+                # Prefer first non-null store_name per NSC_CODE
+                store_df = (
+                    store_df.group_by("NSC_CODE").agg(pl.col("store_name").drop_nulls().first().alias("store_name"))
+                )
+
+            if level_df is not None and store_df is not None:
+                df = level_df.join(store_df, on="NSC_CODE", how="outer")
+            elif level_df is not None:
+                df = level_df
+            elif store_df is not None:
+                df = store_df
+            else:
+                df = pl.DataFrame()
         else:
             df = None
 
@@ -333,6 +386,27 @@ class DataProcessor:
                 except Exception:
                     pass
             logger.info(msg)
+
+    def _log_level_distribution(self, merged: pl.DataFrame) -> None:
+        """Log level distribution by unique NSC_CODE, if level present."""
+        if merged is None or merged.is_empty() or ("NSC_CODE" not in merged.columns):
+            return
+        if "level" not in merged.columns:
+            return
+        try:
+            pairs = (
+                merged.select(["NSC_CODE", "level"]).drop_nulls("NSC_CODE").unique()
+            )
+            if pairs.is_empty():
+                return
+            dist = pairs.group_by("level").count()
+            # Convert to dict for logging
+            levels = dist["level"].to_list()
+            counts = dist["count"].to_list()
+            payload = {str(lv): int(ct) for lv, ct in zip(levels, counts)}
+            logger.info(f"Level distribution (by NSC): {payload}")
+        except Exception:
+            pass
 
     def _get_transform_for_source(
         self, source_name: str
