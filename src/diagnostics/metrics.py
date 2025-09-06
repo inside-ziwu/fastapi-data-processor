@@ -235,3 +235,46 @@ def log_message_date_distribution(df: pl.DataFrame) -> None:
         )
     except Exception:
         logger.error("Message date diagnostics failed", exc_info=True)
+
+
+def log_core_rates(df: pl.DataFrame) -> None:
+    """Log presence and basic stats for five key rate columns used downstream/Feishu.
+
+    Columns checked (Chinese):
+      - 组件点击率, 组件留资率
+      - 私信咨询率, 咨询留资率, 私信转化率
+      - And their Feishu alias forms with explanatory suffixes
+    """
+    if not _diag_enabled():
+        return
+    logger = logging.getLogger(__name__)
+    try:
+        candidates = [
+            ("组件点击率", ["组件点击率"]),
+            ("组件留资率", ["组件留资率"]),
+            ("私信咨询率", ["私信咨询率=开口|进私", "私信咨询率"]),
+            ("咨询留资率", ["咨询留资率=留资|咨询", "咨询留资率"]),
+            ("私信转化率", ["私信转化率=留资|进私", "私信转化率"]),
+        ]
+
+        report: dict[str, dict[str, object]] = {}
+        for label, names in candidates:
+            col = _pick(df, names)
+            if not col:
+                report[label] = {"present": False}
+                continue
+            nn = int(df.select(pl.col(col).is_not_null().sum()).to_series(0)[0])
+            mean = df.select(pl.col(col).cast(pl.Float64, strict=False).mean()).to_series(0)[0]
+            mn = df.select(pl.col(col).cast(pl.Float64, strict=False).min()).to_series(0)[0]
+            mx = df.select(pl.col(col).cast(pl.Float64, strict=False).max()).to_series(0)[0]
+            report[label] = {
+                "present": True,
+                "column": col,
+                "non_null": nn,
+                "mean": float(mean) if mean is not None else None,
+                "min": float(mn) if mn is not None else None,
+                "max": float(mx) if mx is not None else None,
+            }
+        logger.info(f"Core rates diag: {report}")
+    except Exception:
+        logger.error("Core rates diagnostics failed", exc_info=True)
