@@ -179,11 +179,8 @@ class DataProcessor:
                                 y = m.group(1)
                                 iso_val = f"{y}-01-01"
                 if iso_val:
-                    # 写入“日期”列为 pandas datetime64，保持原始粒度（到日）
-                    try:
-                        pdf["日期"] = pd.to_datetime(iso_val, format="%Y-%m-%d")
-                    except Exception:
-                        pdf["日期"] = iso_val
+                    # 写入为标准 ISO 字符串，后续在 transform 中统一解析为 pl.Date
+                    pdf["日期"] = iso_val
                     sheet_date_pairs.append((sheet_str, iso_val))
                     try:
                         logger.info(f"[message] Sheet '{sheet_str}' → 日期 {iso_val}")
