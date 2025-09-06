@@ -208,7 +208,7 @@ def _normalize_and_parse_date_column(
         .str.replace_all("日", "")
         .str.replace_all("/", "-")
         # Replace literal dot with dash; r"\." matches a literal '.' in regex
-        .str.replace_all(r"\.", "-")
+        .str.replace_all(".", "-", literal=True)
         .str.strip_chars()
     )
     # Try multiple parse formats and coalesce
