@@ -433,7 +433,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     # 用于API返回的最终结果
     string_records = [json.dumps(row, ensure_ascii=False, default=json_date_serializer) for row in results_data_standard]
     
-    # 飞书写入逻辑 - 简化版本
+    # 飞书写入逻辑（同步，保证在Coze 6分钟限制内返回）
     request_body = await request.json()
     if request_body.get("feishu_enabled", False):
         feishu_config = {
@@ -443,7 +443,9 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             "app_token": request_body.get("feishu_app_token", ""),
             "table_id": request_body.get("feishu_table_id", "")
         }
-        
+        # 写入超时（默认180s），且不超过总剩余时间
+        write_timeout_sec = int(os.environ.get("FEISHU_WRITE_TIMEOUT_SEC", "180"))
+
         writer = FeishuWriterV3(feishu_config)
         
         # 验证配置
@@ -454,14 +456,26 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 status_code=500, 
                 detail=f"飞书配置验证失败: {'; '.join(validation['errors'])}"
             )
-        
-        # 写入数据
-        success = await writer.write_records(results_data_standard)
+        remaining_time = TOTAL_TIMEOUT - (time.time() - request_start_time)
+        # 预留10秒余量给收尾，避免触发总体超时
+        effective_timeout = max(5, min(write_timeout_sec, int(remaining_time - 10)))
+        if effective_timeout <= 5:
+            raise HTTPException(status_code=504, detail="剩余时间不足以完成飞书写入")
+
+        # 同步等待飞书写入完成
+        start_write = time.time()
+        try:
+            success = await asyncio.wait_for(writer.write_records(results_data_standard), timeout=effective_timeout)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail=f"写入飞书表格超时（>{effective_timeout}s）")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"写入飞书表格异常：{e}")
+
+        elapsed_write = time.time() - start_write
         if not success:
             logger.error("[飞书] 写入失败")
             raise HTTPException(status_code=500, detail="写入飞书表格失败，请检查配置和数据格式")
-        else:
-            logger.info("[飞书] 写入成功")
+        logger.info(f"[飞书] 写入成功，用时 {elapsed_write:.1f}s")
     else:
         logger.info("[飞书] 写入未启用，跳过飞书写入。")
 
