@@ -74,7 +74,7 @@ FIELD_MAPPINGS = {
     
     # 基础字段
     "NSC_CODE": ["经销商ID"],
-    "store_name": ["门店名"],
+    "store_name": ["门店名", "门店名称", "门店", "店铺名", "抖音id", "抖音ID"],
     "level": ["层级"],
     
     # 线索量相关

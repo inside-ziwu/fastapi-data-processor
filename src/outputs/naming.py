@@ -95,9 +95,19 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
     if not base_to_cols:
         return df
 
-    # For each base: if base already exists, skip. If one candidate -> rename. If multiple -> sum horizontally.
+    # For each base: if base already exists and is textual (store_name/level), coalesce; else merge/rename.
+    TEXT_BASES = {"store_name", "level"}
     for base, cols in base_to_cols.items():
         if base in existing:
+            if base in TEXT_BASES:
+                try:
+                    # Coalesce base with suffixed textual columns
+                    co = pl.coalesce([pl.col(base).cast(pl.Utf8)] + [pl.col(c).cast(pl.Utf8) for c in cols]).alias(base)
+                    df = df.with_columns(co).drop(cols)
+                    for c in cols:
+                        existing.discard(c)
+                except Exception:
+                    pass
             continue
         if len(cols) == 1:
             try:
