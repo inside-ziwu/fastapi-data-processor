@@ -287,11 +287,7 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
     def col(name: str) -> pl.Expr:
         return pl.col(name) if name in grouped.columns else pl.lit(0.0)
 
-    def col_any(*names: str) -> pl.Expr:
-        for n in names:
-            if n in grouped.columns:
-                return pl.col(n)
-        return pl.lit(0.0)
+    # col_any removed by design — enforce canonical column names upstream
 
     total_eff_days = col("T月有效天数") + col("T-1月有效天数")
 
@@ -357,29 +353,29 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
         _safe_div(col("T-1月小风车点击次数(总)"), col("T-1月有效直播场次(总)")).alias("T-1月场均小风车点击次数"),
 
         _safe_div(
-            col_any("组件点击次数", "组件点击次数(总)"),
-            col_any("锚点曝光量", "锚点曝光量(总)"),
+            col("组件点击次数"),
+            col("锚点曝光量"),
         ).alias("组件点击率"),
         _safe_div(
-            col_any("T月组件点击次数", "T月组件点击次数(总)"),
-            col_any("T月锚点曝光量", "T月锚点曝光量(总)"),
+            col("T月组件点击次数"),
+            col("T月锚点曝光量"),
         ).alias("T月组件点击率"),
         _safe_div(
-            col_any("T-1月组件点击次数", "T-1月组件点击次数(总)"),
-            col_any("T-1月锚点曝光量", "T-1月锚点曝光量(总)"),
+            col("T-1月组件点击次数"),
+            col("T-1月锚点曝光量"),
         ).alias("T-1月组件点击率"),
 
         _safe_div(
-            col_any("组件留资人数（获取线索量）", "组件留资人数（获取线索量）(总)"),
-            col_any("锚点曝光量", "锚点曝光量(总)"),
+            col("组件留资人数（获取线索量）"),
+            col("锚点曝光量"),
         ).alias("组件留资率"),
         _safe_div(
-            col_any("T月组件留资人数（获取线索量）", "T月组件留资人数（获取线索量）(总)"),
-            col_any("T月锚点曝光量", "T月锚点曝光量(总)"),
+            col("T月组件留资人数（获取线索量）"),
+            col("T月锚点曝光量"),
         ).alias("T月组件留资率"),
         _safe_div(
-            col_any("T-1月组件留资人数（获取线索量）", "T-1月组件留资人数（获取线索量）(总)"),
-            col_any("T-1月锚点曝光量", "T-1月锚点曝光量(总)"),
+            col("T-1月组件留资人数（获取线索量）"),
+            col("T-1月锚点曝光量"),
         ).alias("T-1月组件留资率"),
 
         # Message daily averages
