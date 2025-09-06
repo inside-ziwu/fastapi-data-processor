@@ -352,6 +352,12 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         try:
             from src.analysis.settlement import compute_settlement_cn
             result_df = compute_settlement_cn(result_df, dimension)
+            # 增加飞书别名字段，满足 schema 的等式列名
+            try:
+                from src.outputs.naming import add_feishu_rate_aliases
+                result_df = add_feishu_rate_aliases(result_df)
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Settlement computation failed: {e}")
 

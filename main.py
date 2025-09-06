@@ -89,6 +89,12 @@ async def process_data_files(
             from src.analysis.settlement import compute_settlement_cn
             # CLI 没有传入维度参数，默认按经销商ID
             summary_df = compute_settlement_cn(result_df, None)
+            # 为飞书别名字段增加显式列（只加别名，不覆盖原列）
+            try:
+                from src.outputs.naming import add_feishu_rate_aliases
+                summary_df = add_feishu_rate_aliases(summary_df)
+            except Exception:
+                pass
             result_df = summary_df
         except Exception as e:
             logger.error(f"Settlement computation failed: {e}")

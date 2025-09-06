@@ -175,3 +175,35 @@ def rename_for_output(df: pl.DataFrame) -> pl.DataFrame:
         renamed = renamed.select(final_cols)
 
     return renamed
+
+
+def add_feishu_rate_aliases(df: pl.DataFrame) -> pl.DataFrame:
+    """Add alias columns for Feishu fields that use explanatory suffixes.
+
+    This does not change existing columns; it only creates additional columns with
+    names like '私信咨询率=开口|进私' so Feishu schema can match them exactly.
+    """
+    if df.is_empty():
+        return df
+
+    alias_pairs = {
+        # Private message rates
+        "私信咨询率": "私信咨询率=开口|进私",
+        "T月私信咨询率": "T月私信咨询率=开口|进私",
+        "T-1月私信咨询率": "T-1月私信咨询率=开口|进私",
+        "咨询留资率": "咨询留资率=留资|咨询",
+        "T月咨询留资率": "T月咨询留资率=留资|咨询",
+        "T-1月咨询留资率": "T-1月咨询留资率=留资|咨询",
+        "私信转化率": "私信转化率=留资|进私",
+        "T月私信转化率": "T月私信转化率=留资|进私",
+        "T-1月私信转化率": "T-1月私信转化率=留资|进私",
+    }
+
+    new_cols = []
+    for src, tgt in alias_pairs.items():
+        if (src in df.columns) and (tgt not in df.columns):
+            new_cols.append(pl.col(src).alias(tgt))
+
+    if new_cols:
+        df = df.with_columns(new_cols)
+    return df
