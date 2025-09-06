@@ -142,6 +142,20 @@ def _to_date_py(v: Any) -> Optional[date]:
     # 8-digit compact form
     if re.fullmatch(r"\d{8}", s):
         s = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+    # YYYY-MM or YYYY-M -> pad to first day
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})", s)
+    if m:
+        try:
+            y = int(m.group(1)); mth = int(m.group(2))
+            return date(y, mth, 1)
+        except Exception:
+            return None
+    # YYYY -> Jan 1st
+    if re.fullmatch(r"\d{4}", s):
+        try:
+            return date(int(s), 1, 1)
+        except Exception:
+            return None
     # ISO date or datetime
     try:
         return date.fromisoformat(s)
@@ -217,9 +231,16 @@ def _normalize_and_parse_date_column(
         .str.replace_all("月", "-")
         .str.replace_all("日", "")
         .str.replace_all("/", "-")
-        # Replace literal dot with dash; r"\." matches a literal '.' in regex
+        # Replace literal dot with dash
         .str.replace_all(".", "-", literal=True)
+        # Normalize ISO 'T' separator and strip common timezone suffixes
+        .str.replace_all("T", " ")
+        .str.replace(r"(?:Z|[+-]\d{2}:?\d{2})$", "", literal=False)
         .str.strip_chars()
+        # If only 'YYYY-MM' or 'YYYY-M', pad day to '-01'
+        .str.replace(r"^(\d{4}-\d{1,2})$", r"$1-01", literal=False)
+        # If only 'YYYY', expand to '-01-01'
+        .str.replace(r"^(\d{4})$", r"$1-01-01", literal=False)
     )
     # Try multiple parse formats and coalesce
     # - Support zero/one-digit month/day via %-m/%-d (e.g., 2023-10-1)
@@ -229,7 +250,10 @@ def _normalize_and_parse_date_column(
     # As datetime and cast to date (handles time part)
     dt1 = norm.str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False).cast(pl.Date)
     dt1b = norm.str.strptime(pl.Datetime, "%Y-%-m-%-d %H:%M:%S", strict=False).cast(pl.Date)
-    parsed = pl.coalesce([d1, d1b, d2, dt1, dt1b])
+    # Handle datetime strings that lack seconds (HH:MM)
+    dt2 = norm.str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False).cast(pl.Date)
+    dt2b = norm.str.strptime(pl.Datetime, "%Y-%-m-%-d %H:%M", strict=False).cast(pl.Date)
+    parsed = pl.coalesce([d1, d1b, d2, dt1, dt1b, dt2, dt2b])
 
     df = df.with_columns(parsed.alias("date"))
 
@@ -258,6 +282,19 @@ def _normalize_and_parse_date_column(
             pass
 
     if required and int(df.select(pl.col("date").is_null().sum()).to_series(0)[0]) == df.height:
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            # Try to surface a few raw samples for diagnostics
+            raw_col = RAW_COL if RAW_COL in df.columns else "date"
+            samples = (
+                df.select(pl.col(raw_col).cast(pl.Utf8).drop_nulls().head(5)).to_series(0).to_list()
+                if raw_col in df.columns
+                else []
+            )
+            logger.warning(f"Date parsing failed with all nulls; raw samples: {samples}")
+        except Exception:
+            pass
         raise ValueError("Date parsing failed: all values are null after normalization")
 
     return df
