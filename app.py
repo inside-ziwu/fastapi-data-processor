@@ -307,7 +307,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         output_prep_start_time = time.time()
 
         # --- UNIFIED FINAL LOGIC ---
-        # 1. Get shape for size hint
+        # 1. Get shape for size hint (initial, before settlement)
         num_rows, num_cols = result_df.shape
 
         # 2. Count non-compliant floats before cleaning
@@ -362,6 +362,10 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 result_df = result_df.with_columns(
                     pl.col(col_name).fill_null(0).alias(col_name)
                 )
+
+        # 3d. Update final shape after settlement & cleaning
+        num_rows, num_cols = result_df.shape
+        logger.info(f"结算完成：按维度 '{dimension}' 聚合后得到 {num_rows} 行, {num_cols} 列")
 
         # 4. Create standard and Feishu data formats
         results_data_standard = result_df.to_dicts()  # 标准JSON保持英文
