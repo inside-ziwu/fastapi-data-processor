@@ -115,18 +115,29 @@ class DataProcessor:
 
         # Special handling: message Excel wants merge-all-sheets with a '日期' column = sheet name
         name_norm = (source_name or "").lower()
-        is_excel = file_path.lower().endswith((".xlsx", ".xls"))
+        is_excel = file_path.lower().endswith((".xlsx", ".xls", ".xlsm"))
         sheets_used: list[str] = []
-        # Heuristic: some providers append suffixes after .xlsx (e.g., .xlsx~tplv...)
-        # Try opening as Excel if spending and extension check failed
-        if (not is_excel) and ("spending" in name_norm or "ad" in name_norm):
+        # Heuristic: providers may append suffixes after .xlsx or hide real type.
+        # Try opening as Excel if extension check failed for message/spending/ad.
+        if (not is_excel) and ("spending" in name_norm or "ad" in name_norm or "message" in name_norm or "msg" in name_norm):
             try:
                 import pandas as pd
                 pd.ExcelFile(file_path, engine="openpyxl")
                 is_excel = True
             except Exception:
                 is_excel = False
+        # Message-specific handling
+        if transform and transform.__class__.__name__.lower().startswith("message") and not is_excel:
+            try:
+                logger.info(f"[message] Excel 识别: False (fallback to generic reader), file={file_path}")
+            except Exception:
+                pass
+
         if transform and transform.__class__.__name__.lower().startswith("message") and is_excel:
+            try:
+                logger.info(f"[message] Excel 识别: True, file={file_path}")
+            except Exception:
+                pass
             import pandas as pd
             # read all sheets
             sheets = pd.read_excel(file_path, sheet_name=None, engine="openpyxl")
