@@ -59,82 +59,95 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
     if id_col not in df.columns:
         raise ValueError(f"缺少列: {id_col}")
 
-    # Base sums (both months and split by period)
+    # Resolve source columns: prefer clean english, fallback to Chinese UI names
+    def pick(*cands: str) -> str | None:
+        for c in cands:
+            if c in df.columns:
+                return c
+        return None
+
+    spend_src = pick("spending_net", "Spending(Net)")
+    if spend_src is None:
+        avail = ", ".join(df.columns)
+        raise ValueError(
+            f"结算失败：缺少投放金额列。需存在 'spending_net'（推荐）或 'Spending(Net)'。Available: [{avail}]"
+        )
+
     metrics_both = {
-        "自然线索量": "自然线索",
-        "付费线索量": "付费线索",
-        "车云店+区域投放总金额": "Spending(Net)",
-        "直播时长": "直播有效时长(小时)",
-        "直播线索量": "直播线索量",
-        "锚点曝光量": "锚点曝光量",
-        "组件点击次数": "组件点击次数",
-        "组件留资人数（获取线索量）": "组件留资人数（获取线索量）",
-        "短视频条数": "短视频条数",
-        "短视频播放量": "短视频播放量",
+        "自然线索量": pick("natural_leads", "自然线索"),
+        "付费线索量": pick("paid_leads", "付费线索"),
+        "车云店+区域投放总金额": spend_src,
+        "直播时长": pick("live_effective_hours", "直播有效时长(小时)"),
+        "直播线索量": pick("live_leads", "直播线索量"),
+        "锚点曝光量": pick("anchor_exposure", "锚点曝光量"),
+        "组件点击次数": pick("component_clicks", "组件点击次数"),
+        "组件留资人数（获取线索量）": pick("short_video_leads", "组件留资人数（获取线索量）"),
+        "短视频条数": pick("short_video_count", "短视频条数"),
+        "短视频播放量": pick("short_video_plays", "短视频播放量"),
         # Live session and related
-        "有效直播场次(总)": "有效直播场次",
-        "曝光人数(总)": "曝光人数",
-        "场观(总)": "场观",
-        "小风车点击次数(总)": "小风车点击次数",
-        "小风车留资量(总)": "小风车留资量",
+        "有效直播场次(总)": pick("effective_live_sessions", "有效直播场次"),
+        "曝光人数(总)": pick("exposures", "曝光人数"),
+        "场观(总)": pick("viewers", "场观"),
+        "小风车点击次数(总)": pick("small_wheel_clicks", "小风车点击次数"),
+        "小风车留资量(总)": pick("small_wheel_leads", "小风车留资量"),
         # Message
-        "进私人数(总)": "进私人数",
-        "私信开口人数(总)": "私信开口人数",
-        "咨询留资人数(总)": "咨询留资人数",
+        "进私人数(总)": pick("enter_private_count", "进私人数"),
+        "私信开口人数(总)": pick("private_open_count", "私信开口人数"),
+        "咨询留资人数(总)": pick("private_leads_count", "咨询留资人数"),
         # 25min mins
-        "超25分钟直播时长(分)(总)": "超25分钟直播时长(分)",
+        "超25分钟直播时长(分)(总)": pick("over25_min_live_mins", "超25分钟直播时长(分)"),
         # DR paid split
-        "车云店付费线索(总)": "车云店付费线索",
-        "区域加码付费线索(总)": "区域加码付费线索",
-        "本地线索量(总)": "本地线索量",
+        "车云店付费线索(总)": pick("store_paid_leads", "车云店付费线索"),
+        "区域加码付费线索(总)": pick("area_paid_leads", "区域加码付费线索"),
+        "本地线索量(总)": pick("local_leads", "本地线索量"),
     }
 
     metrics_T = {
-        "T月直播时长": "直播有效时长(小时)",
-        "T月直播线索量": "直播线索量",
-        "T月锚点曝光量": "锚点曝光量",
-        "T月组件点击次数": "组件点击次数",
-        "T月组件留资人数（获取线索量）": "组件留资人数（获取线索量）",
-        "T月短视频条数": "短视频条数",
-        "T月短视频播放量": "短视频播放量",
-        "T月 车云店+区域投放总金额": "Spending(Net)",
-        "T月有效直播场次(总)": "有效直播场次",
-        "T月曝光人数(总)": "曝光人数",
-        "T月场观(总)": "场观",
-        "T月小风车点击次数(总)": "小风车点击次数",
-        "T月小风车留资量(总)": "小风车留资量",
-        "T月超25分钟直播时长(分)(总)": "超25分钟直播时长(分)",
+        "T月直播时长": pick("live_effective_hours", "直播有效时长(小时)"),
+        "T月直播线索量": pick("live_leads", "直播线索量"),
+        "T月锚点曝光量": pick("anchor_exposure", "锚点曝光量"),
+        "T月组件点击次数": pick("component_clicks", "组件点击次数"),
+        "T月组件留资人数（获取线索量）": pick("short_video_leads", "组件留资人数（获取线索量）"),
+        "T月短视频条数": pick("short_video_count", "短视频条数"),
+        "T月短视频播放量": pick("short_video_plays", "短视频播放量"),
+        "T月 车云店+区域投放总金额": spend_src,
+        "T月有效直播场次(总)": pick("effective_live_sessions", "有效直播场次"),
+        "T月曝光人数(总)": pick("exposures", "曝光人数"),
+        "T月场观(总)": pick("viewers", "场观"),
+        "T月小风车点击次数(总)": pick("small_wheel_clicks", "小风车点击次数"),
+        "T月小风车留资量(总)": pick("small_wheel_leads", "小风车留资量"),
+        "T月超25分钟直播时长(分)(总)": pick("over25_min_live_mins", "超25分钟直播时长(分)"),
         # DR paid split
-        "T月 车云店付费线索": "车云店付费线索",
-        "T月 区域加码付费线索": "区域加码付费线索",
+        "T月 车云店付费线索": pick("store_paid_leads", "车云店付费线索"),
+        "T月 区域加码付费线索": pick("area_paid_leads", "区域加码付费线索"),
         # Message
-        "T月进私人数(总)": "进私人数",
-        "T月私信开口人数(总)": "私信开口人数",
-        "T月咨询留资人数(总)": "咨询留资人数",
+        "T月进私人数(总)": pick("enter_private_count", "进私人数"),
+        "T月私信开口人数(总)": pick("private_open_count", "私信开口人数"),
+        "T月咨询留资人数(总)": pick("private_leads_count", "咨询留资人数"),
     }
 
     metrics_T1 = {
-        "T-1月直播时长": "直播有效时长(小时)",
-        "T-1月直播线索量": "直播线索量",
-        "T-1月锚点曝光量": "锚点曝光量",
-        "T-1月组件点击次数": "组件点击次数",
-        "T-1月组件留资人数（获取线索量）": "组件留资人数（获取线索量）",
-        "T-1月短视频条数": "短视频条数",
-        "T-1月短视频播放量": "短视频播放量",
-        "T-1月 车云店+区域投放总金额": "Spending(Net)",
-        "T-1月有效直播场次(总)": "有效直播场次",
-        "T-1月曝光人数(总)": "曝光人数",
-        "T-1月场观(总)": "场观",
-        "T-1月小风车点击次数(总)": "小风车点击次数",
-        "T-1月小风车留资量(总)": "小风车留资量",
-        "T-1月超25分钟直播时长(分)(总)": "超25分钟直播时长(分)",
+        "T-1月直播时长": pick("live_effective_hours", "直播有效时长(小时)"),
+        "T-1月直播线索量": pick("live_leads", "直播线索量"),
+        "T-1月锚点曝光量": pick("anchor_exposure", "锚点曝光量"),
+        "T-1月组件点击次数": pick("component_clicks", "组件点击次数"),
+        "T-1月组件留资人数（获取线索量）": pick("short_video_leads", "组件留资人数（获取线素量）", "组件留资人数（获取线索量）"),
+        "T-1月短视频条数": pick("short_video_count", "短视频条数"),
+        "T-1月短视频播放量": pick("short_video_plays", "短视频播放量"),
+        "T-1月 车云店+区域投放总金额": spend_src,
+        "T-1月有效直播场次(总)": pick("effective_live_sessions", "有效直播场次"),
+        "T-1月曝光人数(总)": pick("exposures", "曝光人数"),
+        "T-1月场观(总)": pick("viewers", "场观"),
+        "T-1月小风车点击次数(总)": pick("small_wheel_clicks", "小风车点击次数"),
+        "T-1月小风车留资量(总)": pick("small_wheel_leads", "小风车留资量"),
+        "T-1月超25分钟直播时长(分)(总)": pick("over25_min_live_mins", "超25分钟直播时长(分)"),
         # DR paid split
-        "T-1月 车云店付费线索": "车云店付费线索",
-        "T-1月 区域加码付费线索": "区域加码付费线索",
+        "T-1月 车云店付费线索": pick("store_paid_leads", "车云店付费线索"),
+        "T-1月 区域加码付费线索": pick("area_paid_leads", "区域加码付费线索"),
         # Message
-        "T-1月进私人数(总)": "进私人数",
-        "T-1月私信开口人数(总)": "私信开口人数",
-        "T-1月咨询留资人数(总)": "咨询留资人数",
+        "T-1月进私人数(总)": pick("enter_private_count", "进私人数"),
+        "T-1月私信开口人数(总)": pick("private_open_count", "私信开口人数"),
+        "T-1月咨询留资人数(总)": pick("private_leads_count", "咨询留资人数"),
     }
 
     agg_exprs: list[pl.Expr] = []
@@ -204,44 +217,44 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
         # 日均有效（25min以上）时长（h）
         _safe_div((col("超25分钟直播时长(分)(总)") / 60.0), total_eff_days).alias("日均有效（25min以上）时长（h）"),
         _safe_div((col("T月超25分钟直播时长(分)(总)") / 60.0), col("T月有效天数")).alias("T月日均有效（25min以上）时长（h）"),
-        _safe_div((col("T-1月超25分钟直播时长(分)(总)") / 60.0), col("T-1月有效天数")).alias("T-1月日均有效（25min以上）时长（h）"),
+        _safe_div((pl.col("T-1月超25分钟直播时长(分)(总)") / 60.0), pl.col("T-1月有效天数")).alias("T-1月日均有效（25min以上）时长（h）"),
 
         # 场均指标与率（总/T/T-1）
-        _safe_div(col("曝光人数(总)"), col("有效直播场次(总)")).alias("场均曝光人数"),
-        _safe_div(col("T月曝光人数(总)"), col("T月有效直播场次(总)")).alias("T月场均曝光人数"),
-        _safe_div(col("T-1月曝光人数(总)"), col("T-1月有效直播场次(总)")).alias("T-1月场均曝光人数"),
+        _safe_div(pl.col("曝光人数(总)"), pl.col("有效直播场次(总)")).alias("场均曝光人数"),
+        _safe_div(pl.col("T月曝光人数(总)"), pl.col("T月有效直播场次(总)")).alias("T月场均曝光人数"),
+        _safe_div(pl.col("T-1月曝光人数(总)"), pl.col("T-1月有效直播场次(总)")).alias("T-1月场均曝光人数"),
 
-        _safe_div(col("场观(总)"), col("曝光人数(总)")).alias("曝光进入率"),
-        _safe_div(col("T月场观(总)"), col("T月曝光人数(总)")).alias("T月曝光进入率"),
-        _safe_div(col("T-1月场观(总)"), col("T-1月曝光人数(总)")).alias("T-1月曝光进入率"),
+        _safe_div(pl.col("场观(总)"), pl.col("曝光人数(总)")).alias("曝光进入率"),
+        _safe_div(pl.col("T月场观(总)"), pl.col("T月曝光人数(总)")).alias("T月曝光进入率"),
+        _safe_div(pl.col("T-1月场观(总)"), pl.col("T-1月曝光人数(总)")).alias("T-1月曝光进入率"),
 
-        _safe_div(col("场观(总)"), col("有效直播场次(总)")).alias("场均场观"),
-        _safe_div(col("T月场观(总)"), col("T月有效直播场次(总)")).alias("T月场均场观"),
-        _safe_div(col("T-1月场观(总)"), col("T-1月有效直播场次(总)")).alias("T-1月场均场观"),
+        _safe_div(pl.col("场观(总)"), pl.col("有效直播场次(总)")).alias("场均场观"),
+        _safe_div(pl.col("T月场观(总)"), pl.col("T月有效直播场次(总)")).alias("T月场均场观"),
+        _safe_div(pl.col("T-1月场观(总)"), pl.col("T-1月有效直播场次(总)")).alias("T-1月场均场观"),
 
-        _safe_div(col("小风车点击次数(总)"), col("场观(总)")).alias("小风车点击率"),
-        _safe_div(col("T月小风车点击次数(总)"), col("T月场观(总)")).alias("T月小风车点击率"),
-        _safe_div(col("T-1月小风车点击次数(总)"), col("T-1月场观(总)")).alias("T-1月小风车点击率"),
+        _safe_div(pl.col("小风车点击次数(总)"), pl.col("场观(总)")).alias("小风车点击率"),
+        _safe_div(pl.col("T月小风车点击次数(总)"), pl.col("T月场观(总)")).alias("T月小风车点击率"),
+        _safe_div(pl.col("T-1月小风车点击次数(总)"), pl.col("T-1月场观(总)")).alias("T-1月小风车点击率"),
 
-        _safe_div(col("小风车留资量(总)"), col("小风车点击次数(总)")).alias("小风车点击留资率"),
-        _safe_div(col("T月小风车留资量(总)"), col("T月小风车点击次数(总)")).alias("T月小风车点击留资率"),
-        _safe_div(col("T-1月小风车留资量(总)"), col("T-1月小风车点击次数(总)")).alias("T-1月小风车点击留资率"),
+        _safe_div(pl.col("小风车留资量(总)"), pl.col("小风车点击次数(总)")).alias("小风车点击留资率"),
+        _safe_div(pl.col("T月小风车留资量(总)"), pl.col("T月小风车点击次数(总)")).alias("T月小风车点击留资率"),
+        _safe_div(pl.col("T-1月小风车留资量(总)"), pl.col("T-1月小风车点击次数(总)")).alias("T-1月小风车点击留资率"),
 
-        _safe_div(col("小风车留资量(总)"), col("有效直播场次(总)")).alias("场均小风车留资量"),
-        _safe_div(col("T月小风车留资量(总)"), col("T月有效直播场次(总)")).alias("T月场均小风车留资量"),
-        _safe_div(col("T-1月小风车留资量(总)"), col("T-1月有效直播场次(总)")).alias("T-1月场均小风车留资量"),
+        _safe_div(pl.col("小风车留资量(总)"), pl.col("有效直播场次(总)")).alias("场均小风车留资量"),
+        _safe_div(pl.col("T月小风车留资量(总)"), pl.col("T月有效直播场次(总)")).alias("T月场均小风车留资量"),
+        _safe_div(pl.col("T-1月小风车留资量(总)"), pl.col("T-1月有效直播场次(总)")).alias("T-1月场均小风车留资量"),
 
-        _safe_div(col("小风车点击次数(总)"), col("有效直播场次(总)")).alias("场均小风车点击次数"),
-        _safe_div(col("T月小风车点击次数(总)"), col("T月有效直播场次(总)")).alias("T月场均小风车点击次数"),
-        _safe_div(col("T-1月小风车点击次数(总)"), col("T-1月有效直播场次(总)")).alias("T-1月场均小风车点击次数"),
+        _safe_div(pl.col("小风车点击次数(总)"), pl.col("有效直播场次(总)")).alias("场均小风车点击次数"),
+        _safe_div(pl.col("T月小风车点击次数(总)"), pl.col("T月有效直播场次(总)")).alias("T月场均小风车点击次数"),
+        _safe_div(pl.col("T-1月小风车点击次数(总)"), pl.col("T-1月有效直播场次(总)")).alias("T-1月场均小风车点击次数"),
 
-        _safe_div(col("组件点击次数"), col("锚点曝光量")).alias("组件点击率"),
-        _safe_div(col("T月组件点击次数"), col("T月锚点曝光量")).alias("T月组件点击率"),
-        _safe_div(col("T-1月组件点击次数"), col("T-1月锚点曝光量")).alias("T-1月组件点击率"),
+        _safe_div(pl.col("组件点击次数"), pl.col("锚点曝光量")).alias("组件点击率"),
+        _safe_div(pl.col("T月组件点击次数"), pl.col("T月锚点曝光量")).alias("T月组件点击率"),
+        _safe_div(pl.col("T-1月组件点击次数"), pl.col("T-1月锚点曝光量")).alias("T-1月组件点击率"),
 
-        _safe_div(col("组件留资人数（获取线索量）"), col("锚点曝光量")).alias("组件留资率"),
-        _safe_div(col("T月组件留资人数（获取线索量）"), col("T月锚点曝光量")).alias("T月组件留资率"),
-        _safe_div(col("T-1月组件留资人数（获取线索量）"), col("T-1月锚点曝光量")).alias("T-1月组件留资率"),
+        _safe_div(pl.col("组件留资人数（获取线索量）"), pl.col("锚点曝光量")).alias("组件留资率"),
+        _safe_div(pl.col("T月组件留资人数（获取线索量）"), pl.col("T月锚点曝光量")).alias("T月组件留资率"),
+        _safe_div(pl.col("T-1月组件留资人数（获取线索量）"), pl.col("T-1月锚点曝光量")).alias("T-1月组件留资率"),
 
         # Message daily averages
         _safe_div(col("进私人数(总)"), total_eff_days).alias("日均进私人数"),
