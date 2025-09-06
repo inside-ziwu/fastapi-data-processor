@@ -63,17 +63,18 @@ class LeadsTransform(BaseTransform):
         if "date" not in df.columns:
             raise ValueError(f"leads 缺少 date 列，现有列: {df.columns}")
         if df["date"].dtype != pl.Date:
-            df = df.with_columns(
-                pl.col("date")
-                .cast(pl.Utf8)
+            # Normalize separators and parse; support single-digit month/day via %-m/%-d
+            s = (
+                pl.col("date").cast(pl.Utf8)
                 .str.replace_all("/", "-")
                 .str.replace_all(r"\.", "-")
                 .str.replace_all("年", "-")
                 .str.replace_all("月", "-")
                 .str.replace_all("日", "")
-                .str.strptime(pl.Date, "%Y-%m-%d", strict=False)
-                .alias("date")
             )
+            d1 = s.str.strptime(pl.Date, "%Y-%m-%d", strict=False)
+            d1b = s.str.strptime(pl.Date, "%Y-%-m-%-d", strict=False)
+            df = df.with_columns(pl.coalesce([d1, d1b]).alias("date"))
 
         df = self._cast_numeric_columns(df, self.sum_columns)
         # Extraction-only — 仅输出 NSC_CODE, date, 小风车留资量
