@@ -199,6 +199,11 @@ def _normalize_and_parse_date_column(
     if df["date"].dtype == pl.Datetime:
         return df.with_columns(pl.col("date").cast(pl.Date).alias("date"))
 
+    # Preserve raw date values for robust Python fallback later
+    RAW_COL = "__date_raw__"
+    if RAW_COL not in df.columns:
+        df = df.with_columns(pl.col("date").alias(RAW_COL))
+
     # Vectorized normalization of strings (best effort)
     s = pl.col("date").cast(pl.Utf8)
     norm = (
@@ -225,12 +230,20 @@ def _normalize_and_parse_date_column(
 
     # Fallback to Python for leftover nulls (Excel serials and oddballs)
     if int(df.select(pl.col("date").is_null().sum()).to_series(0)[0]) > 0:
+        # Critical fix: fallback must use RAW values, not the already-null parsed column
         df = df.with_columns(
             pl.when(pl.col("date").is_null())
-            .then(pl.col("date").map_elements(_to_date_py, return_dtype=pl.Date))
+            .then(pl.col(RAW_COL).map_elements(_to_date_py, return_dtype=pl.Date))
             .otherwise(pl.col("date"))
             .alias("date")
         )
+
+    # Drop helper column if present
+    if RAW_COL in df.columns:
+        try:
+            df = df.drop(RAW_COL)
+        except Exception:
+            pass
 
     if required and int(df.select(pl.col("date").is_null().sum()).to_series(0)[0]) == df.height:
         raise ValueError("Date parsing failed: all values are null after normalization")
