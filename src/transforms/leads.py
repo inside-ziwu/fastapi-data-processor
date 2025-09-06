@@ -67,7 +67,7 @@ class LeadsTransform(BaseTransform):
             s = (
                 pl.col("date").cast(pl.Utf8)
                 .str.replace_all("/", "-")
-                .str.replace_all(r"\.", "-")
+                .str.replace_all(".", "-", literal=True)
                 .str.replace_all("年", "-")
                 .str.replace_all("月", "-")
                 .str.replace_all("日", "")
