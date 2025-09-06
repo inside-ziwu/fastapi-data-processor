@@ -66,25 +66,31 @@ def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
     # Cast to string
     df = df.with_columns(pl.col("NSC_CODE").cast(pl.Utf8))
 
-    # Handle multiple NSC codes in single cell (comma-separated)
-    df = df.with_columns(
-        pl.when(pl.col("NSC_CODE").str.contains(r"[,|]"))
-        .then(pl.col("NSC_CODE").str.split(","))
-        .otherwise(pl.col("NSC_CODE").str.split(""))
-        .alias("_nsc_list")
+    # Unify common separators to comma: | ， 、 / ;
+    unified = (
+        pl.col("NSC_CODE")
+        .str.replace_all(r"\|", ",")
+        .str.replace_all("，", ",")
+        .str.replace_all("、", ",")
+        .str.replace_all("/", ",")
+        .str.replace_all(";", ",")
     )
+    df = df.with_columns(unified.alias("NSC_CODE"))
+
+    # Split by comma into list (single element if no comma)
+    df = df.with_columns(pl.col("NSC_CODE").str.split(",").alias("_nsc_list"))
 
     # Explode multiple NSC codes into separate rows
     df = df.explode("_nsc_list")
 
     # Clean up NSC code
     df = df.with_columns(
-        pl.col("_nsc_list").str.strip_chars().alias("NSC_CODE")
+        pl.col("_nsc_list").cast(pl.Utf8).str.strip_chars().alias("NSC_CODE")
     ).drop("_nsc_list")
 
     # Filter out empty NSC codes
     df = df.filter(
-        pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE") != "")
+        pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE").cast(pl.Utf8).str.strip_chars() != "")
     )
 
     if df.height == 0:
