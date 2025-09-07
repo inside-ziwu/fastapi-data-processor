@@ -246,9 +246,9 @@ FIELD_MAPPINGS = {
     "avg_daily_private_open_count_t_minus_1": ["T-1月日均私信开口人数"],
     
     # 私信咨询率
-    "private_open_rate": ["私信咨询率=开口|进私"],
-    "private_open_rate_t": ["T月私信咨询率=开口|进私"],
-    "private_open_rate_t_minus_1": ["T-1月私信咨询率=开口|进私"],
+    "private_open_rate": ["私信咨询率=开口/进私"],
+    "private_open_rate_t": ["T月私信咨询率=开口/进私"],
+    "private_open_rate_t_minus_1": ["T-1月私信咨询率=开口/进私"],
     
     # 咨询留资相关
     "avg_daily_private_leads_count": ["日均咨询留资人数"],
@@ -256,14 +256,14 @@ FIELD_MAPPINGS = {
     "avg_daily_private_leads_count_t_minus_1": ["T-1月日均咨询留资人数"],
     
     # 咨询留资率
-    "private_leads_rate": ["咨询留资率=留资|咨询", "咨询留资率=留资/咨询"],
-    "private_leads_rate_t": ["T月咨询留资率=留资|咨询", "T月咨询留资率=留资/咨询"],
-    "private_leads_rate_t_minus_1": ["T-1月咨询留资率=留资|咨询", "T-1月咨询留资率=留资/咨询"],
+    "private_leads_rate": ["咨询留资率=留资/咨询"],
+    "private_leads_rate_t": ["T月咨询留资率=留资/咨询"],
+    "private_leads_rate_t_minus_1": ["T-1月咨询留资率=留资/咨询"],
     
     # 私信转化率
-    "private_conversion_rate": ["私信转化率=留资|进私", "私信转化率=留资/进私"],
-    "private_conversion_rate_t": ["T月私信转化率=留资|进私", "T月私信转化率=留资/进私"],
-    "private_conversion_rate_t_minus_1": ["T-1月私信转化率=留资|进私", "T-1月私信转化率=留资/进私"],
+    "private_conversion_rate": ["私信转化率=留资/进私"],
+    "private_conversion_rate_t": ["T月私信转化率=留资/进私"],
+    "private_conversion_rate_t_minus_1": ["T-1月私信转化率=留资/进私"],
 
     # === 新增日均消耗和时长字段 ===
     "avg_daily_spending": ["直播车云店+区域日均消耗"],
