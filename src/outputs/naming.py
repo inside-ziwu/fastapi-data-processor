@@ -44,14 +44,14 @@ OUTPUT_NAME_MAP: dict[str, str] = {
     "mkt_second_channel_name": "mkt_second_channel_name",
     "send2dealer_id": "send2dealer_id",
     # DR daily counts
-    "natural_leads": "自然线索",
-    "paid_leads": "付费线索",
-    "store_paid_leads": "车云店付费线索",
-    "area_paid_leads": "区域加码付费线索",
+    "natural_leads": "自然线索量",
+    "paid_leads": "付费线索量",
+    "store_paid_leads": "车云店付费线索量",
+    "area_paid_leads": "区域加码付费线索量",
     "local_leads": "本地线索量",
 
     # Spending
-    "spending_net": "Spending(Net)",
+    "spending_net": "车云店+区域投放总金额",
 
     # Account BI
     "live_leads": "直播线索量",
