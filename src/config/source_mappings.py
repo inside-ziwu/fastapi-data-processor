@@ -1,4 +1,72 @@
-"""Field mappings for Feishu multi-dimensional tables."""
+"""Field mappings for different data sources."""
+
+# Base field mappings for data sources
+VIDEO_MAP = {
+    "主机厂经销商id": "NSC_CODE",
+    "日期": "date",
+    "锚点曝光次数": "anchor_exposure",
+    "锚点点击次数": "component_clicks",
+    "新发布视频数": "short_video_count",
+    "短视频表单提交商机量": "short_video_leads",
+}
+
+LIVE_MAP = {
+    "主机厂经销商id列表": "NSC_CODE",
+    "开播日期": "date",
+    "超25分钟直播时长(分)": "over25_min_live_mins",
+    "直播有效时长（小时）": "live_effective_hours",
+    "超25min直播总场次": "effective_live_sessions",
+    "曝光人数": "exposures",
+    "场观": "viewers",
+    "小风车点击次数（不含小雪花）": "small_wheel_clicks",
+}
+
+MSG_MAP = {
+    "主机厂经销商ID": "NSC_CODE",
+    "日期": "date",
+    "进入私信客户数": "enter_private_count",
+    "主动咨询客户数": "private_open_count",
+    "私信留资客户数": "private_leads_count",
+}
+
+ACCOUNT_BI_MAP = {
+    "主机厂经销商id列表": "NSC_CODE",
+    "日期": "date",
+    "直播间表单提交商机量": "live_leads",
+    "短-播放量": "short_video_plays",
+}
+
+LEADS_MAP = {
+    "主机厂经销商id列表": "NSC_CODE",
+    "留资日期": "date",
+    "直播间表单提交商机量(去重)": "small_wheel_leads",
+}
+
+DR_MAP = {
+    "reg_dealer": "NSC_CODE",
+    "register_time": "date",
+    "leads_type": "leads_type",
+    "mkt_second_channel_name": "mkt_second_channel_name",
+    "send2dealer_id": "send2dealer_id",
+}
+
+SPENDING_MAP = {
+    "NSC CODE": "NSC_CODE",
+    "Date": "date",
+    "Spending(Net)": "spending",
+}
+
+ACCOUNT_BASE_MAP = {
+    "NSC_id": "NSC_CODE",
+    "NSC CODE": "NSC_CODE",
+    "经销商ID": "NSC_CODE",
+    "经销商id": "NSC_CODE",
+    "第二期层级": "level",
+    "层级": "level",
+    "NSC Code": "NSC_CODE",
+    "抖音id": "store_name",
+    "抖音ID": "store_name",
+}
 
 # Field mappings for Feishu multi-dimensional tables (supports one-to-one and one-to-many)
 FIELD_MAPPINGS = {
@@ -16,6 +84,7 @@ FIELD_MAPPINGS = {
     "natural_leads_total": ["自然线索量"],
     "natural_leads_t": ["T月自然线索量"],
     "natural_leads_t_minus_1": ["T-1月自然线索量"],
+    
     "ad_leads_total": ["付费线索量"],
     "ad_leads_t": ["T月付费线索量"],
     "ad_leads_t_minus_1": ["T-1月付费线索量"],
@@ -79,6 +148,11 @@ FIELD_MAPPINGS = {
     "short_video_count_total": ["短视频发布量", "短视频条数"],
     "short_video_count_t": ["T月短视频发布量", "T月短视频条数"],
     "short_video_count_t_minus_1": ["T-1月短视频发布量", "T-1月短视频条数"],
+    
+    "component_clicks_total": ["组件点击总量"],
+    "component_clicks_t": ["T月组件点击总量"],
+    "component_clicks_t_minus_1": ["T-1月组件点击总量"],
+    
     "short_video_leads_total": ["组件留资人数（获取线索量）"],
     "short_video_leads_t": ["T月组件留资人数（获取线索量）"],
     "short_video_leads_t_minus_1": ["T-1月组件留资人数（获取线索量）"],
@@ -87,9 +161,11 @@ FIELD_MAPPINGS = {
     "enter_private_count_total": ["进私总量"],
     "enter_private_count_t": ["T月进私"],
     "enter_private_count_t_minus_1": ["T-1月进私"],
+    
     "private_open_count_total": ["私信开口总量"],
     "private_open_count_t": ["T月私信开口"],
     "private_open_count_t_minus_1": ["T-1月私信开口"],
+    
     "private_leads_count_total": ["私信留资总量"],
     "private_leads_count_t": ["T月私信留资"],
     "private_leads_count_t_minus_1": ["T-1月私信留资"],
@@ -206,7 +282,8 @@ FIELD_MAPPINGS = {
     "paid_area_leads_total": ["直播车云店+区域付费线索量"],
     "paid_area_leads_t": ["T月直播车云店+区域付费线索量"],
     "paid_area_leads_t_minus_1": ["T-1月直播车云店+区域付费线索量"],
-
+    
+    # Effective live duration (>25min)
     "effective_live_hours_25min": ["有效（25min以上）时长（h）"],
     "effective_live_hours_25min_t": ["T月有效（25min以上）时长（h）"],
     "effective_live_hours_25min_t_minus_1": ["T-1月有效（25min以上）时长（h）"],

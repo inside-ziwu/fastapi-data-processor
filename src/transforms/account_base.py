@@ -3,6 +3,7 @@
 import polars as pl
 from typing import Dict
 from src.transforms.base import BaseTransformer
+from src.config.source_mappings import ACCOUNT_BASE_MAP
 
 class AccountBaseTransform(BaseTransformer):
     """
@@ -21,11 +22,7 @@ class AccountBaseTransform(BaseTransformer):
         Defines the mapping for the DataFrame pre-merged by the processor.
         The processor is expected to provide 'NSC_CODE', 'level', and 'store_name'.
         """
-        return {
-            "NSC_CODE": "NSC_CODE",
-            "level": "level",
-            "store_name": "store_name",
-        }
+        return ACCOUNT_BASE_MAP
 
     @property
     def get_output_schema(self) -> Dict[str, pl.DataType]:

@@ -4,6 +4,7 @@ import polars as pl
 from typing import Dict
 from src.transforms.base import BaseTransformer
 from src.transforms.utils import aggregate_by_keys
+from src.config.source_mappings import DR_MAP
 
 class DRTransform(BaseTransformer):
     """
@@ -16,13 +17,7 @@ class DRTransform(BaseTransformer):
         Defines the mapping from original source column names to the required
         standardized names for processing.
         """
-        return {
-            "reg_dealer": "NSC_CODE",
-            "register_time": "date",
-            "leads_type": "leads_type",
-            "mkt_second_channel_name": "mkt_second_channel_name",
-            "send2dealer_id": "send2dealer_id",
-        }
+        return DR_MAP
 
     @property
     def get_output_schema(self) -> Dict[str, pl.DataType]:

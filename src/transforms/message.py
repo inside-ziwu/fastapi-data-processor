@@ -4,6 +4,7 @@ import polars as pl
 from typing import Dict
 from src.transforms.base import BaseTransformer
 from src.transforms.utils import aggregate_by_keys
+from src.config.source_mappings import MSG_MAP
 
 class MessageTransform(BaseTransformer):
     """
@@ -19,13 +20,7 @@ class MessageTransform(BaseTransformer):
         Defines the mapping from original source column names to standardized names.
         The '日期' column is added by the processor.
         """
-        return {
-            "主机厂经销商ID": "NSC_CODE",
-            "日期": "date",
-            "进入私信客户数": "enter_private_count",
-            "主动咨询客户数": "private_open_count",
-            "私信留资客户数": "private_leads_count",
-        }
+        return MSG_MAP
 
     @property
     def get_output_schema(self) -> Dict[str, pl.DataType]:

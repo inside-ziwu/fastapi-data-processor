@@ -4,6 +4,7 @@ import polars as pl
 from typing import Dict
 from src.transforms.base import BaseTransformer
 from src.transforms.utils import aggregate_by_keys
+from src.config.source_mappings import ACCOUNT_BI_MAP
 
 class AccountBITransform(BaseTransformer):
     """
@@ -15,12 +16,7 @@ class AccountBITransform(BaseTransformer):
         """
         Defines the mapping from original source column names to standardized names.
         """
-        return {
-            "主机厂经销商id列表": "NSC_CODE",
-            "日期": "date",
-            "直播间表单提交商机量": "live_leads",
-            "短-播放量": "short_video_plays",
-        }
+        return ACCOUNT_BI_MAP
 
     @property
     def get_output_schema(self) -> Dict[str, pl.DataType]:

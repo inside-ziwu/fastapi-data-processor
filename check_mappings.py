@@ -3,7 +3,7 @@
 
 import json
 import logging
-from src.config.feishu_mappings import FIELD_MAPPINGS
+from src.config.source_mappings import FIELD_MAPPINGS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')

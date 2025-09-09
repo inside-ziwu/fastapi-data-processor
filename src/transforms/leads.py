@@ -4,6 +4,7 @@ import polars as pl
 from typing import Dict
 from src.transforms.base import BaseTransformer
 from src.transforms.utils import aggregate_by_keys
+from src.config.source_mappings import LEADS_MAP
 
 class LeadsTransform(BaseTransformer):
     """
@@ -15,11 +16,7 @@ class LeadsTransform(BaseTransformer):
         """
         Defines the mapping from original source column names to standardized names.
         """
-        return {
-            "主机厂经销商id列表": "NSC_CODE",
-            "留资日期": "date",
-            "直播间表单提交商机量(去重)": "small_wheel_leads",
-        }
+        return LEADS_MAP
 
     @property
     def get_output_schema(self) -> Dict[str, pl.DataType]:

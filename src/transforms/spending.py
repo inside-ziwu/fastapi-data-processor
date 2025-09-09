@@ -4,6 +4,7 @@ import polars as pl
 from typing import Dict
 from src.transforms.base import BaseTransformer
 from src.transforms.utils import aggregate_by_keys
+from src.config.source_mappings import SPENDING_MAP
 
 class SpendingTransform(BaseTransformer):
     """
@@ -18,11 +19,7 @@ class SpendingTransform(BaseTransformer):
         """
         Defines the mapping from the pre-selected source columns to standardized names.
         """
-        return {
-            "NSC CODE": "NSC_CODE",
-            "Date": "date",
-            "Spending(Net)": "spending",
-        }
+        return SPENDING_MAP
 
     @property
     def get_output_schema(self) -> Dict[str, pl.DataType]:

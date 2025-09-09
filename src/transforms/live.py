@@ -4,6 +4,7 @@ import polars as pl
 from typing import Dict
 from src.transforms.base import BaseTransformer
 from src.transforms.utils import aggregate_by_keys
+from src.config.source_mappings import LIVE_MAP
 
 class LiveTransform(BaseTransformer):
     """
@@ -15,16 +16,7 @@ class LiveTransform(BaseTransformer):
         """
         Defines the mapping from original source column names to standardized names.
         """
-        return {
-            "主机厂经销商id列表": "NSC_CODE",
-            "开播日期": "date",
-            "超25分钟直播时长(分)": "over25_min_live_mins",
-            "直播有效时长（小时）": "live_effective_hours",
-            "超25min直播总场次": "effective_live_sessions",
-            "曝光人数": "exposures",
-            "场观": "viewers",
-            "小风车点击次数（不含小雪花）": "small_wheel_clicks",
-        }
+        return LIVE_MAP
 
     @property
     def get_output_schema(self) -> Dict[str, pl.DataType]:
