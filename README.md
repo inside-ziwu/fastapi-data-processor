@@ -52,7 +52,7 @@ GET /health
 ## Environment Variables
 - `PROCESSOR_API_KEY`: API authentication key
 - `TMP_ROOT`: Temporary directory for file processing (default: /tmp/fastapi_data_proc)
-- `LEVEL_NORMALIZE_BY_NSC`: Feature flag to enable the new level aggregation logic. Set to `true`, `1`, `yes`, or `on` to activate. (Default: `false`)
+- `LEVEL_NORMALIZE_BY_NSC`: Feature flag to enable the new level aggregation logic. Set to `true`, `1`, `yes`, or `on` to activate. (Default: `true`)
 
 ## Supported File Types
 - CSV files

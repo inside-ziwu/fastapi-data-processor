@@ -46,7 +46,7 @@ DERIVED_SPECS: list[DerivedSpec] = [
 ]
 
 def _is_level_normalization_enabled() -> bool:
-    v = (os.getenv("LEVEL_NORMALIZE_BY_NSC") or "").lower()
+    v = (os.getenv("LEVEL_NORMALIZE_BY_NSC", "true")).lower()
     enabled = v in {"1", "true", "yes", "on"}
     if enabled:
         logger.info("New 'level' normalization logic is ENABLED via environment variable.")
