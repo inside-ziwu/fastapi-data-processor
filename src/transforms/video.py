@@ -1,46 +1,50 @@
 """Video data transformation."""
 
 import polars as pl
-from typing import Any, Dict, List, Optional
-from .base import BaseTransform
-from ..config import VIDEO_MAP
+from typing import Dict
+from src.transforms.base import BaseTransformer
+from src.transforms.utils import aggregate_by_keys
 
+class VideoTransform(BaseTransformer):
+    """
+    Transforms raw video data by aggregating daily metrics per NSC_CODE.
+    """
 
-class VideoTransform(BaseTransform):
-    """Transform video data to standardized format."""
+    @property
+    def get_input_rename_map(self) -> Dict[str, str]:
+        """
+        Defines the mapping from original source column names to standardized names.
+        """
+        return {
+            "主机厂经销商id": "NSC_CODE",
+            "日期": "date",
+            "锚点曝光次数": "anchor_exposure",
+            "锚点点击次数": "component_clicks",
+            "新发布视频数": "short_video_count",
+            "短视频表单提交商机量": "short_video_leads",
+        }
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        super().__init__(config)
-        self.mapping = VIDEO_MAP
-        self.sum_columns = [
-            "anchor_exposure",
-            "component_clicks",
-            "short_video_count",
-            "short_video_leads",
-        ]
+    @property
+    def get_output_schema(self) -> Dict[str, pl.DataType]:
+        """
+        Defines the final output schema for the video data.
+        """
+        return {
+            "NSC_CODE": pl.Utf8,
+            "date": pl.Date,
+            "anchor_exposure": pl.Float64,
+            "component_clicks": pl.Float64,
+            "short_video_count": pl.Float64,
+            "short_video_leads": pl.Float64,
+        }
 
-    def get_required_columns(self) -> List[str]:
-        """Required columns for video transformation."""
-        return list(self.mapping.keys())
-
-    def transform(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Transform video data to standardized format."""
-        # Step 1: Rename columns using mapping
-        df = self._rename_columns(df, self.mapping)
-
-        # Step 2: Normalize NSC_CODE column
-        df = self._normalize_nsc_code(df)
-
-        # Step 3: Ensure date column exists
-        df = self._ensure_date_column(df)
-
-        # Step 4: Cast numeric columns
-        df = self._cast_numeric_columns(df, self.sum_columns)
-
-        # Step 5: Extraction-only — no aggregation at this stage
-        wanted = ["NSC_CODE", "date"] + self.sum_columns
-        present = [c for c in wanted if c in df.columns]
-        df = df.select(present)
-
-        return df
-        
+    def _apply_transform(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Applies the core aggregation logic for video metrics.
+        """
+        metric_columns = list(self.get_output_schema.keys() - {"NSC_CODE", "date"})
+        return aggregate_by_keys(
+            df,
+            group_keys=["NSC_CODE", "date"],
+            metric_columns=metric_columns,
+        )

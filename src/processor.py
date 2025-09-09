@@ -9,7 +9,7 @@ import re
 import unicodedata
 
 from .readers import ReaderRegistry, registry as reader_registry
-from .transforms import BaseTransform
+from .transforms import BaseTransformer
 from .analysis import create_default_analysis_engine
 from .config import FIELD_MAPPINGS
 from .cleaning.key_sanitizer import sanitize_key
@@ -612,7 +612,7 @@ class DataProcessor:
 
     def _get_transform_for_source(
         self, source_name: str
-    ) -> Optional[BaseTransform]:
+    ) -> Optional[BaseTransformer]:
         """通过查找表获取数据源对应的转换器。"""
         name = (source_name or "").lower()
 

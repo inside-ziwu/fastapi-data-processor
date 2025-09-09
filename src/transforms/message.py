@@ -1,53 +1,52 @@
 """Message/private chat data transformation."""
 
 import polars as pl
-from typing import Any, Dict, List, Optional
-from .base import BaseTransform
-from ..config import MSG_MAP
+from typing import Dict
+from src.transforms.base import BaseTransformer
+from src.transforms.utils import aggregate_by_keys
 
+class MessageTransform(BaseTransformer):
+    """
+    Transforms raw private message data by aggregating daily metrics per NSC_CODE.
 
-from .utils import strict_rename_columns
+    Note: The processor is expected to have already extracted the date from
+    sheet names and added it as a '日期' column to the DataFrame.
+    """
 
+    @property
+    def get_input_rename_map(self) -> Dict[str, str]:
+        """
+        Defines the mapping from original source column names to standardized names.
+        The '日期' column is added by the processor.
+        """
+        return {
+            "主机厂经销商ID": "NSC_CODE",
+            "日期": "date",
+            "进入私信客户数": "enter_private_count",
+            "主动咨询客户数": "private_open_count",
+            "私信留资客户数": "private_leads_count",
+        }
 
-class MessageTransform(BaseTransform):
-    """Transform message/private chat data to standardized format."""
+    @property
+    def get_output_schema(self) -> Dict[str, pl.DataType]:
+        """
+        Defines the final output schema for the private message data.
+        """
+        return {
+            "NSC_CODE": pl.Utf8,
+            "date": pl.Date,
+            "enter_private_count": pl.Float64,
+            "private_open_count": pl.Float64,
+            "private_leads_count": pl.Float64,
+        }
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        super().__init__(config)
-        self.mapping = MSG_MAP
-        self.sum_columns = [
-            "enter_private_count",
-            "private_open_count",
-            "private_leads_count",
-        ]
-
-    def get_required_columns(self) -> List[str]:
-        """Required columns for message transformation."""
-        return list(self.mapping.keys())
-
-    def transform(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Transform message data to standardized format."""
-        # Step 1: Rename columns using mapping (strict version)
-        df = strict_rename_columns(df, self.mapping)
-
-        # Step 2: Normalize NSC_CODE column
-        df = self._normalize_nsc_code(df)
-
-        # Step 3: Ensure date column (strict) — fail-fast if missing/invalid
-        df = self._ensure_date_column(df, ["日期", "date", "time", "私信日期", "消息日期"]) 
-
-        # Step 4: Cast numeric columns
-        df = self._cast_numeric_columns(df, self.sum_columns)
-
-        # Step 5: Extraction-only — no aggregation
-        wanted = ["NSC_CODE"] + (["date"] if "date" in df.columns else []) + self.sum_columns
-        present = [c for c in wanted if c in df.columns]
-        df = df.select(present)
-
-        return df
-        
-
-
-def create_message_transform() -> MessageTransform:
-    """Factory function to create message transformer."""
-    return MessageTransform()
+    def _apply_transform(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Applies the core aggregation logic for private message metrics.
+        """
+        metric_columns = list(self.get_output_schema.keys() - {"NSC_CODE", "date"})
+        return aggregate_by_keys(
+            df,
+            group_keys=["NSC_CODE", "date"],
+            metric_columns=metric_columns,
+        )
