@@ -69,9 +69,9 @@ RATE_PERCENT_FIELDS = {
 
 # Build Chinese->English mapping once from FIELD_MAPPINGS (best-effort)
 try:
-    from src.config import FIELD_MAPPINGS as _FM
+    from src.config import FIELD_MAPPINGS
     CHINESE_TO_ENGLISH = {}
-    for _en, _cn_list in _FM.items():
+    for _en, _cn_list in FIELD_MAPPINGS.items():
         for _cn in _cn_list:
             CHINESE_TO_ENGLISH[_norm_field_name(_cn)] = _en
 except Exception:
@@ -183,12 +183,8 @@ class FeishuWriterSync:
         if not schema:
             return {}
 
-        # 统一映射处理：一对一和一对多都是同一种逻辑
-        try:
-            from src.config import FIELD_MAPPINGS
-        except ImportError:
-            # Fallback for backward compatibility
-            FIELD_MAPPINGS = {}
+        # Fallback for backward compatibility
+        FIELD_MAPPINGS = {}
 
         reverse_map = {}
 
@@ -658,4 +654,6 @@ class FeishuWriterV3:
 
     async def validate_config(self) -> Dict[str, Any]:
         """Async wrapper for sync method."""
+        return self._sync_writer.validate_config()
+ """Async wrapper for sync method."""
         return self._sync_writer.validate_config()
