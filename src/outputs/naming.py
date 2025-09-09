@@ -26,7 +26,7 @@ OUTPUT_NAME_MAP: dict[str, str] = {
 
     # Live
     "over25_min_live_mins": "超25分钟直播时长(分)",
-    "live_effective_hours": "直播有效时长（小时）",
+    "live_effective_hours": "直播时长",
     "effective_live_sessions": "有效直播场次",
     "exposures": "曝光人数",
     "viewers": "场观",
