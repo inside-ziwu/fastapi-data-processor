@@ -54,7 +54,45 @@ def _field_match(src: str, col: str) -> bool:
     src_norm = _norm(src)
     col_norm = _norm(col)
 
+    return (
+        src_norm == col_norm
+        or (src_norm and src_norm in col_norm)
+        or (col_norm and col_norm in src_norm)
+    )
+
+def _strict_field_match(src: str, col: str) -> bool:
+    """Check if column matches source field name with robust normalization (exact match)."""
+    import re
+    import unicodedata
+
+    def _norm(s: str) -> str:
+        s = s or ""
+        s = unicodedata.normalize("NFKC", s)
+        s = s.lower()
+        s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\u00a0]+", "", s)
+        s = s.replace("（", "(").replace("）", ")").replace("：", ":")
+        s = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", s)
+        return s
+
+    src_norm = _norm(src)
+    col_norm = _norm(col)
+
     return src_norm == col_norm
+
+
+def strict_rename_columns(df: pl.DataFrame, mapping: Dict[str, str]) -> pl.DataFrame:
+    """Rename columns based on mapping with strict matching."""
+    rename_map = {}
+    for src_col, expected_col in mapping.items():
+        for actual_col in df.columns:
+            if _strict_field_match(src_col, actual_col):
+                rename_map[actual_col] = expected_col
+                break
+
+    if rename_map:
+        df = df.rename(rename_map)
+
+    return df
 
 
 def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:

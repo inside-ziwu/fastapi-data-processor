@@ -6,6 +6,9 @@ from .base import BaseTransform
 from ..config import MSG_MAP
 
 
+from .utils import strict_rename_columns
+
+
 class MessageTransform(BaseTransform):
     """Transform message/private chat data to standardized format."""
 
@@ -24,8 +27,8 @@ class MessageTransform(BaseTransform):
 
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
         """Transform message data to standardized format."""
-        # Step 1: Rename columns using mapping
-        df = self._rename_columns(df, self.mapping)
+        # Step 1: Rename columns using mapping (strict version)
+        df = strict_rename_columns(df, self.mapping)
 
         # Step 2: Normalize NSC_CODE column
         df = self._normalize_nsc_code(df)
