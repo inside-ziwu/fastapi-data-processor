@@ -123,20 +123,24 @@ DERIVED_LEVEL_NORMALIZE: Set[str] = _with_period([
 ])
 
 # --- SSOT 4: Alias Maps & Output Contract ---
-ALIAS_SUM_MAP = {
+ALIAS_FINAL_MAP = {
+    # 业务口径别名（总量 → 契约名）
     "总付费线索": "直播车云店+区域付费线索量",
     "T月总付费线索": "T月直播车云店+区域付费线索量",
     "T-1月总付费线索": "T-1月直播车云店+区域付费线索量",
-}
-ALIAS_FINAL_MAP = {
-    **ALIAS_SUM_MAP,
+
+    # 门店名统一
     "门店名称": "门店名",
+
+    # 三类比率列的契约名（含 T/T-1）
     "私信咨询率": "私信咨询率=开口/进私",
     "T月私信咨询率": "T月私信咨询率=开口/进私",
     "T-1月私信咨询率": "T-1月私信咨询率=开口/进私",
+
     "咨询留资率": "咨询留资率=留资/咨询",
     "T月咨询留资率": "T月咨询留资率=留资/咨询",
     "T-1月咨询留资率": "T-1月咨询留资率=留资/咨询",
+
     "私信转化率": "私信转化率=留资/进私",
     "T月私信转化率": "T月私信转化率=留资/进私",
     "T-1月私信转化率": "T-1月私信转化率=留资/进私",
@@ -193,19 +197,49 @@ def _sanitize_keys(df: pl.DataFrame, *, dimension: str, nsc_key: str) -> pl.Data
     return df
 
 def _prepare_source_data(df: pl.DataFrame) -> pl.DataFrame:
-    exprs = [
-        (_num("自然线索量") + _num("付费线索量")).alias("线索总量"),
-        (_num("车云店付费线索") + _num("区域加码付费线索")).alias("总付费线索"),
-        (_num("超25分钟直播时长(分)") / 60.0).alias("超25分钟直播时长(小时)"),
-    ]
+    """聚合前尽可能物化关键合成列；若缺总金额，用 日均×有效天数 回推；对 T月 / T-1月 同步生效。"""
+
+    def _sum_available(cols: list[str], alias: str):
+        present = [c for c in cols if c in df.columns]
+        if not present:
+            return None
+        expr = None
+        for c in present:
+            expr = _num(c) if expr is None else (expr + _num(c))
+        return expr.alias(alias)
+
+    exprs: list[pl.Expr] = []
+
+    # —— 基期（无前缀）——
+    e = _sum_available(["自然线索量", "付费线索量"], "线索总量")
+    if e is not None: exprs.append(e)
+
+    e = _sum_available(["车云店付费线索", "区域加码付费线索"], "总付费线索")
+    if e is not None: exprs.append(e)
+
+    if "超25分钟直播时长(分)" in df.columns:
+        exprs.append((_num("超25分钟直播时长(分)") / 60.0).alias("超25分钟直播时长(小时)"))
+
+    if "车云店+区域投放总金额" not in df.columns:
+        if ("直播车云店+区域日均消耗" in df.columns) and ("有效天数" in df.columns):
+            exprs.append((_num("直播车云店+区域日均消耗") * _num("有效天数")).alias("车云店+区域投放总金额"))
+
+    # —— 周期（T月 / T-1月）——
     for p in ["T月", "T-1月"]:
-        exprs.extend([
-            (_num(f"{p}自然线索量") + _num(f"{p}付费线索量")).alias(f"{p}线索总量"),
-            (_num(f"{p}车云店付费线索") + _num(f"{p}区域加码付费线索")).alias(f"{p}总付费线索"),
-            (_num(f"{p}超25分钟直播时长(分)") / 60.0).alias(f"{p}超25分钟直播时长(小时)"),
-        ])
-    final_exprs = [e for e in exprs if all(r in df.columns for r in e.meta.root_names())]
-    return df.with_columns(final_exprs) if final_exprs else df
+        e = _sum_available([f"{p}自然线索量", f"{p}付费线索量"], f"{p}线索总量")
+        if e is not None: exprs.append(e)
+
+        e = _sum_available([f"{p}车云店付费线索", f"{p}区域加码付费线索"], f"{p}总付费线索")
+        if e is not None: exprs.append(e)
+
+        if f"{p}超25分钟直播时长(分)" in df.columns:
+            exprs.append((_num(f"{p}超25分钟直播时长(分)") / 60.0).alias(f"{p}超25分钟直播时长(小时)"))
+
+        if f"{p}车云店+区域投放总金额" not in df.columns:
+            if (f"{p}直播车云店+区域日均消耗" in df.columns) and (f"{p}有效天数" in df.columns):
+                exprs.append((_num(f"{p}直播车云店+区域日均消耗") * _num(f"{p}有效天数")).alias(f"{p}车云店+区域投放总金额"))
+
+    return df.with_columns(exprs) if exprs else df
 
 def _build_agg_expr(spec: BaseFieldSpec, *, row_filter: pl.Expr | None = None) -> pl.Expr:
     base = _num(spec.name)
@@ -217,9 +251,7 @@ def _build_agg_expr(spec: BaseFieldSpec, *, row_filter: pl.Expr | None = None) -
         return base.max().alias(f"{spec.name}__max")
     raise ValueError(f"Unsupported aggregation method: {spec.agg}")
 
-def _apply_sum_aliases(df: pl.DataFrame) -> pl.DataFrame:
-    exprs = [pl.col(f"{src}__sum").alias(f"{dst}__sum") for src, dst in ALIAS_SUM_MAP.items() if f"{src}__sum" in df.columns]
-    return df.with_columns(exprs) if exprs else df
+
 
 def _compute_derived_metrics(df: pl.DataFrame) -> pl.DataFrame:
     agg_kind = {s.name: s.agg for s in BASE_FIELDS_REGISTRY}
@@ -272,9 +304,20 @@ def _aggregate_and_derive(df: pl.DataFrame, *, group_by_keys: list[str], nsc_key
         agg_exprs.append(ns.filter(ns.is_not_null() & (ns != "")).n_unique().alias("level_nsc_count"))
     
     grouped = df.group_by(group_by_keys, maintain_order=True).agg(agg_exprs)
-    aliased = _apply_sum_aliases(grouped)
-    derived = _compute_derived_metrics(aliased)
+    grouped = _ensure_aggregates_presence(grouped)
+    derived = _compute_derived_metrics(grouped)
     return derived
+
+def _ensure_aggregates_presence(df: pl.DataFrame) -> pl.DataFrame:
+    """对 BASE_FIELDS_REGISTRY 声明过的列，确保对应 __sum/__max 聚合产物存在；如缺则补 0。"""
+    have = set(df.columns)
+    exprs: list[pl.Expr] = []
+    for spec in BASE_FIELDS_REGISTRY:
+        suffix = "__sum" if spec.agg == "sum" else "__max"
+        col = f"{spec.name}{suffix}"
+        if col not in have:
+            exprs.append(pl.lit(0.0).alias(col))
+    return df.with_columns(exprs) if exprs else df
 
 def _apply_level_normalization(df: pl.DataFrame) -> pl.DataFrame:
     if "level_nsc_count" not in df.columns: return df
