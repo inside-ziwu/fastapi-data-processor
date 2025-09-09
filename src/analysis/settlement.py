@@ -231,7 +231,7 @@ def _prepare_source_data(df: pl.DataFrame) -> pl.DataFrame:
         e = _sum_available([f"{p}自然线索量", f"{p}付费线索量"], f"{p}线索总量")
         if e is not None: exprs.append(e)
 
-        e = _sum_available([f"{p}车云店付费线索", f"{p}区域加码付费线索"], f"{p}总付费线索")
+        e = _sum_available([f"{p}车云店付费线索量", f"{p}区域加码付费线索量"], f"{p}总付费线索")
         if e is not None: exprs.append(e)
 
         if f"{p}超25分钟直播时长(分)" in df.columns:

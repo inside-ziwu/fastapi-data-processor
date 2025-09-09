@@ -10,33 +10,40 @@ from src.analysis.settlement import compute_settlement_cn
 @pytest.fixture
 def mock_env_on():
     """Fixture to mock the normalization environment variable to 'on'."""
-    # Use a dictionary to hold the mock environment variables
     mock_env = {
         "LEVEL_NORMALIZE_BY_NSC": "1"
     }
     with patch("os.getenv", side_effect=lambda key, default=None: mock_env.get(key, default)):
         yield
 
-def test_level_normalization_produces_all_contract_columns(mock_env_on):
+def test_full_pipeline_produces_all_contract_columns(mock_env_on):
     """
-    Tests that when LEVEL_NORMALIZE_BY_NSC is on, the final output for the '层级'
-    dimension includes all key metrics, especially the derived ratio metrics
-    that were previously missing. This test replaces the obsolete tests.
+    Tests the full pipeline from source columns to final output, ensuring
+    that columns derived in `_prepare_source_data` (like `总付费线索`)
+    and their T/T-1 variants are correctly processed and included in the final output.
     """
-    # 1. Arrange: Create a dataframe with enough source data to calculate all metrics.
-    # This makes the test robust against future changes.
+    # 1. Arrange: Create a dataframe with source data, NOT intermediate data.
     df = pl.DataFrame({
         "层级": ["L1", "L1"],
         "经销商ID": ["A", "B"],
         "门店名": ["Store A", "Store B"],
-        # Base metrics for ratios
+        
+        # Source data for `总付费线索` and its T/T-1 variants
+        "车云店付费线索量": [8.0, 2.0], # Sum = 10
+        "区域加码付费线索量": [2.0, 3.0], # Sum = 5
+        "T月车云店付费线索量": [8.0, 2.0],
+        "T月区域加码付费线索量": [2.0, 3.0],
+        "T-1月车云店付费线索量": [8.0, 2.0],
+        "T-1月区域加码付费线索量": [2.0, 3.0],
+
+        # Base metrics for other ratios
         "进私人数": [100.0, 50.0],
         "私信开口人数": [40.0, 30.0],
         "咨询留资人数": [20.0, 15.0],
         "有效天数": [30.0, 30.0],
         "车云店+区域投放总金额": [1000.0, 500.0],
-        "总付费线索": [10.0, 5.0], # This is an internal, pre-calculated field
-        # Add other required columns to prevent errors, with simple values
+        
+        # Add other required columns to prevent errors
         "自然线索量": [1.0, 1.0],
         "付费线索量": [1.0, 1.0],
         "直播线索量": [1.0, 1.0],
@@ -51,10 +58,11 @@ def test_level_normalization_produces_all_contract_columns(mock_env_on):
     # 2. Act: Run the main settlement computation function
     result_df = compute_settlement_cn(df, dimension="层级")
 
-    # 3. Assert: Check that the columns that were previously missing now exist.
-    # We check for the final, aliased names as they appear in the output contract.
+    # 3. Assert: Check that all previously missing columns now exist.
     expected_cols = [
         "直播车云店+区域付费线索量",
+        "T月直播车云店+区域付费线索量",
+        "T-1月直播车云店+区域付费线索量",
         "私信咨询率=开口/进私",
         "咨询留资率=留资/咨询",
         "私信转化率=留资/进私",
