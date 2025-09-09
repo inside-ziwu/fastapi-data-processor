@@ -401,9 +401,12 @@ def compute_settlement_cn(
     prepared = _prepare_source_data(sanitized)
     aggregated = _aggregate_and_derive(prepared, group_by_keys=group_by_keys, nsc_key=nsc_key)
     
-    materialized = aggregated
+    # BUGFIX: Apply aliases *before* normalization, so that normalization can find the aliased columns.
+    aliased = _apply_final_aliases(aggregated)
+
+    materialized = aliased
     if dimension == "经销商ID":
-        materialized = _materialize_public_from_sums(aggregated, order=OUTPUT_CONTRACT_ORDER["经销商ID"])
+        materialized = _materialize_public_from_sums(aliased, order=OUTPUT_CONTRACT_ORDER["经销商ID"])
 
     normalized = materialized
     if dimension == "层级":
@@ -412,7 +415,7 @@ def compute_settlement_cn(
         else:
             normalized = _materialize_public_from_sums(materialized, order=OUTPUT_CONTRACT_ORDER["层级"])
 
-    finalized = _apply_final_aliases(normalized)
+    finalized = normalized # Already aliased
     
     if nsc_key == "NSC_CODE" and "NSC_CODE" in finalized.columns:
         finalized = finalized.rename({"NSC_CODE": "经销商ID"})

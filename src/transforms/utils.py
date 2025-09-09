@@ -54,11 +54,7 @@ def _field_match(src: str, col: str) -> bool:
     src_norm = _norm(src)
     col_norm = _norm(col)
 
-    return (
-        src_norm == col_norm
-        or (src_norm and src_norm in col_norm)
-        or (col_norm and col_norm in src_norm)
-    )
+    return src_norm == col_norm
 
 
 def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
