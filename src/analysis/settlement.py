@@ -113,13 +113,15 @@ DERIVED_SPECS += _mk_ratio_specs("日均咨询留资人数", "咨询留资人数
 NORMALIZABLE_BASE_FIELDS = [
     "自然线索量", "付费线索量", "车云店+区域投放总金额", "直播线索量", "锚点曝光量",
     "组件点击次数", "组件留资人数（获取线索量）", "短视频条数", "短视频播放量", "直播时长",
-    "直播车云店+区域付费线索量",
+    "总付费线索", # Use internal name for normalization
 ]
 NORMALIZABLE_FIELDS: Set[str] = _with_period(NORMALIZABLE_BASE_FIELDS)
 
 DERIVED_LEVEL_NORMALIZE: Set[str] = _with_period([
     "直播车云店+区域日均消耗", "日均有效（25min以上）时长（h）", "日均进私人数",
     "日均私信开口人数", "日均咨询留资人数",
+    # 使用最终的、重命名后的列名，以匹配先重命名后归一化的管道顺序
+    "私信咨询率=开口/进私", "咨询留资率=留资/咨询", "私信转化率=留资/进私",
 ])
 
 # --- SSOT 4: Alias Maps & Output Contract ---
@@ -163,8 +165,8 @@ OUTPUT_CONTRACT_ORDER: Dict[str, list[str]] = {
         "组件留资率", "T月组件留资率", "T-1月组件留资率", "本地线索占比",
         "日均进私人数", "T月日均进私人数", "T-1月日均进私人数", "日均私信开口人数", "T月日均私信开口人数", "T-1月日均私信开口人数",
         "日均咨询留资人数", "T月日均咨询留资人数", "T-1月日均咨询留资人数",
-        "私信咨询率", "T月私信咨询率", "T-1月私信咨询率", "咨询留资率", "T月咨询留资率", "T-1月咨询留资率",
-        "私信转化率", "T月私信转化率", "T-1月私信转化率",
+        "私信咨询率=开口/进私", "T月私信咨询率=开口/进私", "T-1月私信咨询率=开口/进私", "咨询留资率=留资/咨询", "T月咨询留资率=留资/咨询", "T-1月咨询留资率=留资/咨询",
+        "私信转化率=留资/进私", "T月私信转化率=留资/进私", "T-1月私信转化率=留资/进私",
     ],
     "经销商ID": [],
 }
@@ -415,7 +417,8 @@ def compute_settlement_cn(
         else:
             normalized = _materialize_public_from_sums(materialized, order=OUTPUT_CONTRACT_ORDER["层级"])
 
-    finalized = normalized # Already aliased
+    # 在所有计算和归一化都完成后，对全体结果进行最终的重命名，确保所有列名都符合合同规定
+    finalized = _apply_final_aliases(normalized)
     
     if nsc_key == "NSC_CODE" and "NSC_CODE" in finalized.columns:
         finalized = finalized.rename({"NSC_CODE": "经销商ID"})
