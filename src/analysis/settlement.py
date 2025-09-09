@@ -203,6 +203,7 @@ def _prepare_source_data(df: pl.DataFrame) -> pl.DataFrame:
 
     def _sum_available(cols: list[str], alias: str):
         present = [c for c in cols if c in df.columns]
+        logger.info(f"For alias '{alias}', found source columns: {present} out of {cols}")
         if not present:
             return None
         expr = None
