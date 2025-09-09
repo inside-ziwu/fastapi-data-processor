@@ -119,18 +119,18 @@ class FeishuWriterSync:
             [self.app_id, self.app_secret, self.app_token, self.table_id]
         ):
             self.enabled = False
-            logger.warning("[飞书] 配置不完整，写入功能已禁用。 সন")
+            logger.warning("[飞书] 配置不完整，写入功能已禁用。")
 
     
 
     def get_table_schema(self) -> Dict[str, Dict[str, Any]]:
         """获取表格的字段schema - 同步版本"""
         if not self.enabled:
-            logger.warning("[飞书] 功能未启用，无法获取schema。 সন")
+            logger.warning("[飞书] 功能未启用，无法获取schema。")
             return {}
 
         if not SDK_AVAILABLE:
-            logger.error("[飞书] SDK未安装，无法获取schema。 সন")
+            logger.error("[飞书] SDK未安装，无法获取schema。")
             return {}
 
         if self._field_cache:
@@ -401,11 +401,11 @@ class FeishuWriterSync:
     def write_records(self, records: List[Dict[str, Any]]) -> bool:
         """写入记录到飞书多维表格 - 只做写入，不做清洗"""
         if not self.enabled:
-            logger.info("[飞书] 写入未启用，跳过写入。 সন")
+            logger.info("[飞书] 写入未启用，跳过写入。")
             return True
 
         if not records:
-            logger.info("[飞书] 没有记录可写入。 সন")
+            logger.info("[飞书] 没有记录可写入。")
             return True
 
         try:
@@ -657,3 +657,4 @@ class FeishuWriterV3:
     async def validate_config(self) -> Dict[str, Any]:
         """Async wrapper for sync method."""
         return self._sync_writer.validate_config()
+
