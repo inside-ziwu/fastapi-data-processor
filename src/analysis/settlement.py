@@ -52,8 +52,8 @@ def _validate_and_clean_inputs(
 
     df = df.with_columns([
         pl.col("层级").cast(pl.Utf8).fill_null("未知"),
-        pl.col(NSC_KEY).cast(pl.Utf8),
-        *[pl.col(c).cast(pl.Float64).fill_null(0) for c in present_metrics],
+        pl.col(NSC_KEY).cast(pl.Utf8).str.strip_chars(),
+        *[pl.col(c).cast(pl.Float64).fill_null(0).fill_nan(0) for c in present_metrics],
     ])
     return df, NSC_KEY
 
@@ -67,7 +67,7 @@ def _compute_settlement_level_normalized(
     df, NSC_KEY = _validate_and_clean_inputs(df, metrics_to_normalize)
 
     agg_counts = df.group_by("层级").agg(
-        pl.col(NSC_KEY).n_unique().alias("level_nsc_count")
+        pl.col(NSC_KEY).filter(pl.col(NSC_KEY).is_not_null() & (pl.col(NSC_KEY) != "")).n_unique().alias("level_nsc_count")
     )
 
     sum_exprs = [pl.col(c).sum().alias(f"{c}__sum") for c in metrics_to_normalize if c in df.columns]
@@ -89,7 +89,6 @@ def _compute_settlement_level_normalized(
         return pl.col(f"{col_name}__sum")
 
     derived_exprs: list[pl.Expr] = []
-    # Dynamically create derived expressions based on available columns
     if "组件点击次数__sum" in out.columns and "锚点曝光量__sum" in out.columns:
         derived_exprs.append(_safe_div(SUM("组件点击次数"), SUM("锚点曝光量")).alias("CTR_组件"))
     if "T月组件点击次数__sum" in out.columns and "T月锚点曝光量__sum" in out.columns:
@@ -103,7 +102,6 @@ def _compute_settlement_level_normalized(
     if out.columns and derived_exprs:
         out = out.with_columns(derived_exprs)
 
-    # Final column selection
     final_cols = ["层级"]
     final_cols.extend([c for c in metrics_to_normalize if c in out.columns])
     final_cols.extend([e.meta.output_name() for e in derived_exprs])
