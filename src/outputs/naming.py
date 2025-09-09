@@ -14,6 +14,7 @@ OUTPUT_NAME_MAP: dict[str, str] = {
     "month": "month",
     "day": "day",
     "period": "period",
+    "effective_days": "有效天数",
     "T_effective_days": "T月有效天数",
     "T_minus_1_effective_days": "T-1月有效天数",
 
@@ -25,7 +26,7 @@ OUTPUT_NAME_MAP: dict[str, str] = {
 
     # Live
     "over25_min_live_mins": "超25分钟直播时长(分)",
-    "live_effective_hours": "直播有效时长(小时)",
+    "live_effective_hours": "直播有效时长（小时）",
     "effective_live_sessions": "有效直播场次",
     "exposures": "曝光人数",
     "viewers": "场观",

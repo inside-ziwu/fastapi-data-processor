@@ -746,6 +746,18 @@ class DataProcessor:
                 .collect(streaming=True)
             )
 
+        # Create the total effective_days column
+        effective_days_expr = []
+        if "T_effective_days" in df.columns:
+            effective_days_expr.append(pl.col("T_effective_days").fill_null(0))
+        if "T_minus_1_effective_days" in df.columns:
+            effective_days_expr.append(pl.col("T_minus_1_effective_days").fill_null(0))
+        
+        if effective_days_expr:
+            df = df.with_columns(
+                pl.sum_horizontal(effective_days_expr).alias("effective_days")
+            )
+
         # Fill numeric nulls with 0
         df = self._fill_numeric_nulls(df)
         return df
