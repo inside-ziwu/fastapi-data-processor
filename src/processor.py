@@ -480,7 +480,8 @@ class DataProcessor:
 
         # Sanitize the primary key after transformation
         if "NSC_CODE" in df.columns:
-            df = sanitize_key(df, "NSC_CODE")
+            # Enable unicode normalization to handle full-width characters, accepting the performance cost.
+            df = sanitize_key(df, "NSC_CODE", normalize_unicode=True)
 
             # Collision detection
             collisions = (

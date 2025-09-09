@@ -56,6 +56,9 @@ def test_normalization_logic(sample_df):
     """Test the core normalization logic: sum / n_unique."""
     result = _compute_settlement_level_normalized(sample_df).sort("层级")
 
+    # L1: 2 unique NSCs ("A", "B"). Sum(自然线索量) = 10+20=30. Avg = 30/2=15.0
+    # L2: 2 unique NSCs ("C", "D"). Sum(自然线索量) = 30+40+50=120. Avg = 120/2=60.0
+    # L3: 1 unique NSC ("E"). Sum(自然线索量) = 60. Avg = 60/1=60.0
     expected_data = {
         "层级": ["L1", "L2", "L3"],
         "自然线索量": [15.0, 60.0, 60.0],
