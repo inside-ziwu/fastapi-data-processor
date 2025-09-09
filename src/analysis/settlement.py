@@ -8,11 +8,12 @@ from __future__ import annotations
 import logging
 import os
 import polars as pl
-from typing import Iterable, Literal
-from dataclasses import dataclass
+from typing import Iterable
 
 logger = logging.getLogger(__name__)
+_FEATURE_LOGGED_ONCE = False
 
+# The list of metrics to be normalized by dividing the sum by the NSC count.
 METRICS_TO_NORMALIZE: list[str] = [
     "自然线索量", "付费线索量", "车云店+区域投放总金额",
     "直播车云店+区域日均消耗", "T月直播车云店+区域日均消耗", "T-1月直播车云店+区域日均消耗",
@@ -30,120 +31,257 @@ METRICS_TO_NORMALIZE: list[str] = [
     "直播时长", "T月直播时长", "T-1月直播时长",
 ]
 
-@dataclass
-class DerivedSpec:
-    name: str
-    kind: Literal["ratio_total", "ratio_avg", "pct_change_total", "pct_change_avg"]
-    num: str | None = None
-    den: str | None = None
-    cur: str | None = None
-    prev: str | None = None
-
-DERIVED_SPECS: list[DerivedSpec] = [
-    DerivedSpec("CTR_组件", "ratio_total", num="组件点击次数", den="锚点曝光量"),
-    DerivedSpec("组件留资率", "ratio_total", num="组件留资人数（获取线索量）", den="组件点击次数"),
-    # Add other derived metrics here
+# The final, ordered list of all metrics for the output.
+ORDERED_METRICS: list[str] = [
+    "自然线索量", "付费线索量", "车云店+区域投放总金额",
+    "直播时长", "T月直播时长", "T-1月直播时长",
+    "直播线索量", "T月直播线索量", "T-1月直播线索量",
+    "锚点曝光量", "T月锚点曝光量", "T-1月锚点曝光量",
+    "组件点击次数", "T月组件点击次数", "T-1月组件点击次数",
+    "组件留资人数（获取线索量）", "T月组件留资人数（获取线索量）", "T-1月组件留资人数（获取线索量）",
+    "短视频条数", "T月短视频条数", "T-1月短视频条数",
+    "短视频播放量", "T月短视频播放量", "T-1月短视频播放量",
+    "车云店+区域综合CPL", "付费CPL（车云店+区域）",
+    "直播车云店+区域日均消耗", "T月直播车云店+区域日均消耗", "T-1月直播车云店+区域日均消耗",
+    "直播车云店+区域付费线索量", "T月直播车云店+区域付费线索量", "T-1月直播车云店+区域付费线索量",
+    "直播车云店+区域付费线索量日均", "T月直播车云店+区域付费线索量日均", "T-1月直播车云店+区域付费线索量日均",
+    "直播付费CPL", "T月直播付费CPL", "T-1月直播付费CPL",
+    "日均有效（25min以上）时长（h）", "T月日均有效（25min以上）时长（h）", "T-1月日均有效（25min以上）时长（h）",
+    "场均曝光人数", "T月场均曝光人数", "T-1月场均曝光人数",
+    "曝光进入率", "T月曝光进入率", "T-1月曝光进入率",
+    "场均场观", "T月场均场观", "T-1月场均场观",
+    "小风车点击率", "T月小风车点击率", "T-1月小风车点击率",
+    "小风车点击留资率", "T月小风车点击留资率", "T-1月小风车点击留资率",
+    "场均小风车留资量", "T月场均小风车留资量", "T-1月场均小风车留资量",
+    "场均小风车点击次数", "T月场均小风车点击次数", "T-1月场均小风车点击次数",
+    "组件点击率", "T月组件点击率", "T-1月组件点击率",
+    "组件留资率", "T月组件留资率", "T-1月组件留资率",
+    "本地线索占比",
+    "日均进私人数", "T月日均进私人数", "T-1月日均进私人数",
+    "日均私信开口人数", "T月日均私信开口人数", "T-1月日均私信开口人数",
+    "日均咨询留资人数", "T月日均咨询留资人数", "T-1月日均咨询留资人数",
+    "私信咨询率", "T月私信咨询率", "T-1月私信咨询率",
+    "咨询留资率", "T月咨询留资率", "T-1月咨询留资率",
+    "私信转化率", "T月私信转化率", "T-1月私信转化率",
 ]
 
+
 def _is_level_normalization_enabled() -> bool:
-    v = os.getenv("LEVEL_NORMALIZE_BY_NSC")
-    if v is None:
-        # Default to ON if the environment variable is not set at all
-        logger.info("New 'level' normalization logic is ENABLED by default.")
-        return True
-    # It's ON unless explicitly set to a "falsey" value
-    enabled = v.lower() not in {"0", "false", "no", "off"}
-    if enabled:
-        logger.info("New 'level' normalization logic is ENABLED via environment variable.")
-    else:
-        logger.info("New 'level' normalization logic is DISABLED via environment variable.")
+    v = (os.getenv("LEVEL_NORMALIZE_BY_NSC") or "").lower()
+    enabled = v in {"1", "true", "yes", "on"}
+    global _FEATURE_LOGGED_ONCE
+    if enabled and not _FEATURE_LOGGED_ONCE:
+        logger.info("LEVEL_NORMALIZE_BY_NSC=on → using new 'level' normalization logic.")
+        _FEATURE_LOGGED_ONCE = True
     return enabled
 
-def _validate_and_clean_inputs(
-    df: pl.DataFrame | pl.LazyFrame,
-    metrics: Iterable[str],
-) -> tuple[pl.DataFrame | pl.LazyFrame, str]:
-    NSC_KEY = "经销商ID" if "经销商ID" in df.columns else ("NSC_CODE" if "NSC_CODE" in df.columns else None)
-    if NSC_KEY is None:
-        raise ValueError("Missing NSC key column: requires '经销商ID' or 'NSC_CODE'")
-
-    present_metrics = [m for m in metrics if m in df.columns]
-    df = df.with_columns([
-        pl.col("层级").cast(pl.Utf8).fill_null("未知"),
-        pl.col(NSC_KEY).cast(pl.Utf8).str.strip_chars(),
-        *[pl.col(c).cast(pl.Float64).fill_null(0).fill_nan(0) for c in present_metrics],
-    ])
-    return df, NSC_KEY
-
-def _agg_level_counts(df: pl.DataFrame | pl.LazyFrame, nsc_key: str) -> pl.DataFrame | pl.LazyFrame:
-    return df.group_by("层级").agg(
-        pl.col(nsc_key).filter(pl.col(nsc_key).is_not_null() & (pl.col(nsc_key) != "")).n_unique().alias("level_nsc_count")
-    )
-
-def _agg_level_sums(df: pl.DataFrame | pl.LazyFrame, metrics: list[str]) -> pl.DataFrame | pl.LazyFrame:
-    sum_exprs = [pl.col(c).sum().alias(f"{c}__sum") for c in metrics if c in df.columns]
-    return df.group_by("层级").agg(sum_exprs)
-
-def _build_normalized(merged_df: pl.DataFrame | pl.LazyFrame, metrics: list[str]) -> pl.DataFrame | pl.LazyFrame:
-    norm_exprs = [
-        pl.when(pl.col("level_nsc_count") > 0)
-          .then(pl.col(f"{c}__sum") / pl.col("level_nsc_count"))
-          .otherwise(0.0)
-          .alias(c)
-        for c in metrics if f"{c}__sum" in merged_df.columns
-    ]
-    return merged_df.with_columns(norm_exprs)
-
-def _spec_to_expr(s: DerivedSpec, available_columns: set[str]) -> tuple[pl.Expr | None, set[str]]:
-    def SUM(col: str) -> pl.Expr: return pl.col(f"{col}__sum")
-    def AVG(col: str) -> pl.Expr: return pl.col(col)
-    def SAFE_DIV(num: pl.Expr, den: pl.Expr, zero: float = 0.0) -> pl.Expr:
-        return pl.when((den.is_not_null()) & (den != 0)).then(num/den).otherwise(zero)
-    def SAFE_PCT_CHANGE(cur: pl.Expr, prev: pl.Expr, zero: float = 0.0) -> pl.Expr:
-        return SAFE_DIV(cur - prev, prev, zero)
-
-    need: set[str] = set()
-    expr: pl.Expr | None = None
-    if s.kind == "ratio_total":
-        need = {f"{s.num}__sum", f"{s.den}__sum"}
-        if need.issubset(available_columns):
-            expr = SAFE_DIV(SUM(s.num), SUM(s.den)).alias(s.name)
-    # Add other kinds here
-    return expr, need
-
-def _apply_derived(df: pl.DataFrame | pl.LazyFrame, specs: list[DerivedSpec]) -> pl.DataFrame | pl.LazyFrame:
-    exprs, missing_deps = [], []
-    for s in specs:
-        expr, needed = _spec_to_expr(s, set(df.columns))
-        if expr is not None:
-            exprs.append(expr)
-        else:
-            missing_deps.append(f"{s.name}: missing {sorted(needed - set(df.columns))}")
-    
-    if missing_deps:
-        logger.warning("Derived metrics skipped due to missing dependencies: %s", sorted(list(set(missing_deps))))
-
-    return df.with_columns(exprs) if exprs else df
-
-def _select_final(df: pl.DataFrame | pl.LazyFrame, expose_debug_cols: bool) -> pl.DataFrame | pl.LazyFrame:
-    # This is a simplified version. A full implementation would match the original column order.
-    final_cols = [c for c in df.columns if not c.endswith("__sum") and c != "level_nsc_count"]
-    if expose_debug_cols:
-        final_cols.extend([c for c in df.columns if c.endswith("__sum") or c == "level_nsc_count"])
-    return df.select(final_cols)
+def _get_nsc_key(df: pl.DataFrame | pl.LazyFrame) -> str | None:
+    if "经销商ID" in df.columns:
+        return "经销商ID"
+    if "NSC_CODE" in df.columns:
+        return "NSC_CODE"
+    return None
 
 def _compute_settlement_level_normalized(
     df: pl.DataFrame | pl.LazyFrame,
-    *, # force keyword arguments
-    expose_debug_cols: bool = False,
+    *,
+    expose_debug_cols: bool | None = None,
 ) -> pl.DataFrame | pl.LazyFrame:
-    df, nsc_key = _validate_and_clean_inputs(df, METRICS_TO_NORMALIZE)
-    counts = _agg_level_counts(df, nsc_key)
-    sums = _agg_level_sums(df, METRICS_TO_NORMALIZE)
-    merged = sums.join(counts, on="层级", how="inner")
-    out = _build_normalized(merged, METRICS_TO_NORMALIZE)
-    out = _apply_derived(out, DERIVED_SPECS)
-    return _select_final(out, expose_debug_cols)
+    
+    nsc_key = _get_nsc_key(df)
+    if nsc_key is None:
+        raise ValueError("Missing NSC key column: requires '经销商ID' or 'NSC_CODE'")
+
+    # --- Step 1: Aggregate all source metrics by level ---
+    
+    # Clean and ensure required columns exist
+    df = df.with_columns(
+        pl.col("层级").cast(pl.Utf8).fill_null("未知"),
+        pl.col(nsc_key).cast(pl.Utf8).str.strip_chars(),
+    )
+
+    def pick(*cands: str) -> str | None:
+        for c in cands:
+            if c in df.columns:
+                return c
+        return None
+
+    spend_src = pick("spending_net", "Spending(Net)")
+    if spend_src is None:
+        raise ValueError("Missing spending column: requires 'spending_net' or 'Spending(Net)'")
+
+    # Define all source metrics, similar to compute_settlement_cn
+    source_metrics = {
+        "自然线索量": pick("natural_leads", "自然线索"),
+        "付费线索量": pick("paid_leads", "付费线索"),
+        "车云店+区域投放总金额": spend_src,
+        "直播时长": pick("live_effective_hours", "直播有效时长(小时)"),
+        "直播线索量": pick("live_leads", "直播线索量"),
+        "锚点曝光量": pick("anchor_exposure", "锚点曝光量"),
+        "组件点击次数": pick("component_clicks", "组件点击次数"),
+        "组件留资人数（获取线索量）": pick("short_video_leads", "组件留资人数（获取线索量）"),
+        "短视频条数": pick("short_video_count", "短视频条数"),
+        "短视频播放量": pick("short_video_plays", "短视频播放量"),
+        "有效直播场次": pick("effective_live_sessions", "有效直播场次"),
+        "曝光人数": pick("exposures", "曝光人数"),
+        "场观": pick("viewers", "场观"),
+        "小风车点击次数": pick("small_wheel_clicks", "小风车点击次数"),
+        "小风车留资量": pick("small_wheel_leads", "小风车留资量"),
+        "进私人数": pick("enter_private_count", "进私人数"),
+        "私信开口人数": pick("private_open_count", "私信开口人数"),
+        "咨询留资人数": pick("private_leads_count", "咨询留资人数"),
+        "超25分钟直播时长(分)": pick("over25_min_live_mins", "超25分钟直播时长(分)"),
+        "车云店付费线索": pick("store_paid_leads", "车云店付费线索"),
+        "区域加码付费线索": pick("area_paid_leads", "区域加码付费线索"),
+        "本地线索量": pick("local_leads", "本地线索量"),
+        "T月有效天数": "T月有效天数",
+        "T-1月有效天数": "T-1月有效天数",
+    }
+
+    # Build aggregation expressions for all available source metrics
+    agg_exprs = []
+    for out_name, src_name in source_metrics.items():
+        if src_name and src_name in df.columns:
+            # Sum for both periods
+            agg_exprs.append(pl.col(src_name).fill_null(0).fill_nan(0).sum().alias(f"{out_name}__sum"))
+            # Sum for T
+            agg_exprs.append(pl.when(pl.col("period") == "T").then(pl.col(src_name).fill_null(0).fill_nan(0)).otherwise(0).sum().alias(f"{out_name}__T_sum"))
+            # Sum for T-1
+            agg_exprs.append(pl.when(pl.col("period") == "T-1").then(pl.col(src_name).fill_null(0).fill_nan(0)).otherwise(0).sum().alias(f"{out_name}__T-1_sum"))
+
+    # Also aggregate the NSC count
+    agg_exprs.append(pl.col(nsc_key).filter(pl.col(nsc_key).is_not_null() & (pl.col(nsc_key) != "")).n_unique().alias("level_nsc_count"))
+    
+    grouped = df.group_by("层级").agg(agg_exprs)
+
+    # --- Step 2: Calculate derived metrics from the aggregated sums ---
+    def SUM(name: str, period: str = "both") -> pl.Expr:
+        suffix_map = {"both": "__sum", "T": "__T_sum", "T-1": "__T-1_sum"}
+        col_name = f"{name}{suffix_map[period]}"
+        return pl.col(col_name) if col_name in grouped.columns else pl.lit(0.0)
+
+    def SAFE_DIV(num: pl.Expr, den: pl.Expr) -> pl.Expr:
+        return pl.when(den != 0).then(num / den).otherwise(0.0)
+
+    derived_exprs = [
+        # CPLs
+        SAFE_DIV(SUM("车云店+区域投放总金额"), SUM("自然线索量") + SUM("付费线索量")).alias("车云店+区域综合CPL"),
+        SAFE_DIV(SUM("车云店+区域投放总金额"), SUM("车云店付费线索") + SUM("区域加码付费线索")).alias("付费CPL（车云店+区域）"),
+        SAFE_DIV(SUM("车云店+区域投放总金额"), SUM("车云店付费线索") + SUM("区域加码付费线索")).alias("直播付费CPL"),
+        SAFE_DIV(SUM("车云店+区域投放总金额", "T"), SUM("车云店付费线索", "T") + SUM("区域加码付费线索", "T")).alias("T月直播付费CPL"),
+        SAFE_DIV(SUM("车云店+区域投放总金额", "T-1"), SUM("车云店付费线索", "T-1") + SUM("区域加码付费线索", "T-1")).alias("T-1月直播付费CPL"),
+        # Ratios
+        SAFE_DIV(SUM("本地线索量"), SUM("自然线索量") + SUM("付费线索量")).alias("本地线索占比"),
+        SAFE_DIV(SUM("场观"), SUM("曝光人数")).alias("曝光进入率"),
+        SAFE_DIV(SUM("场观", "T"), SUM("曝光人数", "T")).alias("T月曝光进入率"),
+        SAFE_DIV(SUM("场观", "T-1"), SUM("曝光人数", "T-1")).alias("T-1月曝光进入率"),
+        SAFE_DIV(SUM("小风车点击次数"), SUM("场观")).alias("小风车点击率"),
+        SAFE_DIV(SUM("小风车点击次数", "T"), SUM("场观", "T")).alias("T月小风车点击率"),
+        SAFE_DIV(SUM("小风车点击次数", "T-1"), SUM("场观", "T-1")).alias("T-1月小风车点击率"),
+        SAFE_DIV(SUM("小风车留资量"), SUM("小风车点击次数")).alias("小风车点击留资率"),
+        SAFE_DIV(SUM("小风车留资量", "T"), SUM("小风车点击次数", "T")).alias("T月小风车点击留资率"),
+        SAFE_DIV(SUM("小风车留资量", "T-1"), SUM("小风车点击次数", "T-1")).alias("T-1月小风车点击留资率"),
+        SAFE_DIV(SUM("组件点击次数"), SUM("锚点曝光量")).alias("组件点击率"),
+        SAFE_DIV(SUM("组件点击次数", "T"), SUM("锚点曝光量", "T")).alias("T月组件点击率"),
+        SAFE_DIV(SUM("组件点击次数", "T-1"), SUM("锚点曝光量", "T-1")).alias("T-1月组件点击率"),
+        SAFE_DIV(SUM("组件留资人数（获取线索量）"), SUM("组件点击次数")).alias("组件留资率"),
+        SAFE_DIV(SUM("组件留资人数（获取线索量）", "T"), SUM("组件点击次数", "T")).alias("T月组件留资率"),
+        SAFE_DIV(SUM("组件留资人数（获取线索量）", "T-1"), SUM("组件点击次数", "T-1")).alias("T-1月组件留资率"),
+        SAFE_DIV(SUM("私信开口人数"), SUM("进私人数")).alias("私信咨询率"),
+        SAFE_DIV(SUM("私信开口人数", "T"), SUM("进私人数", "T")).alias("T月私信咨询率"),
+        SAFE_DIV(SUM("私信开口人数", "T-1"), SUM("进私人数", "T-1")).alias("T-1月私信咨询率"),
+        SAFE_DIV(SUM("咨询留资人数"), SUM("私信开口人数")).alias("咨询留资率"),
+        SAFE_DIV(SUM("咨询留资人数", "T"), SUM("私信开口人数", "T")).alias("T月咨询留资率"),
+        SAFE_DIV(SUM("咨询留资人数", "T-1"), SUM("私信开口人数", "T-1")).alias("T-1月咨询留资率"),
+        SAFE_DIV(SUM("咨询留资人数"), SUM("进私人数")).alias("私信转化率"),
+        SAFE_DIV(SUM("咨询留资人数", "T"), SUM("进私人数", "T")).alias("T月私信转化率"),
+        SAFE_DIV(SUM("咨询留资人数", "T-1"), SUM("进私人数", "T-1")).alias("T-1月私信转化率"),
+        # Averages per session
+        SAFE_DIV(SUM("曝光人数"), SUM("有效直播场次")).alias("场均曝光人数"),
+        SAFE_DIV(SUM("曝光人数", "T"), SUM("有效直播场次", "T")).alias("T月场均曝光人数"),
+        SAFE_DIV(SUM("曝光人数", "T-1"), SUM("有效直播场次", "T-1")).alias("T-1月场均曝光人数"),
+        SAFE_DIV(SUM("场观"), SUM("有效直播场次")).alias("场均场观"),
+        SAFE_DIV(SUM("场观", "T"), SUM("有效直播场次", "T")).alias("T月场均场观"),
+        SAFE_DIV(SUM("场观", "T-1"), SUM("有效直播场次", "T-1")).alias("T-1月场均场观"),
+        SAFE_DIV(SUM("小风车留资量"), SUM("有效直播场次")).alias("场均小风车留资量"),
+        SAFE_DIV(SUM("小风车留资量", "T"), SUM("有效直播场次", "T")).alias("T月场均小风车留资量"),
+        SAFE_DIV(SUM("小风车留资量", "T-1"), SUM("有效直播场次", "T-1")).alias("T-1月场均小风车留资量"),
+        SAFE_DIV(SUM("小风车点击次数"), SUM("有效直播场次")).alias("场均小风车点击次数"),
+        SAFE_DIV(SUM("小风车点击次数", "T"), SUM("有效直播场次", "T")).alias("T月场均小风车点击次数"),
+        SAFE_DIV(SUM("小风车点击次数", "T-1"), SUM("有效直播场次", "T-1")).alias("T-1月场均小风车点击次数"),
+        # Averages per day
+        SAFE_DIV(SUM("车云店+区域投放总金额"), SUM("T月有效天数") + SUM("T-1月有效天数")).alias("直播车云店+区域日均消耗"),
+        SAFE_DIV(SUM("车云店+区域投放总金额", "T"), SUM("T月有效天数", "T")).alias("T月直播车云店+区域日均消耗"),
+        SAFE_DIV(SUM("车云店+区域投放总金额", "T-1"), SUM("T-1月有效天数", "T-1")).alias("T-1月直播车云店+区域日均消耗"),
+        SAFE_DIV(SUM("车云店付费线索") + SUM("区域加码付费线索"), SUM("T月有效天数") + SUM("T-1月有效天数")).alias("直播车云店+区域付费线索量日均"),
+        SAFE_DIV(SUM("车云店付费线索", "T") + SUM("区域加码付费线索", "T"), SUM("T月有效天数", "T")).alias("T月直播车云店+区域付费线索量日均"),
+        SAFE_DIV(SUM("车云店付费线索", "T-1") + SUM("区域加码付费线索", "T-1"), SUM("T-1月有效天数", "T-1")).alias("T-1月直播车云店+区域付费线索量日均"),
+        SAFE_DIV(SUM("超25分钟直播时长(分)") / 60.0, SUM("T月有效天数") + SUM("T-1月有效天数")).alias("日均有效（25min以上）时长（h）"),
+        SAFE_DIV(SUM("超25分钟直播时长(分)", "T") / 60.0, SUM("T月有效天数", "T")).alias("T月日均有效（25min以上）时长（h）"),
+        SAFE_DIV(SUM("超25分钟直播时长(分)", "T-1") / 60.0, SUM("T-1月有效天数", "T-1")).alias("T-1月日均有效（25min以上）时长（h）"),
+        SAFE_DIV(SUM("进私人数"), SUM("T月有效天数") + SUM("T-1月有效天数")).alias("日均进私人数"),
+        SAFE_DIV(SUM("进私人数", "T"), SUM("T月有效天数", "T")).alias("T月日均进私人数"),
+        SAFE_DIV(SUM("进私人数", "T-1"), SUM("T-1月有效天数", "T-1")).alias("T-1月日均进私人数"),
+        SAFE_DIV(SUM("私信开口人数"), SUM("T月有效天数") + SUM("T-1月有效天数")).alias("日均私信开口人数"),
+        SAFE_DIV(SUM("私信开口人数", "T"), SUM("T月有效天数", "T")).alias("T月日均私信开口人数"),
+        SAFE_DIV(SUM("私信开口人数", "T-1"), SUM("T-1月有效天数", "T-1")).alias("T-1月日均私信开口人数"),
+        SAFE_DIV(SUM("咨询留资人数"), SUM("T月有效天数") + SUM("T-1月有效天数")).alias("日均咨询留资人数"),
+        SAFE_DIV(SUM("咨询留资人数", "T"), SUM("T月有效天数", "T")).alias("T月日均咨询留资人数"),
+        SAFE_DIV(SUM("咨询留资人数", "T-1"), SUM("T-1月有效天数", "T-1")).alias("T-1月日均咨询留资人数"),
+        # Special compositions
+        (SUM("车云店付费线索") + SUM("区域加码付费线索")).alias("直播车云店+区域付费线索量"),
+        (SUM("车云店付费线索", "T") + SUM("区域加码付费线索", "T")).alias("T月直播车云店+区域付费线索量"),
+        (SUM("车云店付费线索", "T-1") + SUM("区域加码付费线索", "T-1")).alias("T-1月直播车云店+区域付费线索量"),
+    ]
+    
+    # Base metrics from sums
+    base_metrics_exprs = [
+        SUM("自然线索量").alias("自然线索量"),
+        SUM("付费线索量").alias("付费线索量"),
+        SUM("车云店+区域投放总金额").alias("车云店+区域投放总金额"),
+        SUM("直播时长").alias("直播时长"),
+        SUM("直播时长", "T").alias("T月直播时长"),
+        SUM("直播时长", "T-1").alias("T-1月直播时长"),
+        SUM("直播线索量").alias("直播线索量"),
+        SUM("直播线索量", "T").alias("T月直播线索量"),
+        SUM("直播线索量", "T-1").alias("T-1月直播线索量"),
+        SUM("锚点曝光量").alias("锚点曝光量"),
+        SUM("锚点曝光量", "T").alias("T月锚点曝光量"),
+        SUM("锚点曝光量", "T-1").alias("T-1月锚点曝光量"),
+        SUM("组件点击次数").alias("组件点击次数"),
+        SUM("组件点击次数", "T").alias("T月组件点击次数"),
+        SUM("组件点击次数", "T-1").alias("T-1月组件点击次数"),
+        SUM("组件留资人数（获取线索量）").alias("组件留资人数（获取线索量）"),
+        SUM("组件留资人数（获取线索量）", "T").alias("T月组件留资人数（获取线索量）"),
+        SUM("组件留资人数（获取线索量）", "T-1").alias("T-1月组件留资人数（获取线索量）"),
+        SUM("短视频条数").alias("短视频条数"),
+        SUM("短视频条数", "T").alias("T月短视频条数"),
+        SUM("短视频条数", "T-1").alias("T-1月短视频条数"),
+        SUM("短视频播放量").alias("短视频播放量"),
+        SUM("短视频播放量", "T").alias("T月短视频播放量"),
+        SUM("短视频播放量", "T-1").alias("T-1月短视频播放量"),
+    ]
+
+    result = grouped.with_columns(base_metrics_exprs + derived_exprs)
+
+    # --- Step 3: Normalize the specified metrics ---
+    norm_exprs = [
+        SAFE_DIV(pl.col(c), pl.col("level_nsc_count")).alias(c)
+        for c in METRICS_TO_NORMALIZE if c in result.columns
+    ]
+    if norm_exprs:
+        result = result.with_columns(norm_exprs)
+
+    # --- Step 4: Final selection and ordering ---
+    final_cols = ["层级"] + [c for c in ORDERED_METRICS if c in result.columns]
+    
+    # Add debug columns if requested
+    if expose_debug_cols:
+        debug_cols = sorted([c for c in result.columns if c.endswith("__sum") or c.endswith("__T_sum") or c.endswith("__T-1_sum")] + ["level_nsc_count"])
+        final_cols.extend(debug_cols)
+
+    return result.select(final_cols)
+
 
 # --- Original Functions (for fallback and NSC_CODE logic) ---
 
