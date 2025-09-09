@@ -9,7 +9,6 @@ from polars.testing import assert_frame_equal
 from src.analysis.settlement import (
     _is_level_normalization_enabled,
     _compute_settlement_level_normalized,
-    _validate_and_clean_inputs,
 )
 
 # --- Tests for _is_level_normalization_enabled --- 
@@ -17,23 +16,22 @@ from src.analysis.settlement import (
 @pytest.mark.parametrize(
     "env_value, expected",
     [
+        (None, True),      # Default to True when env var is not set
         ("true", True),
         ("1", True),
         ("yes", True),
         ("on", True),
-        ("TRUE", True),
-        ("On", True),
+        ("", True),         # Empty string is not an explicit disable
         ("false", False),
         ("0", False),
         ("no", False),
         ("off", False),
-        ("", False),
-        (None, False), # Test case for when env var is not set
+        ("FALSE", False),
     ],
 )
 @patch("os.getenv")
 def test_is_level_normalization_enabled(mock_getenv, env_value, expected):
-    """Test the feature flag function with various environment variable values."""
+    """Test the feature flag function with the new default-on logic."""
     mock_getenv.return_value = env_value
     result = _is_level_normalization_enabled()
     assert result is expected
@@ -79,9 +77,6 @@ def test_nsc_key_cleaning_and_null_exclusion():
     df = pl.DataFrame(data)
     result = _compute_settlement_level_normalized(df, expose_debug_cols=True)
     
-    # Unique NSCs are "A" and "B". count = 2.
-    # Sum = 10+20+30+40+50 = 150.
-    # Avg = 150 / 2 = 75.0
     assert result["level_nsc_count"][0] == 2
     assert result["自然线索量"][0] == 75.0
 
@@ -95,7 +90,6 @@ def test_nan_in_metrics():
     df = pl.DataFrame(data)
     result = _compute_settlement_level_normalized(df, expose_debug_cols=True)
 
-    # sum should be 100 (100 + 0), count is 2. avg = 50.0
     assert result["自然线索量__sum"][0] == 100.0
     assert result["自然线索量"][0] == 50.0
 
@@ -103,10 +97,8 @@ def test_identity_sum_equals_norm_times_count(sample_df):
     """Test the identity: normalized * count should be approx equal to sum."""
     result = _compute_settlement_level_normalized(sample_df, expose_debug_cols=True).sort("层级")
     
-    # Check for L1
     l1_data = result.filter(pl.col("层级") == "L1")
     assert np.isclose(l1_data["自然线索量"][0] * l1_data["level_nsc_count"][0], l1_data["自然线索量__sum"][0])
 
-    # Check for L2
     l2_data = result.filter(pl.col("层级") == "L2")
     assert np.isclose(l2_data["自然线索量"][0] * l2_data["level_nsc_count"][0], l2_data["自然线索量__sum"][0])

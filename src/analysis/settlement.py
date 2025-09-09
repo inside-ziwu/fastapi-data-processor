@@ -46,10 +46,17 @@ DERIVED_SPECS: list[DerivedSpec] = [
 ]
 
 def _is_level_normalization_enabled() -> bool:
-    v = (os.getenv("LEVEL_NORMALIZE_BY_NSC", "true")).lower()
-    enabled = v in {"1", "true", "yes", "on"}
+    v = os.getenv("LEVEL_NORMALIZE_BY_NSC")
+    if v is None:
+        # Default to ON if the environment variable is not set at all
+        logger.info("New 'level' normalization logic is ENABLED by default.")
+        return True
+    # It's ON unless explicitly set to a "falsey" value
+    enabled = v.lower() not in {"0", "false", "no", "off"}
     if enabled:
         logger.info("New 'level' normalization logic is ENABLED via environment variable.")
+    else:
+        logger.info("New 'level' normalization logic is DISABLED via environment variable.")
     return enabled
 
 def _validate_and_clean_inputs(

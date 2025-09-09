@@ -12,6 +12,7 @@ from .readers import ReaderRegistry, registry as reader_registry
 from .transforms import BaseTransform
 from .analysis import create_default_analysis_engine
 from .config import FIELD_MAPPINGS
+from .cleaning.key_sanitizer import sanitize_key
 
 logger = logging.getLogger(__name__)
 
@@ -476,6 +477,27 @@ class DataProcessor:
             # 移除消息 CSV 的文件名兜底日期逻辑——严格依赖数据内提供的日期列
         if transform:
             df = transform.transform(df)
+
+        # Sanitize the primary key after transformation
+        if "NSC_CODE" in df.columns:
+            df = sanitize_key(df, "NSC_CODE")
+
+            # Collision detection
+            collisions = (
+                df.filter(pl.col("NSC_CODE").is_not_null())
+                .group_by("NSC_CODE")
+                .agg(
+                    pl.n_unique("NSC_CODE__raw").alias("n_raw"),
+                    pl.col("NSC_CODE__raw").alias("collided_raw_values")
+                )
+                .filter(pl.col("n_raw") > 1)
+            )
+            if not collisions.is_empty():
+                logger.error(
+                    f"[{source_name}] Sanitization resulted in key collisions. "
+                    f"Aborting. Collisions: {collisions.to_dicts()}"
+                )
+                raise ValueError(f"Key collisions detected in source: {source_name}")
 
         # Unified concise per-file info
         try:
