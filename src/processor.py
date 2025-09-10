@@ -214,6 +214,13 @@ class DataProcessor:
             except Exception:
                 pass
             df = pl.from_pandas(pdf)
+            # Explicitly cast columns to their expected types
+            df = df.with_columns([
+                pl.col("日期").str.strptime(pl.Date, fmt="%Y-%m-%d", strict=False).alias("日期"),
+                pl.col("进入私信客户数").cast(pl.Float64, strict=False).fill_null(0.0).alias("进入私信客户数"),
+                pl.col("主动咨询客户数").cast(pl.Float64, strict=False).fill_null(0.0).alias("主动咨询客户数"),
+                pl.col("私信留资客户数").cast(pl.Float64, strict=False).fill_null(0.0).alias("私信留资客户数"),
+            ])
             logger.info(f"Message file raw DataFrame schema (before MessageTransform): {df.schema}")
             logger.info(f"Message file raw DataFrame head (5 rows, before MessageTransform):\n{df.head(5)}")
             # 打印对照日志
