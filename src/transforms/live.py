@@ -2,7 +2,7 @@ import polars as pl
 from .base import BaseTransformer
 from ..config.source_mappings import LIVE_BI_MAP
 
-class LiveBITransform(BaseTransformer):
+class LiveTransform(BaseTransformer):
     def __init__(self):
         super().__init__(LIVE_BI_MAP)
 

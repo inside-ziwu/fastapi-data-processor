@@ -125,3 +125,4 @@ Thumbs.db
 # VSCode
 .vscode/data/*.csv
 
+data/

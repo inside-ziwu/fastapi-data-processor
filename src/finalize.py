@@ -1,5 +1,5 @@
 import polars as pl
-from ..config.output_spec import FINAL_NAME_MAP, OUTPUT_ORDER
+from .config.output_spec import FINAL_NAME_MAP, OUTPUT_ORDER
 import logging
 
 logger = logging.getLogger(__name__)

@@ -4,7 +4,7 @@ from .base import BaseTransformer
 from ..config.source_mappings import MSG_MAP
 import re
 
-class MsgTransform(BaseTransformer):
+class MessageTransform(BaseTransformer):
     def __init__(self):
         super().__init__(MSG_MAP)
 
