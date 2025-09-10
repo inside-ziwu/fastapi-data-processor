@@ -9,7 +9,7 @@ import argparse
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional
 import platform
 
 from src import DataProcessor
@@ -18,7 +18,6 @@ from src.diagnostics.metrics import (
     log_level_distribution,
     log_suffix_masking,
     log_account_base_conflicts,
-    log_message_date_distribution,
 )
 from src.config import FIELD_MAPPINGS
 from feishu_writer_sync import FeishuWriterV3
@@ -33,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 async def process_data_files(
     file_paths: Dict[str, str],
-    full_config: Dict[str, Any],
     output_path: Optional[str] = None,
     feishu_config: Optional[Dict] = None,
 ) -> None:
@@ -59,7 +57,7 @@ async def process_data_files(
     logger.info("=== 开始处理 ===")
 
     # Initialize processor with full config (so spending_sheet_names etc. are available)
-    processor = DataProcessor(full_config)
+    processor = DataProcessor(config)
 
     try:
         # Process all data sources
@@ -90,7 +88,7 @@ async def process_data_files(
         try:
             from src.analysis.settlement import compute_settlement_cn
             # CLI 没有传入维度参数，默认按经销商ID
-            summary_df = compute_settlement_cn(result_df, "经销商ID")
+            summary_df = compute_settlement_cn(result_df, None)
             # 为飞书别名字段增加显式列（只加别名，不覆盖原列）
             try:
                 from src.outputs.naming import add_feishu_rate_aliases
@@ -187,7 +185,6 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     try:
-        config = {} # Initialize config here
         # Load configuration
         if args.config:
             import json
@@ -248,7 +245,7 @@ def main():
         return 0
 
     except Exception as e:
-        logger.error(f"Data processing failed: {e}")
+        logger.error(f"Application failed: {e}")
         return 1
 
 

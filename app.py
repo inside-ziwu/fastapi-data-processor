@@ -1,4 +1,5 @@
 import os
+import tempfile
 import shutil
 import json
 import time
@@ -6,23 +7,34 @@ import logging
 import asyncio
 import concurrent.futures
 from typing import Optional, Dict
-from fastapi import FastAPI, Body, HTTPException, Header, Request
+from fastapi import FastAPI, Body, HTTPException, Header, Response, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
-from datetime import datetime, date
-
-# Import the new unified processor and finalizer
-from src.processor import DataProcessor
-from src.finalize import finalize_output
+from datetime import datetime, date, timedelta
 
 def json_date_serializer(obj):
+    """JSON serializer for objects not serializable by default json code"""
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
-    raise TypeError(f"Type {type(obj)} not serializable")
+    raise TypeError (f"Type {type(obj)} not serializable")
+
+
+
+import polars as pl
+
+from src import DataProcessor
+from src.diagnostics.metrics import (
+    log_settlement_inputs,
+    log_level_distribution,
+    log_suffix_masking,
+    log_account_base_conflicts,
+    log_message_date_distribution,
+)
+from feishu_writer_sync import FeishuWriterV3
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -36,25 +48,93 @@ TMP_ROOT = os.environ.get("TMP_ROOT", "/tmp/fastapi_data_proc")
 os.makedirs(TMP_ROOT, exist_ok=True)
 API_KEY = os.environ.get("PROCESSOR_API_KEY", None)
 
-# Initialize the processor once
-processor = DataProcessor()
-
 def auth_ok(x_api_key: Optional[str]):
     if API_KEY is None:
         return True
     return x_api_key == API_KEY
 
 def create_robust_session():
+    """创建健壮的HTTP会话"""
     session = requests.Session()
-    retry = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+    retry = Retry(
+        total=3,  # 最多重试3次
+        backoff_factor=1,  # 退避因子：1s, 2s, 4s
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
     adapter = HTTPAdapter(max_retries=retry)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
 
 def download_to_file(url_or_path: str, target_dir: str) -> str:
-    # ... (download logic remains the same)
-    pass # Placeholder for brevity
+    """防卡死的流式下载"""
+    os.makedirs(target_dir, exist_ok=True)
+    
+    # 本地文件处理
+    if url_or_path.startswith("file://") or os.path.exists(url_or_path):
+        if url_or_path.startswith("file://"):
+            local_src = url_or_path[len("file://"):]
+        else:
+            local_src = url_or_path
+        if not os.path.exists(local_src):
+            raise FileNotFoundError(f"Local file not found: {local_src}")
+        dest = os.path.join(target_dir, os.path.basename(local_src))
+        shutil.copy(local_src, dest)
+        logger.info(f"本地文件复制完成: {dest} ({os.path.getsize(dest)} bytes)")
+        return dest
+    
+    # 远程下载 - 增加超时时间
+    session = create_robust_session()
+    fname = url_or_path.split("/")[-1].split("?")[0] or f"file_{int(time.time())}"
+    dest = os.path.join(target_dir, fname)
+    
+    try:
+        start_time = time.time()
+        # 增加超时：连接60秒，读取300秒
+        with session.get(url_or_path, stream=True, timeout=(60, 300)) as resp:
+            resp.raise_for_status()
+            
+            content_length = int(resp.headers.get('content-length', 0))
+            logger.info(f"开始下载: {fname} (大小: {content_length/1024/1024:.2f}MB)")
+            
+            downloaded = 0
+            last_log_time = time.time()
+            
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1024*1024):  # 1MB分块
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # 每5秒报告一次进度
+                        current_time = time.time()
+                        if current_time - last_log_time > 5:
+                            if content_length > 0:
+                                progress = (downloaded / content_length) * 100
+                                speed = downloaded / (current_time - start_time) / 1024 / 1024  # MB/s
+                                logger.info(f"下载进度: {fname} - {progress:.1f}% ({speed:.2f}MB/s)")
+                            else:
+                                logger.info(f"下载中: {fname} - {downloaded/1024/1024:.2f}MB")
+                            last_log_time = current_time
+            
+            file_size = os.path.getsize(dest)
+            total_time = time.time() - start_time
+            speed = file_size / total_time / 1024 / 1024
+            
+            logger.info(f"下载完成: {fname} - {file_size/1024/1024:.2f}MB in {total_time:.1f}s ({speed:.2f}MB/s)")
+            return dest
+            
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail=f"下载超时: {url_or_path}")
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(status_code=502, detail=f"连接失败: {url_or_path}")
+    except requests.exceptions.HTTPError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"HTTP错误: {e}")
+    except Exception as e:
+        # 清理失败的文件
+        if os.path.exists(dest):
+            os.remove(dest)
+        raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
 
 class ProcessRequest(BaseModel):
     video_excel_file: Optional[str] = None
@@ -67,14 +147,16 @@ class ProcessRequest(BaseModel):
     account_bi_file: Optional[str] = None
     Spending_file: Optional[str] = None
     spending_sheet_names: Optional[str] = None
-    dimension: Optional[str] = None
+    dimension: Optional[str] = None  # 新增：聚合维度，支持 NSC_CODE 或 level
 
 @app.post("/process-files")
 async def process_files(request: Request, payload: ProcessRequest = Body(...), x_api_key: Optional[str] = Header(None)):
     from concurrent.futures import TimeoutError as AsyncTimeoutError
 
+    # 6分钟强制超时设置（360秒）
     TOTAL_TIMEOUT = 360
     request_start_time = time.time()
+    logger.info(f"PROFILING: Request received at {request_start_time}, timeout={TOTAL_TIMEOUT}s")
 
     if not auth_ok(x_api_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -82,55 +164,451 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
     run_dir = os.path.join(TMP_ROOT, f"run_{int(time.time()*1000)}")
     os.makedirs(run_dir, exist_ok=True)
 
-    # ... (Task Cancellation Logic remains the same) ...
+    raw_body = await request.body()
+    logger.info(f"RAW REQUEST BODY: {raw_body.decode()}")
 
+    # --- Task Cancellation Logic ---
+    user_id = None
+    try:
+        request_data = json.loads(raw_body)
+        user_id = request_data.get("user", {}).get("id")
+    except json.JSONDecodeError:
+        logger.warning("Could not parse user_id from request body for task cancellation.")
+
+    if user_id and user_id in ACTIVE_TASKS:
+        old_task = ACTIVE_TASKS.pop(user_id)
+        if not old_task.done():
+            old_task.cancel()
+            logger.warning(f"User {user_id} started a new request. Cancelling the previous one.")
+    # --- End Task Cancellation Logic ---
+
+    file_keys = [
+        "video_excel_file", "live_bi_file", "msg_excel_file", "DR1_file", "DR2_file",
+        "account_base_file", "leads_file", "account_bi_file", "Spending_file"
+    ]
     provided = payload.dict()
     local_paths = {}
-    # ... (File download logic remains the same) ...
+    logger.info(f"Starting file processing with payload: {list(provided.keys())}")
+    
+    download_start_time = time.time()
+    
+    # 收集需要下载的文件
+    download_tasks = []
+    for key in file_keys:
+        val = provided.get(key)
+        logger.info(f"DEBUG: {key} raw value = '{repr(val)}' (type: {type(val)})")
+        if val is not None and str(val).strip() != "" and str(val).strip() != "None":
+            download_tasks.append((key, val))
+        else:
+            logger.info(f"❌ Skipping {key}: value is '{repr(val)}'")
+    
+    if download_tasks:
+        logger.info(f"准备并发下载 {len(download_tasks)} 个文件")
+        loop = asyncio.get_running_loop()
+        
+        # 使用线程池的异步方式 + asyncio.gather 实现真正并发
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            # 构建并发任务列表
+            async_tasks = []
+            keys = []
+            
+            for key, url in download_tasks:
+                task = loop.run_in_executor(executor, download_to_file, url, run_dir)
+                async_tasks.append(task)
+                keys.append(key)
+            
+            # 真正的并发执行所有下载任务
+            try:
+                results = await asyncio.gather(*async_tasks, return_exceptions=True)
+                
+                # 处理结果
+                for key, result in zip(keys, results):
+                    if isinstance(result, Exception):
+                        # 清理失败的文件
+                        shutil.rmtree(run_dir, ignore_errors=True)
+                        raise HTTPException(status_code=500, detail=f"下载失败 {key}: {str(result)}")
+                    else:
+                        local_paths[key] = result
+                        logger.info(f"成功下载 {key} 到 {local_paths[key]}")
+                        
+            except Exception as e:
+                # 清理失败的文件
+                shutil.rmtree(run_dir, ignore_errors=True)
+                raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
+    
+    # PROFILING: After Downloads
+    download_end_time = time.time()
+    logger.info(f"PROFILING: File downloads finished. Total download time: {download_end_time - download_start_time:.2f} seconds.")
 
+    logger.info(f"Valid files to process: {list(local_paths.keys())}")
     if not local_paths:
         shutil.rmtree(run_dir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail="No valid file URLs provided.")
-
-    dimension = provided.get("dimension", "经销商ID")
-    if dimension in [None, "", "None"]:
-        dimension = "经销商ID"
-
+        raise HTTPException(status_code=400, detail="No valid file URLs provided. Please provide at least one file URL.")
+    spending_sheet_names = provided.get("spending_sheet_names")
+    dimension_raw = provided.get("dimension")
+    dimension = str(dimension_raw).strip() if dimension_raw is not None and str(dimension_raw).strip() != "" else "NSC_CODE"
+    logger.info(f"从请求中提取的dimension参数: '{dimension}' (原始: '{dimension_raw}', 类型: {type(dimension_raw)})")
+    logger.info(f"维度验证: dimension == '层级' -> {dimension == '层级'}")
+    logger.info(f"维度验证: dimension == 'level' -> {dimension == 'level'}")
     try:
+        # 使用超时包装的核心处理
         async def core_processing_task():
-            loop = asyncio.get_running_loop()
-            # Run the synchronous, CPU-bound data processing in a thread pool
-            def run_sync_processing():
-                # The processor now handles the entire pipeline
-                return processor.run_full_analysis(local_paths, dimension)
+            logger.info(f"Starting core processing with {len(local_paths)} files: {list(local_paths.keys())}")
+            # PROFILING: Before Core Processing
+            core_processing_start_time = time.time()
             
-            result_df = await loop.run_in_executor(None, run_sync_processing)
+            loop = asyncio.get_running_loop()
+            
+            try:
+                # Run the synchronous, CPU-bound function in a thread pool
+                # 将可选配置透传给 Processor（如 spending_sheet_names 等）
+                proc_cfg = {"spending_sheet_names": spending_sheet_names}
+                processor = DataProcessor(proc_cfg)
+                result_df = await loop.run_in_executor(
+                    None,  # Use the default executor
+                    processor.process_pipeline,
+                    local_paths
+                )
+            except Exception as e:
+                logger.error(f"Core processing failed: {str(e)}", exc_info=True)
+                raise
+            # PROFILING: After Core Processing
+            core_processing_end_time = time.time()
+            logger.info(f"PROFILING: Core processing finished. Total core processing time: {core_processing_end_time - core_processing_start_time:.2f} seconds.")
             return result_df
+        
+        # --- Modified Task Execution with Cancellation ---
+        task_to_run = asyncio.create_task(core_processing_task())
+        if user_id:
+            ACTIVE_TASKS[user_id] = task_to_run
 
-        # ... (Task execution with timeout and cancellation logic remains the same) ...
-        result_df = await asyncio.wait_for(asyncio.create_task(core_processing_task()), timeout=TOTAL_TIMEOUT)
+        try:
+            remaining_time = TOTAL_TIMEOUT - (time.time() - request_start_time)
+            if remaining_time <= 0:
+                raise AsyncTimeoutError()
 
-        if result_df.is_empty():
-            return {"code": 200, "msg": "处理完成，但未生成有效数据。", "records": []}
+            result_df = await asyncio.wait_for(
+                task_to_run,
+                timeout=remaining_time
+            )
+        except AsyncTimeoutError:
+            elapsed = time.time() - request_start_time
+            logger.error(f"Processing timeout after {elapsed:.2f}s, max allowed: {TOTAL_TIMEOUT}s")
+            shutil.rmtree(run_dir, ignore_errors=True)
+            raise HTTPException(
+                status_code=504,
+                detail=f"处理超时，任务在{elapsed:.1f}秒后未完成（最大允许{TOTAL_TIMEOUT}秒）"
+            )
+        except asyncio.CancelledError:
+            elapsed = time.time() - request_start_time
+            logger.warning(f"Task for user {user_id} was cancelled after {elapsed:.2f}s, likely by a new request.")
+            shutil.rmtree(run_dir, ignore_errors=True)
+            raise HTTPException(status_code=499, detail="请求被新的请求覆盖 (Request superseded by a new one)")
+        finally:
+            # Clean up the task from the registry once it's done or cancelled
+            if user_id and user_id in ACTIVE_TASKS and ACTIVE_TASKS[user_id] is task_to_run:
+                del ACTIVE_TASKS[user_id]
+        # --- End Modified Task Execution ---
 
-        # Finalize output: rename to Chinese, order columns
-        final_df = finalize_output(result_df)
+        # PROFILING: Before Output Prep
+        output_prep_start_time = time.time()
 
-        num_rows, num_cols = final_df.shape
-        results_data_standard = final_df.to_dicts()
+        # --- UNIFIED FINAL LOGIC ---
+        # 1. Get shape for size hint (initial, before settlement)
+        num_rows, num_cols = result_df.shape
 
-        # ... (Message creation, file saving, and Feishu logic remains the same) ...
-        message = f"处理完成，生成数据 {num_rows} 行，{num_cols} 列。"
+        # 2. Count non-compliant floats before cleaning
+        nan_count = 0
+        inf_count = 0
+        for col_name in result_df.columns:
+            if result_df[col_name].dtype in [pl.Float32, pl.Float64]:
+                nan_count += result_df[col_name].is_nan().sum()
+                inf_count += result_df[col_name].is_infinite().sum()
+        cleaned_count = nan_count + inf_count
 
-        return {
-            "code": 200,
-            "msg": message,
-            "records": [json.dumps(row, ensure_ascii=False, default=json_date_serializer) for row in results_data_standard]
-        }
+        # 3a. Rename columns to final Chinese names
+        try:
+            from src.outputs.naming import rename_for_output, normalize_join_suffixes
+            # Normalize join suffixes using request's file keys
+            # Use actual processed file keys for suffix normalization
+            _suffixes = set(local_paths.keys())
+            logger.info(f"[output] Valid join suffixes: {sorted(list(_suffixes))}")
+            result_df = normalize_join_suffixes(result_df, _suffixes)
+            result_df = rename_for_output(result_df)
+        except Exception as e:
+            logger.warning(f"Output renaming skipped due to error: {e}")
+
+        # Diagnostics (opt-in) — keep outside core logic
+        try:
+            log_settlement_inputs(result_df)
+            log_level_distribution(result_df)
+            log_suffix_masking(result_df, local_paths.keys())
+            log_account_base_conflicts(result_df)
+            log_message_date_distribution(result_df)
+        except Exception as e:
+            logger.error(f"Diagnostics failed: {e}", exc_info=True)
+
+        # 3b. Settlement computation per 经销商ID (two-month window)
+        try:
+            from src.analysis.settlement import compute_settlement_cn
+            result_df = compute_settlement_cn(result_df, dimension)
+            # 增加飞书别名字段，满足 schema 的等式列名
+            try:
+                from src.outputs.naming import add_feishu_rate_aliases
+                result_df = add_feishu_rate_aliases(result_df)
+            except Exception:
+                pass
+            # 关键率列诊断
+            try:
+                from src.diagnostics.metrics import log_core_rates
+                log_core_rates(result_df)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Settlement computation failed: {e}")
+
+        # 3c. Clean the dataframe - 彻底清理所有null值（跳过日期/时间类型）
+        for col_name in result_df.columns:
+            col_type = result_df[col_name].dtype
+            if col_type in [pl.Float32, pl.Float64]:
+                # 处理浮点数：NaN, Inf, -Inf → 0
+                result_df = result_df.with_columns(
+                    pl.when(pl.col(col_name).is_nan() | pl.col(col_name).is_infinite() | pl.col(col_name).is_null())
+                    .then(0.0)
+                    .otherwise(pl.col(col_name).round(6))
+                    .alias(col_name)
+                )
+            elif col_type in [pl.Int32, pl.Int64]:
+                # 处理整数null → 0
+                result_df = result_df.with_columns(
+                    pl.col(col_name).fill_null(0).alias(col_name)
+                )
+            elif col_type == pl.Utf8:
+                # 处理字符串null → 空字符串
+                result_df = result_df.with_columns(
+                    pl.col(col_name).fill_null("").alias(col_name)
+                )
+            elif col_type in [pl.Date, pl.Datetime, pl.Time]:
+                # 日期/时间列不做数值填充，保持原状
+                continue
+            else:
+                # 其他类型统一处理
+                result_df = result_df.with_columns(
+                    pl.col(col_name).fill_null(0).alias(col_name)
+                )
+
+        # 3d. Update final shape after settlement & cleaning
+        num_rows, num_cols = result_df.shape
+        logger.info(f"结算完成：按维度 '{dimension}' 聚合后得到 {num_rows} 行, {num_cols} 列")
+
+        # 4. Create standard and Feishu data formats
+        results_data_standard = result_df.to_dicts()  # 标准JSON保持英文
+
+        # 5. Calculate final size and construct message
+        json_string_for_size_calc = json.dumps(results_data_standard, default=json_date_serializer)
+        data_size_bytes = len(json_string_for_size_calc.encode('utf-8'))
+        data_size_mb = data_size_bytes / (1024 * 1024)
+        size_warning = " (超过1.5MB)" if data_size_mb > 1.5 else ""
+        message = (
+            f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，"
+            f"数据大小约 {data_size_mb:.2f} MB{size_warning}。"
+            f"清理了 {cleaned_count} 个无效数值。"
+        )
+        logger.info(message)
+
+        # PROFILING: After Output Prep
+        output_prep_end_time = time.time()
+        logger.info(f"PROFILING: Output preparation finished. Total output prep time: {output_prep_end_time - output_prep_start_time:.2f} seconds.")
 
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}", exc_info=True)
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
-# ... (cleanup, health, and exception handlers remain the same) ...
+    # 始终保存文件（默认行为）
+    out_path_standard = os.path.join(run_dir, "result.json")
+    with open(out_path_standard, "w", encoding="utf-8") as f:
+        json.dump({"message": message, "data": results_data_standard}, f, ensure_ascii=False, indent=2, default=json_date_serializer)
+
+    # 用于API返回的最终结果
+    string_records = [json.dumps(row, ensure_ascii=False, default=json_date_serializer) for row in results_data_standard]
+    
+    # 飞书写入逻辑（同步，保证在Coze 6分钟限制内返回）
+    request_body = await request.json()
+    if request_body.get("feishu_enabled", False):
+        feishu_config = {
+            "enabled": True,
+            "app_id": request_body.get("feishu_app_id", ""),
+            "app_secret": request_body.get("feishu_app_secret", ""),
+            "app_token": request_body.get("feishu_app_token", ""),
+            "table_id": request_body.get("feishu_table_id", "")
+        }
+        # 写入超时（默认180s），且不超过总剩余时间
+        write_timeout_sec = int(os.environ.get("FEISHU_WRITE_TIMEOUT_SEC", "180"))
+
+        writer = FeishuWriterV3(feishu_config)
+        
+        # 验证配置
+        validation = await writer.validate_config()
+        if not validation["valid"]:
+            logger.error(f"[飞书] 配置验证失败: {validation['errors']}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"飞书配置验证失败: {'; '.join(validation['errors'])}"
+            )
+        remaining_time = TOTAL_TIMEOUT - (time.time() - request_start_time)
+        # 预留10秒余量给收尾，避免触发总体超时
+        effective_timeout = max(5, min(write_timeout_sec, int(remaining_time - 10)))
+        if effective_timeout <= 5:
+            raise HTTPException(status_code=504, detail="剩余时间不足以完成飞书写入")
+
+        # 同步等待飞书写入完成
+        start_write = time.time()
+        try:
+            success = await asyncio.wait_for(writer.write_records(results_data_standard), timeout=effective_timeout)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail=f"写入飞书表格超时（>{effective_timeout}s）")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"写入飞书表格异常：{e}")
+
+        elapsed_write = time.time() - start_write
+        if not success:
+            logger.error("[飞书] 写入失败")
+            raise HTTPException(status_code=500, detail="写入飞书表格失败，请检查配置和数据格式")
+        logger.info(f"[飞书] 写入成功，用时 {elapsed_write:.1f}s")
+    else:
+        logger.info("[飞书] 写入未启用，跳过飞书写入。")
+
+    elapsed = time.time() - request_start_time
+    logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Returning {len(string_records)} records.")
+
+    # The original message is mostly correct, but let's ensure the size is based on the final string records.
+    final_size_bytes = sum(len(r.encode('utf-8')) for r in string_records)
+    final_size_mb = final_size_bytes / (1024 * 1024)
+    size_warning = " (超过1.5MB)" if final_size_mb > 1.5 else ""
+    final_message = (
+        f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，"
+        f"数据大小约 {final_size_mb:.2f} MB{size_warning}。"
+        f"清理了 {cleaned_count} 个无效数值。"
+    )
+
+    return {
+        "code": 200,
+        "msg": final_message,
+        "records": string_records
+    }
+
+@app.post("/cleanup")
+async def cleanup_old_runs(x_api_key: Optional[str] = Header(None)):
+    """Clean up old run directories that are older than 60 minutes."""
+    if not auth_ok(x_api_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    deleted_count = 0
+    kept_count = 0
+    errors = []
+    now = time.time()
+    sixty_minutes_ago = now - 3600
+
+    if not os.path.exists(TMP_ROOT):
+        msg = "Temporary directory does not exist, nothing to clean."
+        logger.info(msg)
+        return {"code": 200, "msg": msg}
+
+    for run_dir_name in os.listdir(TMP_ROOT):
+        run_dir_path = os.path.join(TMP_ROOT, run_dir_name)
+        if os.path.isdir(run_dir_path):
+            try:
+                mod_time = os.path.getmtime(run_dir_path)
+                if mod_time < sixty_minutes_ago:
+                    shutil.rmtree(run_dir_path)
+                    logger.info(f"Deleted old run directory: {run_dir_path}")
+                    deleted_count += 1
+                else:
+                    kept_count += 1
+            except Exception as e:
+                error_msg = f"Failed to process or delete {run_dir_path}: {str(e)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+    
+    msg = f"Cleanup complete. Deleted {deleted_count} old run(s), kept {kept_count} recent run(s)."
+    if errors:
+        msg += f" Encountered {len(errors)} error(s)."
+    
+    logger.info(msg)
+    return {"code": 200, "msg": msg, "errors": errors}
+
+from urllib.parse import urljoin, quote
+from fastapi.responses import FileResponse
+
+@app.get("/health")
+def health():
+    return {
+        "code": 200,
+        "msg": "服务运行正常",
+        "records": [
+            {
+                "status": "ok",
+                "time": datetime.utcnow().isoformat()
+            }
+        ]
+    }
+
+# 全局异常处理器，确保所有错误响应符合Coze插件格式
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "code": exc.status_code,
+            "msg": str(exc.detail),
+            "records": []
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": 500,
+            "msg": f"处理失败: {str(exc)}",
+            "records": []
+        }
+    )
+
+@app.get("/get-result-file")
+async def get_result_file(file_path: str, x_api_key: Optional[str] = Header(None)):
+    if not auth_ok(x_api_key):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "code": 401,
+                "msg": "Unauthorized",
+                "records": []
+            }
+        )
+    
+    # Security check: ensure the path is within the allowed directory
+    if not os.path.abspath(file_path).startswith(os.path.abspath(TMP_ROOT)):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "code": 403,
+                "msg": "Access denied",
+                "records": []
+            }
+        )
+
+    if not os.path.exists(file_path):
+        return JSONResponse(
+            status_code=404,
+            content={
+                "code": 404,
+                "msg": "File not found",
+                "records": []
+            }
+        )
+
+    return FileResponse(path=file_path, media_type='application/octet-stream', filename=os.path.basename(file_path))

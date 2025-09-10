@@ -1,6 +1,6 @@
 """Data transformation modules for different sources."""
 
-from .base import BaseTransformer
+from .base import BaseTransform
 from .video import VideoTransform
 from .live import LiveTransform
 from .message import MessageTransform
@@ -11,7 +11,7 @@ from .account_bi import AccountBITransform
 from .account_base import AccountBaseTransform
 
 __all__ = [
-    "BaseTransformer",
+    "BaseTransform",
     "VideoTransform",
     "LiveTransform",
     "MessageTransform",

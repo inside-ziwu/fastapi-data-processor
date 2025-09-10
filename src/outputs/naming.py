@@ -14,7 +14,6 @@ OUTPUT_NAME_MAP: dict[str, str] = {
     "month": "month",
     "day": "day",
     "period": "period",
-    "effective_days": "有效天数",
     "T_effective_days": "T月有效天数",
     "T_minus_1_effective_days": "T-1月有效天数",
 
@@ -26,7 +25,7 @@ OUTPUT_NAME_MAP: dict[str, str] = {
 
     # Live
     "over25_min_live_mins": "超25分钟直播时长(分)",
-    "live_effective_hours": "直播时长",
+    "live_effective_hours": "直播有效时长(小时)",
     "effective_live_sessions": "有效直播场次",
     "exposures": "曝光人数",
     "viewers": "场观",
@@ -45,14 +44,14 @@ OUTPUT_NAME_MAP: dict[str, str] = {
     "mkt_second_channel_name": "mkt_second_channel_name",
     "send2dealer_id": "send2dealer_id",
     # DR daily counts
-    "natural_leads": "自然线索量",
-    "paid_leads": "付费线索量",
-    "store_paid_leads": "车云店付费线索量",
-    "area_paid_leads": "区域加码付费线索量",
+    "natural_leads": "自然线索",
+    "paid_leads": "付费线索",
+    "store_paid_leads": "车云店付费线索",
+    "area_paid_leads": "区域加码付费线索",
     "local_leads": "本地线索量",
 
     # Spending
-    "spending_net": "车云店+区域投放总金额",
+    "spending_net": "Spending(Net)",
 
     # Account BI
     "live_leads": "直播线索量",

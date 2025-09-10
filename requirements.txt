@@ -9,4 +9,3 @@ httpx==0.27.2
 lark-oapi==1.4.22
 flake8
 black
-numpy

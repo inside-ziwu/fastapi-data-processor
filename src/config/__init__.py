@@ -1,8 +1,9 @@
 """Configuration management for data processing pipeline."""
 
-from .source_mappings import (
+from .field_mappings import (
+    FIELD_MAPPINGS,
     VIDEO_MAP,
-    LIVE_BI_MAP,
+    LIVE_MAP,
     MSG_MAP,
     SPENDING_MAP,
     DR_MAP,
@@ -12,8 +13,9 @@ from .source_mappings import (
 )
 
 __all__ = [
+    "FIELD_MAPPINGS",
     "VIDEO_MAP",
-    "LIVE_BI_MAP",
+    "LIVE_MAP",
     "MSG_MAP",
     "SPENDING_MAP",
     "DR_MAP",

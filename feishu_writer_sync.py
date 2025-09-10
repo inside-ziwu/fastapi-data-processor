@@ -69,9 +69,9 @@ RATE_PERCENT_FIELDS = {
 
 # Build Chinese->English mapping once from FIELD_MAPPINGS (best-effort)
 try:
-    from src.config.source_mappings import FIELD_MAPPINGS
+    from src.config import FIELD_MAPPINGS as _FM
     CHINESE_TO_ENGLISH = {}
-    for _en, _cn_list in FIELD_MAPPINGS.items():
+    for _en, _cn_list in _FM.items():
         for _cn in _cn_list:
             CHINESE_TO_ENGLISH[_norm_field_name(_cn)] = _en
 except Exception:
@@ -177,21 +177,25 @@ class FeishuWriterSync:
             return {}
 
     def _build_reverse_mapping(
-        self,
-        schema: Dict[str, Dict[str, Any]],
+        self, schema: Dict[str, Dict[str, Any]]
     ) -> Dict[str, Dict[str, Any]]:
         """构建英文到中文的反向映射 - 统一处理一对一和一对多"""
         if not schema:
             return {}
 
         # 统一映射处理：一对一和一对多都是同一种逻辑
-        # 从 src.config.source_mappings 导入 FIELD_MAPPINGS
-        from src.config.source_mappings import FIELD_MAPPINGS
+        try:
+            from src.config import FIELD_MAPPINGS
+        except ImportError:
+            # Fallback for backward compatibility
+            FIELD_MAPPINGS = {}
 
         reverse_map = {}
 
         # 创建schema标准化索引
-        normalized_schema = { _norm_field_name(k): (k, v) for k, v in schema.items() }
+        normalized_schema = {
+            _norm_field_name(k): (k, v) for k, v in schema.items()
+        }
 
         # 统一映射处理：一对一和一对多都是同一种逻辑
         matched_count = 0
@@ -234,9 +238,7 @@ class FeishuWriterSync:
         return reverse_map
 
     def _convert_value_by_type(
-        self,
-        value: Any,
-        field_info: Dict[str, Any],
+        self, value: Any, field_info: Dict[str, Any]
     ) -> Any:
         """根据字段类型转换值"""
         ui_type = field_info.get("ui_type", "Text")
@@ -281,7 +283,7 @@ class FeishuWriterSync:
             elif ui_type == "SingleSelect":
                 # 单选需要{"id": "option_id"}；支持用显示名匹配已有选项
                 if isinstance(value, dict) and "id" in value:
-                    return {"id": str(value["id"]) }
+                    return {"id": str(value["id"])}
                 label = str(value)
                 # 尝试在属性中查找匹配选项
                 try:
@@ -571,7 +573,7 @@ class FeishuWriterSync:
                 )
 
                 try:
-                    from src.config.source_mappings import FIELD_MAPPINGS
+                    from src.config import FIELD_MAPPINGS
 
                     # 创建反向映射用于验证 (Chinese -> English)
                     chinese_to_english = {}
@@ -657,4 +659,3 @@ class FeishuWriterV3:
     async def validate_config(self) -> Dict[str, Any]:
         """Async wrapper for sync method."""
         return self._sync_writer.validate_config()
-

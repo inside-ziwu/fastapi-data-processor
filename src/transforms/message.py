@@ -1,64 +1,50 @@
+"""Message/private chat data transformation."""
+
 import polars as pl
-import pandas as pd
-from .base import BaseTransformer
-from ..config.source_mappings import MSG_MAP
-import re
+from typing import Any, Dict, List, Optional
+from .base import BaseTransform
+from ..config import MSG_MAP
 
-class MessageTransform(BaseTransformer):
-    def __init__(self):
-        super().__init__(MSG_MAP)
 
-    def _parse_date_from_sheet_name(self, sheet_name: str) -> str | None:
-        s = str(sheet_name or "").strip()
-        s = s.replace("年", "-").replace("月", "-").replace("日", "")
-        s = s.replace("/", "-").replace(".", "-")
-        s = re.sub(r"\s+", "", s)
-        m = re.search(r"(20\d{2})-(\d{1,2})-(\d{1,2})", s)
-        if m:
-            y, mo, da = m.group(1), int(m.group(2)), int(m.group(3))
-            return f"{y}-{mo:02d}-{da:02d}"
-        return None
+class MessageTransform(BaseTransform):
+    """Transform message/private chat data to standardized format."""
 
-    def process_file_lazy(self, path: str) -> pl.LazyFrame:
-        """Override to handle multi-sheet Excel file."""
-        try:
-            xls = pd.ExcelFile(path)
-        except Exception as e:
-            raise ValueError(f"Could not read Excel file at {path}: {e}")
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        self.mapping = MSG_MAP
+        self.sum_columns = [
+            "enter_private_count",
+            "private_open_count",
+            "private_leads_count",
+        ]
 
-        processed_sheets = []
-        for sheet_name in xls.sheet_names:
-            df = pd.read_excel(xls, sheet_name=sheet_name, dtype=str)
+    def get_required_columns(self) -> List[str]:
+        """Required columns for message transformation."""
+        return list(self.mapping.keys())
 
-            # --- Data Cleaning Step ---
-            # The original column names from MSG_MAP keys
-            numeric_cols_original = ["进入私信客户数", "主动咨询客户数", "私信留资客户数"]
-            for col in numeric_cols_original:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            # --- End Cleaning ---
+    def transform(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Transform message data to standardized format."""
+        # Step 1: Rename columns using mapping
+        df = self._rename_columns(df, self.mapping)
 
-            lf = pl.from_pandas(df).lazy()
-            lf = self.rename_and_select(lf)
-            
-            date_str = self._parse_date_from_sheet_name(sheet_name)
-            if date_str is None:
-                # Fallback or error
-                raise ValueError(f"Could not parse date from sheet name: '{sheet_name}' in {path}")
-            
-            lf = lf.with_columns(pl.lit(date_str).str.strptime(pl.Date).alias('date'))
-            processed_sheets.append(lf)
+        # Step 2: Normalize NSC_CODE column
+        df = self._normalize_nsc_code(df)
 
-        if not processed_sheets:
-            return pl.LazyFrame()
+        # Step 3: Ensure date column (strict) — fail-fast if missing/invalid
+        df = self._ensure_date_column(df, ["日期", "date", "time", "私信日期", "消息日期"]) 
 
-        return pl.concat(processed_sheets, how="vertical")
+        # Step 4: Cast numeric columns
+        df = self._cast_numeric_columns(df, self.sum_columns)
 
-    def transform(self, lf: pl.LazyFrame) -> pl.LazyFrame:
-        # The file processing is already done in the overridden process_file_lazy
-        # This transform now just does the consolidation.
-        metric_cols = ["msg_private_entrants", "msg_active_consultations", "msg_leads_from_private"]
-        consolidated_lf = lf.group_by(["nsc_code", "date"]).agg([
-            pl.col(c).sum() for c in metric_cols
-        ])
-        return self.cast_to_float(consolidated_lf, metric_cols)
+        # Step 5: Extraction-only — no aggregation
+        wanted = ["NSC_CODE"] + (["date"] if "date" in df.columns else []) + self.sum_columns
+        present = [c for c in wanted if c in df.columns]
+        df = df.select(present)
+
+        return df
+        
+
+
+def create_message_transform() -> MessageTransform:
+    """Factory function to create message transformer."""
+    return MessageTransform()

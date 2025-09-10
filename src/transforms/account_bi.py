@@ -1,15 +1,35 @@
+"""Account BI data transformation."""
+
 import polars as pl
-from .base import BaseTransformer
-from ..config.source_mappings import ACCOUNT_BI_MAP
+from typing import Any, Dict, List, Optional
+from .base import BaseTransform
+from ..config import ACCOUNT_BI_MAP
 
-class AccountBITransform(BaseTransformer):
-    def __init__(self):
-        super().__init__(ACCOUNT_BI_MAP)
 
-    def transform(self, lf: pl.LazyFrame) -> pl.LazyFrame:
-        lf = self.rename_and_select(lf)
-        metric_cols = ["account_bi_live_form_leads", "account_bi_video_views"]
-        consolidated_lf = lf.group_by(["nsc_code", "date"]).agg([
-            pl.col(c).sum() for c in metric_cols
-        ])
-        return self.cast_to_float(consolidated_lf, metric_cols)
+class AccountBITransform(BaseTransform):
+    """Transform account-level BI metrics to standardized format."""
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        self.mapping = ACCOUNT_BI_MAP
+        # Keep a couple of known numeric fields if present
+        self.sum_columns: List[str] = [
+            col
+            for col in ["live_leads", "short_video_plays"]
+            if col in set(self.mapping.values())
+        ]
+
+    def get_required_columns(self) -> List[str]:
+        return list(self.mapping.keys())
+
+    def transform(self, df: pl.DataFrame) -> pl.DataFrame:
+        df = self._rename_columns(df, self.mapping)
+        df = self._normalize_nsc_code(df)
+        df = self._ensure_date_column(df, ["date", "日期"]) 
+
+        # Extraction-only — no aggregation
+        df = self._cast_numeric_columns(df, self.sum_columns)
+        wanted = ["NSC_CODE", "date"] + self.sum_columns
+        present = [c for c in wanted if c in df.columns]
+        df = df.select(present)
+        return df
