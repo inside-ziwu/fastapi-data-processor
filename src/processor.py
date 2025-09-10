@@ -289,6 +289,8 @@ class DataProcessor:
                     if present:
                         pdf = pdf[present]
                     df = pl.from_pandas(pdf)
+                    if "Spending(Net)" in pdf.columns:
+                        df = df.with_columns(pl.col("Spending(Net)").cast(pl.Float64).fill_nan(0.0).alias("Spending(Net)"))
             else:
                 # Fallback to generic reader below
                 df = None
@@ -471,6 +473,11 @@ class DataProcessor:
             except Exception as e:
                 logger.warning(f"CSV subset inference failed for {source_name}: {e}. Reading full file.")
 
+            if is_excel and transform and transform.__class__.__name__.lower().startswith("spending"):
+                # For spending Excel, explicitly read only mapped columns to avoid type inference issues with unneeded columns
+                from src.config.source_mappings import SPENDING_MAP
+                read_kwargs["usecols"] = list(SPENDING_MAP.keys())
+                logger.info(f"Reading Spending Excel with explicit columns: {read_kwargs["usecols"]}")
             df = reader.read(file_path, **read_kwargs)
             # default first sheet marker for excel when not explicitly handled
             if is_excel and not sheets_used:

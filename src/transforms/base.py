@@ -76,4 +76,28 @@ class BaseTransformer(ABC):
         
         df = df.select(output_expressions)
 
+        required = list(self.get_output_schema.keys())
+        missing  = [c for c in required if c not in df.columns]
+        if missing:
+            raise ValueError(f"[{self.__class__.__name__}] 输出缺列: {missing}")
+
+        # Logging
+        rows = df.shape[0]
+
+        n_m_coverage = "N/A"
+        if "NSC_CODE" in df.columns:
+            if "date" in df.columns:
+                n_unique_keys = df.select(["NSC_CODE", "date"]).unique().shape[0]
+                n_m_coverage = f"{n_unique_keys}/{rows}"
+            else: # Dimension table, only NSC_CODE
+                n_unique_keys = df.select("NSC_CODE").unique().shape[0]
+                n_m_coverage = f"{n_unique_keys}/{rows}"
+
+        metrics_non_null_counts = {}
+        for col_name, col_type in self.get_output_schema.items():
+            if col_type in [pl.Float64, pl.Int64] and col_name in df.columns:
+                metrics_non_null_counts[col_name] = df[col_name].drop_nulls().shape[0]
+        
+        print(f"[{self.__class__.__name__}] rows={rows}, keys覆盖(经销商ID/日期) = {n_m_coverage}, 指标非空统计 {metrics_non_null_counts}")
+
         return df

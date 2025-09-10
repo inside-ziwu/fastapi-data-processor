@@ -35,7 +35,8 @@ def _is_on(name: str) -> bool:
     return v in {"1", "true", "yes", "on"}
 
 def _num(c: str) -> pl.Expr:
-    return pl.col(c).cast(pl.Float64).fill_null(0.0).fill_nan(0.0)
+    # 不要把缺列/空列直接变 0
+    return pl.col(c).cast(pl.Float64, strict=False)
 
 def SAFE_DIV(a: pl.Expr, b: pl.Expr) -> pl.Expr:
     return pl.when((b.is_not_null()) & (b != 0)).then(a / b).otherwise(0.0)
@@ -49,7 +50,24 @@ class BaseFieldSpec:
     name: str
     agg: Literal["sum", "max"] = "sum"
 
+REQUIRED_BASE_COLS = [
+    "自然线索量", "付费线索量",
+    "车云店+区域投放总金额",
+    "小风车点击次数", "小风车留资量",
+    "组件点击次数", "组件留资人数（获取线索量）",
+    "场观", "曝光人数",
+    "进私人数", "私信开口人数", "咨询留资人数",
+]
+
+def _assert_required(df: pl.DataFrame, cols: list[str], where: str):
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"[{where}] 缺少必需列: {missing}\n现有列: {df.columns}"
+        )
+
 def _get_base_fields_registry() -> list[BaseFieldSpec]:
+
     sum_fields = [
         "自然线索量", "付费线索量", "车云店付费线索量", "区域加码付费线索量", "本地线索量",
         "车云店+区域投放总金额", "直播时长", "超25分钟直播时长(分)", "直播线索量",
