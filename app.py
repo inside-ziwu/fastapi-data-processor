@@ -280,15 +280,20 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
 
                 # Helper to process and convert to Pandas
                 def _process_and_convert(source_name: str, file_path: str) -> Optional[pd.DataFrame]:
+                    logger.info(f"Processing source: {source_name} from {file_path}")
                     pl_df = processor._process_single_source(source_name, file_path)
                     if pl_df is not None:
+                        logger.info(f"  {source_name} Polars DF columns: {pl_df.columns}")
                         pd_df = pl_df.to_pandas()
+                        logger.info(f"  {source_name} Pandas DF columns (before rename): {pd_df.columns}")
                         # Rename NSC_CODE to 经销商ID and date to 日期
                         if "NSC_CODE" in pd_df.columns:
                             pd_df.rename(columns={"NSC_CODE": "经销商ID"}, inplace=True)
                         if "date" in pd_df.columns:
                             pd_df.rename(columns={"date": "日期"}, inplace=True)
+                        logger.info(f"  {source_name} Pandas DF columns (after rename): {pd_df.columns}")
                         return pd_df
+                    logger.warning(f"  {source_name} Polars DF is None.")
                     return None
 
                 if "DR1_file" in local_paths:
