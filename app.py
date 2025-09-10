@@ -313,16 +313,17 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 # Call the hotfix pipeline
                 final_out_pd, wide_daily_pd, diag_dict = await loop.run_in_executor(
                     None,
-                    run_hotfix_pipeline,
-                    dr1_df=dr1_df_pd,
-                    dr2_df=dr2_df_pd,
-                    spending_df=spending_df_pd,
-                    message_df=message_df_pd,
-                    live_df=live_df_pd,
-                    video_df=video_df_pd,
-                    leads_df=leads_df_pd,
-                    account_bi_df=account_bi_df_pd,
-                    account_base_df=account_base_df_pd,
+                    lambda: run_hotfix_pipeline(
+                        dr1_df=dr1_df_pd,
+                        dr2_df=dr2_df_pd,
+                        spending_df=spending_df_pd,
+                        message_df=message_df_pd,
+                        live_df=live_df_pd,
+                        video_df=video_df_pd,
+                        leads_df=leads_df_pd,
+                        account_bi_df=account_bi_df_pd,
+                        account_base_df=account_base_df_pd,
+                    )
                 )
 
                 # Convert final_out_pd back to Polars DataFrame for the rest of app.py
