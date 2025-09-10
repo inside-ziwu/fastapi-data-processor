@@ -40,15 +40,20 @@ logger.setLevel(logging.INFO)
 # 工具函数
 # -----------------------------
 
-def norm_keys(df: pd.DataFrame) -> pd.DataFrame:
+def norm_keys(df: pd.DataFrame, key_cols: List[str] = None) -> pd.DataFrame:
     """统一键：经销商ID -> str 去空白；日期 -> date（不含时分秒）。"""
     if df is None or df.empty:
         return df
     out = df.copy()
-    if '经销商ID' not in out.columns or '日期' not in out.columns:
-        raise KeyError("缺少键列：必须包含 '经销商ID' 与 '日期'")
-    out['经销商ID'] = out['经销商ID'].astype(str).str.strip()
-    out['日期'] = pd.to_datetime(out['日期'], errors='coerce').dt.date
+    if key_cols is None:
+        key_cols = ['经销商ID', '日期']
+    for k in key_cols:
+        if k not in out.columns:
+            raise KeyError(f"缺少键列：必须包含 '{k}'")
+    if '经销商ID' in key_cols:
+        out['经销商ID'] = out['经销商ID'].astype(str).str.strip()
+    if '日期' in key_cols:
+        out['日期'] = pd.to_datetime(out['日期'], errors='coerce').dt.date
     return out
 
 
