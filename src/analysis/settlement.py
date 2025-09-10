@@ -459,14 +459,6 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
                 "日均有效（25min以上）时长（h）",
             ]
             
-            # 3. 添加“线索总量”并归一化
-            result = result.with_columns(
-                (col("自然线索量") + col("付费线索量")).alias("线索总量")
-            )
-            # 确保它也在归一化列表中
-            if "线索总量" not in cols_to_normalize:
-                cols_to_normalize.append("线索总量")
-
             # 4. 执行归一化
             update_exprs = []
             for col_name in cols_to_normalize:
@@ -486,7 +478,6 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
     # Ensure missing metrics exist as zeros to match strict header
     ensure_zero_cols = []
     expected_cols = list(metrics_both.keys()) + list(metrics_T.keys()) + list(metrics_T1.keys()) + [
-        "线索总量", # 确保线索总量也被检查
         "车云店+区域综合CPL", "付费CPL（车云店+区域）", "直播付费CPL", "T月直播付费CPL", "T-1月直播付费CPL",
         "本地线索占比",
         "直播车云店+区域日均消耗", "T月直播车云店+区域日均消耗", "T-1月直播车云店+区域日均消耗",
@@ -534,7 +525,7 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
 
     ordered_metrics = [
         # 线索与投放
-        "线索总量", "自然线索量", "付费线索量", "车云店+区域投放总金额",
+        "自然线索量", "付费线索量", "车云店+区域投放总金额",
         # 直播
         "直播时长", "T月直播时长", "T-1月直播时长",
         "直播线索量", "T月直播线索量", "T-1月直播线索量",
