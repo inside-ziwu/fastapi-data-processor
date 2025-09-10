@@ -1,49 +1,52 @@
-"""Field mappings for different data sources."""
+"""Field mappings for different data sources.
 
-# Base field mappings for data sources
+This file now only contains the mapping from original source column names
+to the internal standard English names.
+"""
+
 VIDEO_MAP = {
-    "主机厂经销商id": "NSC_CODE",
+    "主机厂经销商id": "nsc_code",
     "日期": "date",
-    "锚点曝光次数": "anchor_exposure",
-    "锚点点击次数": "component_clicks",
-    "新发布视频数": "short_video_count",
-    "短视频表单提交商机量": "short_video_leads",
+    "锚点曝光次数": "video_anchor_exposures",
+    "锚点点击次数": "video_anchor_clicks",
+    "新发布视频数": "video_new_posts",
+    "短视频表单提交商机量": "video_form_leads",
 }
 
-LIVE_MAP = {
-    "主机厂经销商id列表": "NSC_CODE",
+LIVE_BI_MAP = {
+    "主机厂经销商id列表": "nsc_code",
     "开播日期": "date",
-    "超25分钟直播时长(分)": "over25_min_live_mins",
-    "直播有效时长（小时）": "live_effective_hours",
-    "超25min直播总场次": "effective_live_sessions",
-    "曝光人数": "exposures",
-    "场观": "viewers",
-    "小风车点击次数（不含小雪花）": "small_wheel_clicks",
+    "超25分钟直播时长(分)": "live_gt_25min_duration_min",
+    "直播有效时长（小时）": "live_effective_duration_hr",
+    "超25min直播总场次": "live_gt_25min_sessions",
+    "曝光人数": "live_exposures",
+    "场观": "live_views",
+    "小风车点击次数（不含小雪花）": "live_widget_clicks",
 }
 
 MSG_MAP = {
-    "主机厂经销商ID": "NSC_CODE",
-    "日期": "date",
-    "进入私信客户数": "enter_private_count",
-    "主动咨询客户数": "private_open_count",
-    "私信留资客户数": "private_leads_count",
+    "主机厂经销商ID": "nsc_code",
+    # Note: date is derived from sheet name, not a column in the file
+    "进入私信客户数": "msg_private_entrants",
+    "主动咨询客户数": "msg_active_consultations",
+    "私信留资客户数": "msg_leads_from_private",
 }
 
 ACCOUNT_BI_MAP = {
-    "主机厂经销商id列表": "NSC_CODE",
+    "主机厂经销商id列表": "nsc_code",
     "日期": "date",
-    "直播间表单提交商机量": "live_leads",
-    "短-播放量": "short_video_plays",
+    "直播间表单提交商机量": "account_bi_live_form_leads",
+    "短-播放量": "account_bi_video_views",
 }
 
 LEADS_MAP = {
-    "主机厂经销商id列表": "NSC_CODE",
+    "主机厂经销商id列表": "nsc_code",
     "留资日期": "date",
-    "直播间表单提交商机量(去重)": "small_wheel_leads",
+    "直播间表单提交商机量(去重)": "leads_from_live_form",
 }
 
 DR_MAP = {
-    "reg_dealer": "NSC_CODE",
+    "reg_dealer": "nsc_code",
     "register_time": "date",
     "leads_type": "leads_type",
     "mkt_second_channel_name": "mkt_second_channel_name",
@@ -51,240 +54,14 @@ DR_MAP = {
 }
 
 SPENDING_MAP = {
-    "NSC CODE": "NSC_CODE",
+    "NSC CODE": "nsc_code",
     "Date": "date",
-    "Spending(Net)": "spending",
+    "Spending(Net)": "spending_net",
 }
 
 ACCOUNT_BASE_MAP = {
-    "NSC_id": "NSC_CODE",
-    "NSC CODE": "NSC_CODE",
-    "经销商ID": "NSC_CODE",
-    "经销商id": "NSC_CODE",
+    "NSC_id": "nsc_code",
+    "NSC CODE": "nsc_code",
     "第二期层级": "level",
-    "层级": "level",
-    "NSC Code": "NSC_CODE",
     "抖音id": "store_name",
-    "抖音ID": "store_name",
-}
-
-# Field mappings for Feishu multi-dimensional tables (supports one-to-one and one-to-many)
-FIELD_MAPPINGS = {
-    # One-to-many mappings
-    "paid_cpl": ["直播付费CPL", "付费CPL（车云店+区域）"],
-    "paid_cpl_t": ["T月直播付费CPL"],
-    "paid_cpl_t_minus_1": ["T-1月直播付费CPL"],
-    
-    # Base fields
-    "NSC_CODE": ["经销商ID"],
-    "store_name": ["门店名", "门店名称", "门店", "店铺名", "抖音id", "抖音ID"],
-    "level": ["层级"],
-    
-    # Leads related
-    "natural_leads_total": ["自然线索量"],
-    "natural_leads_t": ["T月自然线索量"],
-    "natural_leads_t_minus_1": ["T-1月自然线索量"],
-    
-    "ad_leads_total": ["付费线索量"],
-    "ad_leads_t": ["T月付费线索量"],
-    "ad_leads_t_minus_1": ["T-1月付费线索量"],
-    
-    # Spending
-    "spending_net_total": ["车云店+区域投放总金额"],
-    "spending_net_t": ["T月车云店+区域投放总金额"],
-    "spending_net_t_minus_1": ["T-1月车云店+区域投放总金额"],
-    
-    # Paid leads
-    "paid_leads_total": ["车云店付费线索量"],
-    "paid_leads_t": ["T月车云店付费线索量"],
-    "paid_leads_t_minus_1": ["T-1月车云店付费线索量"],
-    
-    # Regional leads
-    "area_leads_total": ["区域线索量"],
-    "area_leads_t": ["T月区域线索量"],
-    "area_leads_t_minus_1": ["T-1月区域线索量"],
-    
-    # Local leads
-    "local_leads_total": ["本地线索量"],
-    "local_leads_t": ["T月本地线索量"],
-    "local_leads_t_minus_1": ["T-1月本地线索量"],
-    
-    # Live streaming duration
-    "live_effective_hours_total": ["有效直播时长总量(小时)", "直播时长"],
-    "live_effective_hours_t": ["T月有效直播时长(小时)", "T月直播时长"],
-    "live_effective_hours_t_minus_1": ["T-1月有效直播时长(小时)", "T-1月直播时长"],
-    
-    # Effective live sessions
-    "effective_live_sessions_total": ["有效直播场次总量"],
-    "effective_live_sessions_t": ["T月有效直播场次"],
-    "effective_live_sessions_t_minus_1": ["T-1月有效直播场次"],
-    
-    # Exposures
-    "exposures_total": ["总曝光人数"],
-    "exposures_t": ["T月曝光人数"],
-    "exposures_t_minus_1": ["T-1月曝光人数"],
-    
-    # Viewers
-    "viewers_total": ["总场观"],
-    "viewers_t": ["T月场观"],
-    "viewers_t_minus_1": ["T-1月场观"],
-    
-    # Small wheel clicks
-    "small_wheel_clicks_total": ["小风车点击总量"],
-    "small_wheel_clicks_t": ["T月小风车点击"],
-    "small_wheel_clicks_t_minus_1": ["T-1月小风车点击"],
-    
-    # Small wheel leads
-    "small_wheel_leads_total": ["小风车留资量"],
-    "small_wheel_leads_t": ["T月小风车留资量"],
-    "small_wheel_leads_t_minus_1": ["T-1月小风车留资量"],
-    
-    # Anchor exposures
-    "anchor_exposure_total": ["锚点曝光量"],
-    "anchor_exposure_t": ["T月锚点曝光量"],
-    "anchor_exposure_t_minus_1": ["T-1月锚点曝光量"],
-    
-    # Short videos
-    "short_video_count_total": ["短视频发布量", "短视频条数"],
-    "short_video_count_t": ["T月短视频发布量", "T月短视频条数"],
-    "short_video_count_t_minus_1": ["T-1月短视频发布量", "T-1月短视频条数"],
-    
-    "component_clicks_total": ["组件点击总量"],
-    "component_clicks_t": ["T月组件点击总量"],
-    "component_clicks_t_minus_1": ["T-1月组件点击总量"],
-    
-    "short_video_leads_total": ["组件留资人数（获取线索量）"],
-    "short_video_leads_t": ["T月组件留资人数（获取线索量）"],
-    "short_video_leads_t_minus_1": ["T-1月组件留资人数（获取线索量）"],
-    
-    # Private messages
-    "enter_private_count_total": ["进私总量"],
-    "enter_private_count_t": ["T月进私"],
-    "enter_private_count_t_minus_1": ["T-1月进私"],
-    
-    "private_open_count_total": ["私信开口总量"],
-    "private_open_count_t": ["T月私信开口"],
-    "private_open_count_t_minus_1": ["T-1月私信开口"],
-    
-    "private_leads_count_total": ["私信留资总量"],
-    "private_leads_count_t": ["T月私信留资"],
-    "private_leads_count_t_minus_1": ["T-1月私信留资"],
-    
-    # Short video plays
-    "short_video_plays_total": ["短视频播放总量", "短视频播放量"],
-    "short_video_plays_t": ["T月短视频播放量"],
-    "short_video_plays_t_minus_1": ["T-1月短视频播放量"],
-    
-    # === New field mappings (based on Feishu API) ===
-    # Comprehensive CPL
-    "total_cpl": ["车云店+区域综合CPL"],
-    
-    # Local leads ratio
-    "local_leads_ratio": ["本地线索占比"],
-    
-    # Effective live duration (>25min)
-    "avg_daily_effective_live_hours_25min": ["日均有效（25min以上）时长（h）"],
-    "avg_daily_effective_live_hours_25min_t": ["T月日均有效（25min以上）时长（h）"],
-    "avg_daily_effective_live_hours_25min_t_minus_1": ["T-1月日均有效（25min以上）时长（h）"],
-    
-    # Per-session metrics
-    "avg_exposures_per_session": ["场均曝光人数"],
-    "avg_exposures_per_session_t": ["T月场均曝光人数"],
-    "avg_exposures_per_session_t_minus_1": ["T-1月场均曝光人数"],
-    
-    # Exposure to viewer rate
-    "exposure_to_viewer_rate": ["曝光进入率"],
-    "exposure_to_viewer_rate_t": ["T月曝光进入率"],
-    "exposure_to_viewer_rate_t_minus_1": ["T-1月曝光进入率"],
-    
-    # Avg viewers per session
-    "avg_viewers_per_session": ["场均场观"],
-    "avg_viewers_per_session_t": ["T月场均场观"],
-    "avg_viewers_per_session_t_minus_1": ["T-1月场均场观"],
-    
-    # Avg small wheel clicks per session
-    "avg_small_wheel_clicks_per_session": ["场均小风车点击次数"],
-    "avg_small_wheel_clicks_per_session_t": ["T月场均小风车点击次数"],
-    "avg_small_wheel_clicks_per_session_t_minus_1": ["T-1月场均小风车点击次数"],
-    
-    # Small wheel click rate
-    "small_wheel_click_rate": ["小风车点击率"],
-    "small_wheel_click_rate_t": ["T月小风车点击率"],
-    "small_wheel_click_rate_t_minus_1": ["T-1月小風車點擊率", "T-1月小风车点击率"],
-    
-    # Avg small wheel leads per session
-    "avg_small_wheel_leads_per_session": ["场均小风车留资量"],
-    "avg_small_wheel_leads_per_session_t": ["T月场均小风车留资量"],
-    "avg_small_wheel_leads_per_session_t_minus_1": ["T-1月场均小风车留资量"],
-    
-    # Small wheel leads rate
-    "small_wheel_leads_rate": ["小风车点击留资率"],
-    "small_wheel_leads_rate_t": ["T月小风车点击留资率"],
-    "small_wheel_leads_rate_t_minus_1": ["T-1月小风车点击留资率"],
-    
-    # Live leads
-    "live_leads_total": ["直播线索量"],
-    "live_leads_t": ["T月直播线索量"],
-    "live_leads_t_minus_1": ["T-1月直播线索量"],
-    
-    # Component clicks
-    "component_clicks_total": ["组件点击次数"],
-    "component_clicks_t": ["T月组件点击次数"],
-    "component_clicks_t_minus_1": ["T-1月组件点击次数"],
-    
-    # Component click rate
-    "component_click_rate": ["组件点击率"],
-    "component_click_rate_t": ["T月组件点击率"],
-    "component_click_rate_t_minus_1": ["T-1月组件点击率"],
-    
-    # Component leads rate
-    "component_leads_rate": ["组件留资率"],
-    "component_leads_rate_t": ["T月组件留资率"],
-    "component_leads_rate_t_minus_1": ["T-1月组件留资率"],
-    
-    # Daily private message metrics
-    "avg_daily_private_entry_count": ["日均进私人数"],
-    "avg_daily_private_entry_count_t": ["T月日均进私人数"],
-    "avg_daily_private_entry_count_t_minus_1": ["T-1月日均进私人数"],
-    
-    "avg_daily_private_open_count": ["日均私信开口人数"],
-    "avg_daily_private_open_count_t": ["T月日均私信开口人数"],
-    "avg_daily_private_open_count_t_minus_1": ["T-1月日均私信开口人数"],
-    
-    # Private message open rate
-    "private_open_rate": ["私信咨询率=开口/进私"],
-    "private_open_rate_t": ["T月私信咨询率=开口/进私"],
-    "private_open_rate_t_minus_1": ["T-1月私信咨询率=开口/进私"],
-    
-    # Consultation leads related
-    "avg_daily_private_leads_count": ["日均咨询留资人数"],
-    "avg_daily_private_leads_count_t": ["T月日均咨询留资人数"],
-    "avg_daily_private_leads_count_t_minus_1": ["T-1月日均咨询留资人数"],
-    
-    # Consultation leads rate
-    "private_leads_rate": ["咨询留资率=留资/咨询"],
-    "private_leads_rate_t": ["T月咨询留资率=留资/咨询"],
-    "private_leads_rate_t_minus_1": ["T-1月咨询留资率=留资/咨询"],
-    
-    # Private message conversion rate
-    "private_conversion_rate": ["私信转化率=留资/进私"],
-    "private_conversion_rate_t": ["T月私信转化率=留资/进私"],
-    "private_conversion_rate_t_minus_1": ["T-1月私信转化率=留资/进私"],
-
-    # === New daily avg spending and duration fields ===
-    "avg_daily_spending": ["直播车云店+区域日均消耗"],
-    "avg_daily_spending_t": ["T月直播车云店+区域日均消耗"],
-    "avg_daily_spending_t_minus_1": ["T-1月直播车云店+区域日均消耗"],
-    "avg_daily_paid_leads": ["直播车云店+区域付费线索量日均"],
-    "avg_daily_paid_leads_t": ["T月直播车云店+区域付费线索量日均"],
-    "avg_daily_paid_leads_t_minus_1": ["T-1月直播车云店+区域付费线索量日均"],
-    # Total paid leads (not daily avg)
-    "paid_area_leads_total": ["直播车云店+区域付费线索量"],
-    "paid_area_leads_t": ["T月直播车云店+区域付费线索量"],
-    "paid_area_leads_t_minus_1": ["T-1月直播车云店+区域付费线索量"],
-    
-    # Effective live duration (>25min)
-    "effective_live_hours_25min": ["有效（25min以上）时长（h）"],
-    "effective_live_hours_25min_t": ["T月有效（25min以上）时长（h）"],
-    "effective_live_hours_25min_t_minus_1": ["T-1月有效（25min以上）时长（h）"],
 }

@@ -1,42 +1,15 @@
-"""Account BI data transformation."""
-
 import polars as pl
-from typing import Dict
-from src.transforms.base import BaseTransformer
-from src.transforms.utils import aggregate_by_keys
-from src.config.source_mappings import ACCOUNT_BI_MAP
+from .base import BaseTransformer
+from ..config.source_mappings import ACCOUNT_BI_MAP
 
 class AccountBITransform(BaseTransformer):
-    """
-    Transforms raw account BI data by aggregating daily metrics per NSC_CODE.
-    """
+    def __init__(self):
+        super().__init__(ACCOUNT_BI_MAP)
 
-    @property
-    def get_input_rename_map(self) -> Dict[str, str]:
-        """
-        Defines the mapping from original source column names to standardized names.
-        """
-        return ACCOUNT_BI_MAP
-
-    @property
-    def get_output_schema(self) -> Dict[str, pl.DataType]:
-        """
-        Defines the final output schema for the account BI data.
-        """
-        return {
-            "NSC_CODE": pl.Utf8,
-            "date": pl.Date,
-            "live_leads": pl.Float64,
-            "short_video_plays": pl.Float64,
-        }
-
-    def _apply_transform(self, df: pl.DataFrame) -> pl.DataFrame:
-        """
-        Applies the core aggregation logic for account BI metrics.
-        """
-        metric_columns = list(self.get_output_schema.keys() - {"NSC_CODE", "date"})
-        return aggregate_by_keys(
-            df,
-            group_keys=["NSC_CODE", "date"],
-            metric_columns=metric_columns,
-        )
+    def transform(self, lf: pl.LazyFrame) -> pl.LazyFrame:
+        lf = self.rename_and_select(lf)
+        metric_cols = ["account_bi_live_form_leads", "account_bi_video_views"]
+        consolidated_lf = lf.group_by(["nsc_code", "date"]).agg([
+            pl.col(c).sum() for c in metric_cols
+        ])
+        return self.cast_to_float(consolidated_lf, metric_cols)

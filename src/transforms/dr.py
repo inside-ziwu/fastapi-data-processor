@@ -1,78 +1,34 @@
-"""DR data transformation (register/leads records)."""
-
 import polars as pl
-from typing import Dict
-from src.transforms.base import BaseTransformer
-from src.transforms.utils import aggregate_by_keys
-from src.config.source_mappings import DR_MAP
+from .base import BaseTransformer
+from ..config.source_mappings import DR_MAP
+from ..config.enum_maps import LEADS_TYPE_MAP, CHANNEL_MAP_WHITELIST
 
 class DRTransform(BaseTransformer):
-    """
-    Transforms raw DR (leads) data by aggregating daily metrics per NSC_CODE.
-    """
+    def __init__(self):
+        super().__init__(DR_MAP)
 
-    @property
-    def get_input_rename_map(self) -> Dict[str, str]:
-        """
-        Defines the mapping from original source column names to the required
-        standardized names for processing.
-        """
-        return DR_MAP
+    def transform(self, lf: pl.LazyFrame) -> pl.LazyFrame:
+        lf = self.rename_and_select(lf).with_columns([
+            pl.col("leads_type").map_dict(LEADS_TYPE_MAP, default="OTHER").alias("leads_type_std"),
+            pl.col("mkt_second_channel_name").map_dict(CHANNEL_MAP_WHITELIST, default="OTHER").alias("channel_std"),
+        ])
 
-    @property
-    def get_output_schema(self) -> Dict[str, pl.DataType]:
-        """
-        Defines the final output schema, enforcing the data contract for this source.
-        """
-        return {
-            "NSC_CODE": pl.Utf8,
-            "date": pl.Date,
-            "natural_leads": pl.Float64,
-            "paid_leads": pl.Float64,
-            "local_leads": pl.Float64,
-            "cheyundian_paid_leads": pl.Float64,
-            "regional_paid_leads": pl.Float64,
-        }
+        # Idempotency key for deduplication
+        idemp_key = pl.concat_str([
+           pl.col('nsc_code'), pl.lit('|'), pl.col('date').cast(pl.Utf8),
+           pl.lit('|'), pl.col('leads_type_std'), pl.lit('|'), pl.col('channel_std'),
+           pl.lit('|'), pl.col('send2dealer_id').cast(pl.Utf8).fill_null("")
+        ]).alias('__dedup_key')
+        lf = lf.with_columns(idemp_key).unique(subset='__dedup_key', keep='first').drop('__dedup_key')
 
-    def _apply_transform(self, df: pl.DataFrame) -> pl.DataFrame:
-        """
-        Applies the core transformation logic:
-        1.  Normalize 'leads_type' for consistent matching.
-        2.  Create indicator columns for each metric based on specified conditions.
-        3.  Aggregate these metrics by NSC_CODE and date.
-        """
-        # Normalize leads_type to handle variations like '广告' vs '付费'
-        leads_type_norm = (
-            pl.col("leads_type")
-            .cast(pl.Utf8)
-            .str.strip_chars()
-            .str.to_lowercase()
+        # Group by and aggregate using boolean sum
+        lf_agg = lf.group_by(["nsc_code","date"]).agg(
+            (pl.col("leads_type_std")=="NATURAL").sum().alias("natural_leads"),
+            (pl.col("leads_type_std")=="PAID").sum().alias("paid_leads"),
+            (pl.col("send2dealer_id")==pl.col("nsc_code")).sum().alias("local_leads"),
+            ((pl.col("leads_type_std")=="PAID") & (pl.col("channel_std")=="CLOUD_LOCAL")).sum().alias("cloud_store_paid_leads"),
+            ((pl.col("leads_type_std")=="PAID") & (pl.col("channel_std")=="REGIONAL")).sum().alias("regional_paid_leads"),
         )
         
-        # Define expressions for each metric calculation
-        df_with_indicators = df.with_columns(
-            pl.when(leads_type_norm == "自然").then(1).otherwise(0).alias("natural_leads"),
-            pl.when(leads_type_norm.is_in(["广告", "付费"])).then(1).otherwise(0).alias("paid_leads"),
-            pl.when(pl.col("NSC_CODE") == pl.col("send2dealer_id").cast(pl.Utf8)).then(1).otherwise(0).alias("local_leads"),
-            pl.when(
-                (leads_type_norm.is_in(["广告", "付费"])) &
-                (pl.col("mkt_second_channel_name").is_in(['抖音车云店_BMW_本市_LS直发', '抖音车云店_LS直发']))
-            ).then(1).otherwise(0).alias("cheyundian_paid_leads"),
-            pl.when(
-                (leads_type_norm.is_in(["广告", "付费"])) &
-                (pl.col("mkt_second_channel_name") == '抖音车云店_BMW_总部BDT_LS直发')
-            ).then(1).otherwise(0).alias("regional_paid_leads"),
-        )
-
-        # Aggregate the indicators by the primary keys
-        return aggregate_by_keys(
-            df_with_indicators,
-            group_keys=["NSC_CODE", "date"],
-            metric_columns=[
-                "natural_leads",
-                "paid_leads",
-                "local_leads",
-                "cheyundian_paid_leads",
-                "regional_paid_leads",
-            ],
-        )
+        metric_cols = ["natural_leads", "paid_leads", "local_leads", "cloud_store_paid_leads", "regional_paid_leads"]
+        return self.cast_to_float(lf_agg, metric_cols)
