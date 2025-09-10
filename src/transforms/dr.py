@@ -53,7 +53,7 @@ class DRTransform(BaseTransformer):
         df_with_indicators = df.with_columns(
             pl.when(leads_type_norm == "自然").then(1).otherwise(0).alias("natural_leads"),
             pl.when(leads_type_norm.is_in(["广告", "付费"])).then(1).otherwise(0).alias("paid_leads"),
-            pl.when(pl.col("NSC_CODE") == pl.col("send2dealer_id")).then(1).otherwise(0).alias("local_leads"),
+            pl.when(pl.col("NSC_CODE") == pl.col("send2dealer_id").cast(pl.Utf8)).then(1).otherwise(0).alias("local_leads"),
             pl.when(
                 (leads_type_norm.is_in(["广告", "付费"])) &
                 (pl.col("mkt_second_channel_name").is_in(['抖音车云店_BMW_本市_LS直发', '抖音车云店_LS直发']))
