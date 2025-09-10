@@ -24,8 +24,10 @@ def json_date_serializer(obj):
 
 
 
+import pandas as pd
 import polars as pl
 
+from hotfix_pipeline import run_hotfix_pipeline
 from src import DataProcessor
 from src.diagnostics.metrics import (
     log_settlement_inputs,
@@ -264,11 +266,71 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 # 将可选配置透传给 Processor（如 spending_sheet_names 等）
                 proc_cfg = {"spending_sheet_names": spending_sheet_names}
                 processor = DataProcessor(proc_cfg)
-                result_df = await loop.run_in_executor(
-                    None,  # Use the default executor
-                    processor.process_pipeline,
-                    local_paths
+
+                # Prepare DataFrames for hotfix_pipeline
+                dr1_df_pd = None
+                dr2_df_pd = None
+                spending_df_pd = None
+                message_df_pd = None
+                live_df_pd = None
+                video_df_pd = None
+                leads_df_pd = None
+                account_bi_df_pd = None
+                account_base_df_pd = None
+
+                # Helper to process and convert to Pandas
+                def _process_and_convert(source_name: str, file_path: str) -> Optional[pd.DataFrame]:
+                    pl_df = processor._process_single_source(source_name, file_path)
+                    if pl_df is not None:
+                        pd_df = pl_df.to_pandas()
+                        # Rename NSC_CODE to 经销商ID and date to 日期
+                        if "NSC_CODE" in pd_df.columns:
+                            pd_df.rename(columns={"NSC_CODE": "经销商ID"}, inplace=True)
+                        if "date" in pd_df.columns:
+                            pd_df.rename(columns={"date": "日期"}, inplace=True)
+                        return pd_df
+                    return None
+
+                if "DR1_file" in local_paths:
+                    dr1_df_pd = await loop.run_in_executor(None, _process_and_convert, "DR1_file", local_paths["DR1_file"])
+                if "DR2_file" in local_paths:
+                    dr2_df_pd = await loop.run_in_executor(None, _process_and_convert, "DR2_file", local_paths["DR2_file"])
+                if "Spending_file" in local_paths:
+                    spending_df_pd = await loop.run_in_executor(None, _process_and_convert, "Spending_file", local_paths["Spending_file"])
+                if "msg_excel_file" in local_paths:
+                    message_df_pd = await loop.run_in_executor(None, _process_and_convert, "msg_excel_file", local_paths["msg_excel_file"])
+                if "live_bi_file" in local_paths:
+                    live_df_pd = await loop.run_in_executor(None, _process_and_convert, "live_bi_file", local_paths["live_bi_file"])
+                if "video_excel_file" in local_paths:
+                    video_df_pd = await loop.run_in_executor(None, _process_and_convert, "video_excel_file", local_paths["video_excel_file"])
+                if "leads_file" in local_paths:
+                    leads_df_pd = await loop.run_in_executor(None, _process_and_convert, "leads_file", local_paths["leads_file"])
+                if "account_bi_file" in local_paths:
+                    account_bi_df_pd = await loop.run_in_executor(None, _process_and_convert, "account_bi_file", local_paths["account_bi_file"])
+                if "account_base_file" in local_paths:
+                    account_base_df_pd = await loop.run_in_executor(None, _process_and_convert, "account_base_file", local_paths["account_base_file"])
+
+                # Call the hotfix pipeline
+                final_out_pd, wide_daily_pd, diag_dict = await loop.run_in_executor(
+                    None,
+                    run_hotfix_pipeline,
+                    dr1_df=dr1_df_pd,
+                    dr2_df=dr2_df_pd,
+                    spending_df=spending_df_pd,
+                    message_df=message_df_pd,
+                    live_df=live_df_pd,
+                    video_df=video_df_pd,
+                    leads_df=leads_df_pd,
+                    account_bi_df=account_bi_df_pd,
+                    account_base_df=account_base_df_pd,
                 )
+
+                # Convert final_out_pd back to Polars DataFrame for the rest of app.py
+                result_df = pl.from_pandas(final_out_pd)
+
+                # Log diagnostics from hotfix pipeline
+                logger.info(f"Hotfix Pipeline Diagnostics: {diag_dict}")
+
             except Exception as e:
                 logger.error(f"Core processing failed: {str(e)}", exc_info=True)
                 raise
@@ -338,64 +400,11 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         except Exception as e:
             logger.warning(f"Output renaming skipped due to error: {e}")
 
-        # Diagnostics (opt-in) — keep outside core logic
-        try:
-            log_settlement_inputs(result_df)
-            log_level_distribution(result_df)
-            log_suffix_masking(result_df, local_paths.keys())
-            log_account_base_conflicts(result_df)
-            log_message_date_distribution(result_df)
-        except Exception as e:
-            logger.error(f"Diagnostics failed: {e}", exc_info=True)
+        
 
-        # 3b. Settlement computation per 经销商ID (two-month window)
-        try:
-            from src.analysis.settlement import compute_settlement_cn
-            result_df = compute_settlement_cn(result_df, dimension)
-            # 增加飞书别名字段，满足 schema 的等式列名
-            try:
-                from src.outputs.naming import add_feishu_rate_aliases
-                result_df = add_feishu_rate_aliases(result_df)
-            except Exception:
-                pass
-            # 关键率列诊断
-            try:
-                from src.diagnostics.metrics import log_core_rates
-                log_core_rates(result_df)
-            except Exception:
-                pass
-        except Exception as e:
-            logger.error(f"Settlement computation failed: {e}")
+        
 
-        # 3c. Clean the dataframe - 彻底清理所有null值（跳过日期/时间类型）
-        for col_name in result_df.columns:
-            col_type = result_df[col_name].dtype
-            if col_type in [pl.Float32, pl.Float64]:
-                # 处理浮点数：NaN, Inf, -Inf → 0
-                result_df = result_df.with_columns(
-                    pl.when(pl.col(col_name).is_nan() | pl.col(col_name).is_infinite() | pl.col(col_name).is_null())
-                    .then(0.0)
-                    .otherwise(pl.col(col_name).round(6))
-                    .alias(col_name)
-                )
-            elif col_type in [pl.Int32, pl.Int64]:
-                # 处理整数null → 0
-                result_df = result_df.with_columns(
-                    pl.col(col_name).fill_null(0).alias(col_name)
-                )
-            elif col_type == pl.Utf8:
-                # 处理字符串null → 空字符串
-                result_df = result_df.with_columns(
-                    pl.col(col_name).fill_null("").alias(col_name)
-                )
-            elif col_type in [pl.Date, pl.Datetime, pl.Time]:
-                # 日期/时间列不做数值填充，保持原状
-                continue
-            else:
-                # 其他类型统一处理
-                result_df = result_df.with_columns(
-                    pl.col(col_name).fill_null(0).alias(col_name)
-                )
+        
 
         # 3d. Update final shape after settlement & cleaning
         num_rows, num_cols = result_df.shape
