@@ -29,6 +29,15 @@ class MessageTransform(BaseTransformer):
         processed_sheets = []
         for sheet_name in xls.sheet_names:
             df = pd.read_excel(xls, sheet_name=sheet_name, dtype=str)
+
+            # --- Data Cleaning Step ---
+            # The original column names from MSG_MAP keys
+            numeric_cols_original = ["进入私信客户数", "主动咨询客户数", "私信留资客户数"]
+            for col in numeric_cols_original:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            # --- End Cleaning ---
+
             lf = pl.from_pandas(df).lazy()
             lf = self.rename_and_select(lf)
             

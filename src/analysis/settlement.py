@@ -35,16 +35,40 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str) -> pl.DataFrame:
         
     monthly = (lf.group_by(group_keys).agg(agg_exprs).sort(group_keys))
 
-    # Composite and derived metrics
-    # This part should be driven by a spec from config for better maintenance
-    if 'natural_leads' in monthly.columns and 'paid_leads' in monthly.columns:
-        monthly = monthly.with_columns((pl.col('natural_leads') + pl.col('paid_leads')).alias('total_leads'))
-    if 'cloud_store_paid_leads' in monthly.columns and 'regional_paid_leads' in monthly.columns:
-        monthly = monthly.with_columns((pl.col('cloud_store_paid_leads') + pl.col('regional_paid_leads')).alias('total_paid_leads'))
-    if 'spending_net' in monthly.columns and 'total_paid_leads' in monthly.columns:
-        monthly = monthly.with_columns(SAFE_DIV(pl.col('spending_net'), pl.col('total_paid_leads')).alias('cpl_paid'))
-    if 'msg_active_consultations' in monthly.columns and 'msg_private_entrants' in monthly.columns:
-        monthly = monthly.with_columns(SAFE_DIV(pl.col('msg_active_consultations'), pl.col('msg_private_entrants')).alias('private_msg_consult_ratio'))
+    # --- Start: Robust Derived Metrics Calculation ---
+    # Ensure all base metric columns exist, filling with 0 if not.
+    all_metric_cols = set(NUMERIC_METRICS)
+    for col_name in all_metric_cols:
+        if col_name not in monthly.columns:
+            monthly = monthly.with_columns(pl.lit(0.0, dtype=pl.Float64).alias(col_name))
+
+    # Now, calculate all derived metrics without checking for column existence.
+    monthly = monthly.with_columns([
+        (pl.col('natural_leads') + pl.col('paid_leads')).alias('total_leads'),
+        (pl.col('cloud_store_paid_leads') + pl.col('regional_paid_leads')).alias('total_paid_leads'),
+        SAFE_DIV(pl.col('spending_net'), pl.col('total_paid_leads')).alias('cpl_paid'),
+        SAFE_DIV(pl.col('spending_net'), pl.col('total_leads')).alias('cpl_total'),
+        SAFE_DIV(pl.col('local_leads'), pl.col('total_leads')).alias('local_leads_ratio'),
+        SAFE_DIV(pl.col('spending_net'), pl.col('account_bi_live_form_leads')).alias('live_cpl'),
+        SAFE_DIV(pl.col('live_views'), pl.col('live_exposures')).alias('exposure_to_view_ratio'),
+        SAFE_DIV(pl.col('live_widget_clicks'), pl.col('live_views')).alias('widget_click_ratio'),
+        SAFE_DIV(pl.col('leads_from_live_form'), pl.col('live_widget_clicks')).alias('widget_lead_ratio'),
+        SAFE_DIV(pl.col('video_anchor_clicks'), pl.col('video_anchor_exposures')).alias('component_click_ratio'),
+        SAFE_DIV(pl.col('video_form_leads'), pl.col('video_anchor_exposures')).alias('component_lead_ratio'),
+        SAFE_DIV(pl.col('msg_active_consultations'), pl.col('msg_private_entrants')).alias('private_msg_consult_ratio'),
+        SAFE_DIV(pl.col('msg_leads_from_private'), pl.col('msg_active_consultations')).alias('consult_to_lead_ratio'),
+        SAFE_DIV(pl.col('msg_leads_from_private'), pl.col('msg_private_entrants')).alias('private_msg_conversion_ratio'),
+        SAFE_DIV(pl.col('live_exposures'), pl.col('live_gt_25min_sessions')).alias('avg_exposure_per_session'),
+        SAFE_DIV(pl.col('live_views'), pl.col('live_gt_25min_sessions')).alias('avg_view_per_session'),
+        SAFE_DIV(pl.col('leads_from_live_form'), pl.col('live_gt_25min_sessions')).alias('avg_widget_leads_per_session'),
+        SAFE_DIV(pl.col('live_widget_clicks'), pl.col('live_gt_25min_sessions')).alias('avg_widget_clicks_per_session'),
+        SAFE_DIV(pl.col('spending_net'), pl.col('effective_days')).alias('avg_daily_spending'),
+        SAFE_DIV(pl.col('live_effective_duration_hr'), pl.col('effective_days')).alias('avg_daily_effective_duration_hr'),
+        SAFE_DIV(pl.col('msg_private_entrants'), pl.col('effective_days')).alias('avg_daily_private_entrants'),
+        SAFE_DIV(pl.col('msg_active_consultations'), pl.col('effective_days')).alias('avg_daily_active_consultations'),
+        SAFE_DIV(pl.col('msg_leads_from_private'), pl.col('effective_days')).alias('avg_daily_msg_leads'),
+    ])
+    # --- End: Robust Derived Metrics Calculation ---
 
     # Level normalization
     if dimension == '层级' and 'level' in group_keys:

@@ -5,11 +5,9 @@ from src.transforms.message import MessageTransform
 # Import other transformers as needed
 
 # --- Contract Test for DRTransform ---
-@pytest.mark.skip(reason="Requires a local DR sample file")
 def test_dr_transform_contract():
     # This test assumes you have a sample DR file.
-    # PLEASE REPLACE 'path/to/your/dr_sample.csv' with the actual path.
-    dr_file_path = 'path/to/your/dr_sample.csv'
+    dr_file_path = 'tests/sample_data/DR1.csv'
 
     try:
         lf = pl.scan_csv(dr_file_path)

@@ -31,8 +31,8 @@ class DataProcessor:
     def __init__(self):
         self.transformer_map: dict[str, BaseTransformer] = {
             "video_excel_file": VideoTransform(),
-            "live_bi_file": LiveBITransform(),
-            "msg_excel_file": MsgTransform(),
+            "live_bi_file": LiveTransform(),
+            "msg_excel_file": MessageTransform(),
             "DR1_file": DRTransform(),
             "DR2_file": DRTransform(),
             "account_base_file": AccountBaseTransform(),
@@ -67,7 +67,7 @@ class DataProcessor:
         other_lfs = [v for k, v in processed_lfs.items() if not k.startswith("DR")]
         if dr_lfs:
             # Union DR files, deduplicate, then aggregate
-            dr_union_lf = pl.concat(dr_lfs, how="vertical").unique()
+            dr_union_lf = pl.concat(dr_lfs, how="vertical_relaxed").unique()
             # The DR transform already aggregates, so we just add it to the list
             other_lfs.append(dr_union_lf)
 
@@ -78,6 +78,15 @@ class DataProcessor:
         all_keys = pl.concat(
             [lf.select(['nsc_code','date']) for lf in other_lfs]
         ).unique()
+
+        # --- Type Safety Enforcement ---
+        # Before joining, cast all known numeric columns to Float64 to prevent schema conflicts.
+        safe_lfs = []
+        for lf in other_lfs:
+            cols_to_cast = [c for c in NUMERIC_METRICS if c in lf.columns]
+            safe_lfs.append(lf.with_columns([pl.col(c).cast(pl.Float64) for c in cols_to_cast]))
+        other_lfs = safe_lfs
+        # --- End Enforcement ---
 
         # Iterative join with collision assertion
         result_lf = all_keys

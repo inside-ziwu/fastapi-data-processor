@@ -44,7 +44,23 @@ class BaseTransformer(ABC):
         if 'date' in lf.columns:
              lf = lf.with_columns([
                 pl.when(pl.col('date').is_not_null())
-                  .then(pl.col('date').str.strptime(pl.Date, strict=False))
+                  .then(pl.col('date').str.to_datetime(format="%Y-%m-%d %H:%M:%S", strict=False).cast(pl.Date))
+                  .otherwise(pl.lit(None).cast(pl.Date))
+                  .alias('date')
+            ])
+        return lf
+        
+        # Standardize nsc_code if it exists
+        if 'nsc_code' in lf.columns:
+            lf = lf.with_columns([
+                pl.col('nsc_code').cast(pl.Utf8).str.strip_chars().alias('nsc_code'),
+            ])
+
+        # Standardize date if it exists
+        if 'date' in lf.columns:
+             lf = lf.with_columns([
+                pl.when(pl.col('date').is_not_null())
+                  .then(pl.col('date').str.to_datetime(format="%Y-%m-%d %H:%M:%S", strict=False).cast(pl.Date))
                   .otherwise(pl.lit(None).cast(pl.Date))
                   .alias('date')
             ])

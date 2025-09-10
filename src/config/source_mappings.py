@@ -21,7 +21,7 @@ LIVE_BI_MAP = {
     "超25min直播总场次": "live_gt_25min_sessions",
     "曝光人数": "live_exposures",
     "场观": "live_views",
-    "小风车点击次数（不含小雪花）": "live_widget_clicks",
+    "小风车点击次数(不含小雪花)": "live_widget_clicks",
 }
 
 MSG_MAP = {
@@ -61,7 +61,7 @@ SPENDING_MAP = {
 
 ACCOUNT_BASE_MAP = {
     "NSC_id": "nsc_code",
-    "NSC CODE": "nsc_code",
+    "NSC Code": "nsc_code",
     "第二期层级": "level",
     "抖音id": "store_name",
 }

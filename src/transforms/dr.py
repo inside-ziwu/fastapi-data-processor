@@ -9,8 +9,8 @@ class DRTransform(BaseTransformer):
 
     def transform(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         lf = self.rename_and_select(lf).with_columns([
-            pl.col("leads_type").map_dict(LEADS_TYPE_MAP, default="OTHER").alias("leads_type_std"),
-            pl.col("mkt_second_channel_name").map_dict(CHANNEL_MAP_WHITELIST, default="OTHER").alias("channel_std"),
+            pl.col("leads_type").replace_strict(LEADS_TYPE_MAP, default="OTHER").alias("leads_type_std"),
+            pl.col("mkt_second_channel_name").replace_strict(CHANNEL_MAP_WHITELIST, default="OTHER").alias("channel_std"),
         ])
 
         # Idempotency key for deduplication
@@ -25,7 +25,7 @@ class DRTransform(BaseTransformer):
         lf_agg = lf.group_by(["nsc_code","date"]).agg(
             (pl.col("leads_type_std")=="NATURAL").sum().alias("natural_leads"),
             (pl.col("leads_type_std")=="PAID").sum().alias("paid_leads"),
-            (pl.col("send2dealer_id")==pl.col("nsc_code")).sum().alias("local_leads"),
+            (pl.col("send2dealer_id").cast(pl.Utf8)==pl.col("nsc_code")).sum().alias("local_leads"),
             ((pl.col("leads_type_std")=="PAID") & (pl.col("channel_std")=="CLOUD_LOCAL")).sum().alias("cloud_store_paid_leads"),
             ((pl.col("leads_type_std")=="PAID") & (pl.col("channel_std")=="REGIONAL")).sum().alias("regional_paid_leads"),
         )

@@ -9,15 +9,15 @@ from src.finalize import finalize_output
 # PLEASE REPLACE file paths with your actual local data paths
 # You need a complete set of 9 files for this test.
 SAMPLE_FILES = {
-    "video_excel_file": '/Users/lay/Documents/项目开发/fastapi-data-processor/data/video_data.xlsx',
-    "live_bi_file": '/Users/lay/Documents/项目开发/fastapi-data-processor/data/live_data.xlsx',
-    "msg_excel_file": '/Users/lay/Documents/项目开发/fastapi-data-processor/data/msg_data.xlsx',
-    "DR1_file": '/Users/lay/Documents/项目开发/fastapi-data-processor/data/DR1.csv',
-    "DR2_file": '/Users/lay/Documents/项目开发/fastapi-data-processor/data/DR2.csv',
-    "account_base_file": '/Users/lay/Documents/项目开发/fastapi-data-processor/data/account_base.xlsx',
-    "leads_file": '/Users/lay/Documents/项目开发/fastapi-data-processor/data/leads.xlsx',
-    "account_bi_file": '/Users/lay/Documents/项目开发/fastapi-data-processor/data/account_bi.xlsx',
-    "Spending_file": '/Users/lay/Documents/项目开发/fastapi-data-processor/data/spending.xlsx',
+    "video_excel_file": 'tests/sample_data/video_data.xlsx',
+    "live_bi_file": 'tests/sample_data/live_data.xlsx',
+    "msg_excel_file": 'tests/sample_data/msg_data.xlsx',
+    "DR1_file": 'tests/sample_data/DR1.csv',
+    "DR2_file": 'tests/sample_data/DR2.csv',
+    "account_base_file": 'tests/sample_data/account_base.xlsx',
+    "leads_file": 'tests/sample_data/leads.xlsx',
+    "account_bi_file": 'tests/sample_data/account_bi.xlsx',
+    "Spending_file": 'tests/sample_data/spending.xlsx',
 }
 
 # PLEASE CREATE this golden file. 
