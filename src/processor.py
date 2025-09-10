@@ -99,6 +99,8 @@ class DataProcessor:
 
         # Step 4: Finalize wide table (month/day, period tags, effective days, fill nulls)
         finalized = self._finalize_wide_table(merged)
+        if "level" in finalized.columns:
+            finalized = finalized.rename({"level": "层级"})
         return finalized
 
     def _process_single_source(

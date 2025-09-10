@@ -32,16 +32,44 @@ def apply_strict_rename(df: pl.DataFrame, rename_map: Dict[str, str]) -> pl.Data
     """
     actual_rename_map = {}
     df_columns_standardized = {standardize_name(col): col for col in df.columns}
+    
+    # Track which target columns have been successfully mapped
+    mapped_target_columns = set()
 
     for source_name, target_name in rename_map.items():
         standardized_source = standardize_name(source_name)
         if standardized_source in df_columns_standardized:
             actual_col_name = df_columns_standardized[standardized_source]
-            actual_rename_map[actual_col_name] = target_name
-        else:
-            raise ValueError(f"Required column '{source_name}' not found in DataFrame. Available columns: {df.columns}")
+            # Only add to rename map if the target name isn't already mapped from another source
+            # or if the actual_col_name is different from target_name (avoid self-rename)
+            if actual_col_name != target_name and target_name not in mapped_target_columns:
+                actual_rename_map[actual_col_name] = target_name
+                mapped_target_columns.add(target_name)
+        # else: do nothing, just skip this source_name if not found
 
-    return df.rename(actual_rename_map)
+    df_renamed = df.rename(actual_rename_map)
+
+    # After renaming, check if all *required* target columns are present.
+    # For ACCOUNT_BASE_MAP, all values are "NSC_CODE", "level", "store_name".
+    # We need to ensure that at least one source for each target is found.
+    
+    # Collect all unique target names from the rename_map
+    required_target_names = set(rename_map.values())
+
+    for target_name in required_target_names:
+        if target_name not in df_renamed.columns:
+            # Find all source names that map to this target_name
+            missing_sources = [
+                source for source, target in rename_map.items()
+                if target == target_name and standardize_name(source) not in df_columns_standardized
+            ]
+            raise ValueError(
+                f"Required target column '{target_name}' not found in DataFrame "
+                f"after attempting renames. Missing source candidates: {missing_sources}. "
+                f"Available columns: {df_renamed.columns}"
+            )
+
+    return df_renamed
 
 
 def normalize_nsc_code(df: pl.DataFrame, nsc_column: str) -> pl.DataFrame:
@@ -139,7 +167,7 @@ def normalize_date_column(df: pl.DataFrame, date_column: str, date_candidates: O
     if df[date_column].is_null().all():
         raise ValueError(f"All values in date column '{date_column}' are null after parsing.")
 
-    return df.fill_null(strategy="forward", subset=[date_column])
+    return df.with_columns(pl.col(date_column).fill_null(strategy="forward").alias(date_column))
 
 
 def _to_date_py(v: Any) -> Optional[date]:
