@@ -417,9 +417,76 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
         (col("T-1月 车云店付费线索") + col("T-1月 区域加码付费线索")).alias("T-1月直播车云店+区域付费线索量"),
     )
 
+    # --- START: LEVEL-BASED NORMALIZATION ---
+    if group_mode == "level":
+        # 1. 计算每个层级的门店数
+        if "经销商ID" in df.columns:
+            store_counts = df.group_by("层级").agg(
+                pl.col("经销商ID").n_unique().alias("__store_count__")
+            )
+            result = result.join(store_counts, on="层级", how="left")
+
+            # 2. 定义需要归一化的列
+            # 确保使用聚合后的最终列名
+            cols_to_normalize = [
+                "自然线索量",
+                "付费线索量",
+                "本地线索量(总)",
+                "车云店付费线索(总)",
+                "区域加码付费线索(总)",
+                "直播车云店+区域付费线索量",
+                "进私人数(总)",
+                "私信开口人数(总)",
+                "咨询留资人数(总)",
+                "锚点曝光量",
+                "组件点击次数",
+                "短视频条数",
+                "组件留资人数（获取线索量）",
+                "超25分钟直播时长(分)(总)",
+                "直播时长",
+                "有效直播场次(总)",
+                "曝光人数(总)",
+                "场观(总)",
+                "小风车点击次数(总)",
+                "小风车留资量(总)",
+                "直播线索量",
+                "短视频播放量",
+                "车云店+区域投放总金额",
+                "直播车云店+区域日均消耗",
+                "日均进私人数",
+                "日均私信开口人数",
+                "日均咨询留资人数",
+                "日均有效（25min以上）时长（h）",
+            ]
+            
+            # 3. 添加“线索总量”并归一化
+            result = result.with_columns(
+                (col("自然线索量") + col("付费线索量")).alias("线索总量")
+            )
+            # 确保它也在归一化列表中
+            if "线索总量" not in cols_to_normalize:
+                cols_to_normalize.append("线索总量")
+
+            # 4. 执行归一化
+            update_exprs = []
+            for col_name in cols_to_normalize:
+                if col_name in result.columns and "__store_count__" in result.columns:
+                    update_exprs.append(
+                        _safe_div(pl.col(col_name), pl.col("__store_count__")).alias(col_name)
+                    )
+            
+            if update_exprs:
+                result = result.with_columns(update_exprs)
+
+            # 5. 清理临时列
+            if "__store_count__" in result.columns:
+                result = result.drop("__store_count__")
+    # --- END: LEVEL-BASED NORMALIZATION ---
+
     # Ensure missing metrics exist as zeros to match strict header
     ensure_zero_cols = []
     expected_cols = list(metrics_both.keys()) + list(metrics_T.keys()) + list(metrics_T1.keys()) + [
+        "线索总量", # 确保线索总量也被检查
         "车云店+区域综合CPL", "付费CPL（车云店+区域）", "直播付费CPL", "T月直播付费CPL", "T-1月直播付费CPL",
         "本地线索占比",
         "直播车云店+区域日均消耗", "T月直播车云店+区域日均消耗", "T-1月直播车云店+区域日均消耗",
@@ -467,7 +534,7 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
 
     ordered_metrics = [
         # 线索与投放
-        "自然线索量", "付费线索量", "车云店+区域投放总金额",
+        "线索总量", "自然线索量", "付费线索量", "车云店+区域投放总金额",
         # 直播
         "直播时长", "T月直播时长", "T-1月直播时长",
         "直播线索量", "T月直播线索量", "T-1月直播线索量",
