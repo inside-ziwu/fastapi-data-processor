@@ -78,7 +78,7 @@ def merge_with_report(left: pd.DataFrame, right: pd.DataFrame, on: List[str], ri
     coverage = 1.0 - (right_only / total if total else 0.0)
     logger.info(f"Join '{right_name}': total={total}, left_only={left_only}, right_only={right_only}, coverage={coverage:.2%}")
     if coverage < coverage_threshold:
-        raise RuntimeError(f"Join '{right_name}' 覆盖率 {coverage:.2%} < 阈值 {coverage_threshold:.0%}"，请检查键一致性与日期对齐。")
+        raise RuntimeError(f"Join '{right_name}' 覆盖率 {coverage:.2%} < 阈值 {coverage_threshold:.0%}, 请检查键一致性与日期对齐。")
     return m.drop(columns=['_merge'])
 
 
