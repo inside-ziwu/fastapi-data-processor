@@ -210,7 +210,7 @@ FIELD_MAPPINGS = {
     # Small wheel click rate
     "small_wheel_click_rate": ["小风车点击率"],
     "small_wheel_click_rate_t": ["T月小风车点击率"],
-    "small_wheel_click_rate_t_minus_1": ["T-1月小風車點擊率"],
+    "small_wheel_click_rate_t_minus_1": ["T-1月小風車點擊率", "T-1月小风车点击率"],
     
     # Avg small wheel leads per session
     "avg_small_wheel_leads_per_session": ["场均小风车留资量"],
