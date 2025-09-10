@@ -123,4 +123,5 @@ dmypy.json
 Thumbs.db
 
 # VSCode
-.vscode/
+.vscode/data/*.csv
+
