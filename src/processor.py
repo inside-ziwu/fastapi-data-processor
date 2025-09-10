@@ -13,6 +13,7 @@ from .transforms import BaseTransformer
 from .analysis import create_default_analysis_engine
 from .config import FIELD_MAPPINGS
 from .cleaning.key_sanitizer import sanitize_key
+from .transforms import MessageTransform
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,8 @@ class DataProcessor:
             except Exception:
                 pass
             df = pl.from_pandas(pdf)
+            logger.info(f"Message file raw DataFrame schema (before MessageTransform): {df.schema}")
+            logger.info(f"Message file raw DataFrame head (5 rows, before MessageTransform):\n{df.head(5)}")
             # 打印对照日志
             try:
                 if sheet_date_pairs:
