@@ -68,8 +68,9 @@ INVALID_NSC_TOKENS = {"", "null", "--"}
 def _clean_nsc_expr(expr: pl.Expr) -> pl.Expr:
     """Normalize NSC code strings by casting to text, trimming whitespace, and nulling known sentinels."""
     cleaned = expr.cast(pl.Utf8, strict=False).str.strip_chars()
-    lowered = cleaned.str.to_lowercase()
-    return pl.when(lowered.is_in(list(INVALID_NSC_TOKENS))).then(None).otherwise(cleaned)
+    sanitized = cleaned.str.replace(r"^(-?\d+)(?:\.0+)$", r"$1", literal=False)
+    lowered = sanitized.str.to_lowercase()
+    return pl.when(lowered.is_in(list(INVALID_NSC_TOKENS))).then(None).otherwise(sanitized)
 
 
 def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
