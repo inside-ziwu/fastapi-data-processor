@@ -114,7 +114,8 @@ class DataProcessor:
         message_transform = bool(transform and transform.__class__.__name__.lower().startswith("message"))
 
         if message_transform:
-            message_paths = self._coerce_message_paths(file_path)
+            # API 层已将消息源归一化为 list[str]
+            message_paths = file_path if isinstance(file_path, (list, tuple)) else [str(file_path)]
             non_excel = [p for p in message_paths if not p.lower().endswith((".xlsx", ".xls", ".xlsm"))]
             if non_excel:
                 if len(message_paths) > 1:
@@ -128,12 +129,10 @@ class DataProcessor:
                 message_transform = False
                 file_path = message_paths[0]
             else:
-                message_frames: list[pl.DataFrame] = []
-                for path in message_paths:
-                    message_frames.append(self._load_message_excel(path, sheets_used))
+                message_frames = [self._load_message_excel(path, sheets_used) for path in message_paths]
                 if not message_frames:
                     return pl.DataFrame()
-                df = message_frames[0] if len(message_frames) == 1 else pl.concat(message_frames, how="vertical")
+                df = pl.concat(message_frames, how="vertical")
                 is_excel = True
                 try:
                     logger.info(
@@ -414,24 +413,6 @@ class DataProcessor:
             )
 
         return df
-
-    def _coerce_message_paths(self, raw_path: str | list[str] | tuple[str, ...]) -> list[str]:
-        """Normalize message file input into a non-empty list of string paths."""
-        if isinstance(raw_path, (list, tuple)):
-            paths = [str(p) for p in raw_path]
-        elif isinstance(raw_path, str):
-            paths = [raw_path]
-        else:
-            raise ValueError(f"[message] 不支持的文件路径类型: {type(raw_path).__name__}")
-
-        if not paths:
-            raise ValueError("[message] 未提供有效的文件路径")
-
-        for p in paths:
-            if not isinstance(p, str) or p == "":
-                raise ValueError("[message] 文件路径必须是非空字符串")
-
-        return paths
 
     def _load_message_excel(self, file_path: str, sheets_used: list[str]) -> pl.DataFrame:
         """Load a single message Excel file and return a Polars DataFrame."""

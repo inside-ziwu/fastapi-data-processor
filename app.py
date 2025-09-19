@@ -277,7 +277,7 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
             
             # 真正的并发执行所有下载任务
             try:
-                results = await asyncio.gather(*async_tasks, return_exceptions=True)
+                results = await asyncio.gather(*async_tasks)
                 
                 # 处理结果
                 for idx, ((key, url), result) in enumerate(zip(keys, results)):
