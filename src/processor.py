@@ -299,7 +299,7 @@ class DataProcessor:
                     frames.append(pldf)
 
                 if frames:
-                    df = pl.concat(frames, how="vertical")
+                    df = pl.concat(frames, how="vertical_relaxed")
                 else:
                     df = pl.DataFrame()
             else:
