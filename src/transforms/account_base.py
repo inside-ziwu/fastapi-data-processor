@@ -1,5 +1,8 @@
 """Account base (dimension) data transformation."""
 
+import logging
+import os
+
 import polars as pl
 from typing import Any, Dict, List, Optional
 
@@ -12,6 +15,9 @@ def _clean_text_expr(column: str) -> pl.Expr:
     return pl.when(lowered.is_in(list(_TEXT_SENTINELS))).then(None).otherwise(trimmed)
 from .base import BaseTransform
 from ..config import ACCOUNT_BASE_MAP
+
+
+logger = logging.getLogger(__name__)
 
 
 class AccountBaseTransform(BaseTransform):
@@ -59,5 +65,29 @@ class AccountBaseTransform(BaseTransform):
             df = df.group_by("NSC_CODE").agg(aggregations)
         else:
             df = df.unique(subset=["NSC_CODE"])
+
+        if "NSC_CODE" in df.columns:
+            blank_mask = pl.col("NSC_CODE").is_null() | (pl.col("NSC_CODE").cast(pl.Utf8, strict=False).str.strip_chars() == "")
+            diag_enabled = os.getenv("PROCESSOR_DIAG", "0").strip().lower() in {"1", "true", "yes", "on"}
+            assert_keys = os.getenv("PROCESSOR_ASSERT_KEYS", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+            if diag_enabled:
+                try:
+                    missing = df.filter(blank_mask)
+                    miss_cnt = missing.height
+                    if miss_cnt:
+                        sample = missing.select("NSC_CODE").head(5).to_series().to_list()
+                        logger.warning(
+                            f"[account_base] NSC_CODE为空白 after transform: count={miss_cnt}, sample={sample}"
+                        )
+                except Exception:
+                    pass
+
+            if assert_keys:
+                try:
+                    if df.filter(blank_mask).height:
+                        raise ValueError("Account base transform produced empty NSC_CODE entries")
+                except Exception:
+                    raise
 
         return df

@@ -227,24 +227,15 @@ class DataProcessor:
                     df = None
             elif transform and transform.__class__.__name__.lower().startswith("accountbase") and is_excel:
                 import pandas as pd
+
                 xls = pd.ExcelFile(file_path, engine="openpyxl")
-                import unicodedata as _ud
-                def _std(s: str) -> str:
-                    return _ud.normalize("NFKC", str(s or "")).strip().lower()
-                NSC_ALIASES = {
-                    _std(x)
-                    for x in [
-                        "NSC CODE", "NSC Code", "NSC_id", "NSC Code", "reg_dealer",
-                        "主机厂经销商id列表", "主机厂经销商ID", "主机厂经销商id",
-                    ]
-                }
-                LEVEL_ALIASES = {_std("层级")}
-                STORE_ALIASES = {_std("抖音id"), _std("抖音ID")}
-                level_frames: list[pl.DataFrame] = []
-                store_frames: list[pl.DataFrame] = []
+                frames: list[pl.DataFrame] = []
+
                 for sheet_name in xls.sheet_names:
                     sheets_used.append(str(sheet_name))
                     pdf = pd.read_excel(xls, sheet_name=sheet_name, engine="openpyxl")
+
+                    # Deduplicate headers that Excel may auto-number (e.g., "NSC CODE.1")
                     try:
                         cols = [str(c) for c in pdf.columns]
                         seen: dict[str, int] = {}
@@ -259,11 +250,14 @@ class DataProcessor:
                         pdf.columns = uniq
                     except Exception:
                         pass
+
+                    # Force textual representation so后续 transform 能按文本主键清洗
                     try:
                         def _to_str(v):
                             try:
                                 import math
                                 import numpy as _np
+
                                 if v is None:
                                     return None
                                 if isinstance(v, float) and math.isnan(v):
@@ -275,19 +269,21 @@ class DataProcessor:
                                 return str(v)
                             except Exception:
                                 return str(v) if v is not None else None
+
                         for _c in list(pdf.columns):
                             pdf[_c] = pdf[_c].apply(_to_str)
                     except Exception:
                         pass
+
                     try:
                         pldf = pl.from_pandas(pdf)
                     except Exception:
+                        # 极端情况下退化为手动构造 DataFrame（保持文本）
                         try:
-                            import pandas as _pd
-                            data = {}
+                            data: dict[str, list[Any]] = {}
                             for k in pdf.columns:
                                 series = pdf[k]
-                                vals = []
+                                vals: list[Any] = []
                                 for v in list(series.values):
                                     if v is None or (isinstance(v, float) and v != v):
                                         vals.append(None)
@@ -295,81 +291,15 @@ class DataProcessor:
                                         vals.append(v.decode("utf-8", "ignore"))
                                     else:
                                         vals.append(str(v))
-                            data[str(k)] = vals
+                                data[str(k)] = vals
                             pldf = pl.DataFrame(data)
                         except Exception as e:
                             raise e
-                    try:
-                        rename_map = {}
-                        found = {"NSC_CODE": None, "level": None, "store_name": None}
-                        for c in pldf.columns:
-                            key = _std(c)
-                            if key in NSC_ALIASES:
-                                rename_map[c] = "NSC_CODE"
-                                found["NSC_CODE"] = c
-                            elif key in LEVEL_ALIASES:
-                                rename_map[c] = "level"
-                                found["level"] = c
-                            elif key in STORE_ALIASES:
-                                rename_map[c] = "store_name"
-                                found["store_name"] = c
-                        if rename_map:
-                            pldf = pldf.rename(rename_map)
-                        try:
-                            logger.info(
-                                f"[account_base] sheet '{sheet_name}' headers -> NSC_CODE:{found['NSC_CODE']}, level:{found['level']}, store_name:{found['store_name']}"
-                            )
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-                    cols = set(pldf.columns)
-                    if {"NSC_CODE", "level"}.issubset(cols):
-                        level_frames.append(pldf.select(["NSC_CODE", "level"]))
-                    if {"NSC_CODE", "store_name"}.issubset(cols):
-                        store_frames.append(pldf.select(["NSC_CODE", "store_name"]))
 
-                level_df = None
-                if level_frames:
-                    level_df = pl.concat(level_frames, how="vertical").with_columns(
-                        pl.col("NSC_CODE").cast(pl.Utf8),
-                        pl.col("level").cast(pl.Utf8),
-                    )
-                    level_df = (
-                        level_df.group_by("NSC_CODE").agg(pl.col("level").drop_nulls().first().alias("level"))
-                    )
+                    frames.append(pldf)
 
-                store_df = None
-                if store_frames:
-                    store_df = pl.concat(store_frames, how="vertical").with_columns(
-                        pl.col("NSC_CODE").cast(pl.Utf8),
-                        pl.col("store_name").cast(pl.Utf8),
-                    )
-                    store_df = (
-                        store_df.group_by("NSC_CODE").agg(pl.col("store_name").drop_nulls().first().alias("store_name"))
-                    )
-
-                if level_df is not None and store_df is not None:
-                    try:
-                        level_df = level_df.with_columns(pl.col("NSC_CODE").cast(pl.Utf8, strict=False))
-                        store_df = store_df.with_columns([
-                            pl.col("NSC_CODE").cast(pl.Utf8, strict=False),
-                            pl.col("store_name").cast(pl.Utf8, strict=False),
-                        ])
-                    except Exception:
-                        pass
-                    df = level_df.join(store_df, on="NSC_CODE", how="outer")
-                    try:
-                        ln = int(level_df.height)
-                        sn = int(store_df.height)
-                        nn = int(df.select(pl.col("store_name").is_not_null().sum()).to_series(0)[0]) if "store_name" in df.columns else 0
-                        logger.info(f"[account_base] merged level rows={ln}, store rows={sn}, store_name_non_null={nn}")
-                    except Exception:
-                        pass
-                elif level_df is not None:
-                    df = level_df
-                elif store_df is not None:
-                    df = store_df
+                if frames:
+                    df = pl.concat(frames, how="vertical")
                 else:
                     df = pl.DataFrame()
             else:
