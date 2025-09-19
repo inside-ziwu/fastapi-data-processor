@@ -281,22 +281,17 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
                 
                 # 处理结果
                 for idx, ((key, url), result) in enumerate(zip(keys, results)):
-                    if isinstance(result, Exception):
-                        # 清理失败的文件
-                        shutil.rmtree(run_dir, ignore_errors=True)
-                        raise HTTPException(status_code=500, detail=f"下载失败 {key}: {str(result)}")
+                    meta_key, meta_part = task_meta[idx]
+                    if meta_part is None:
+                        local_paths[key] = result
+                        logger.info(f"成功下载 {key} 到 {result}")
                     else:
-                        meta_key, meta_part = task_meta[idx]
-                        if meta_part is None:
-                            local_paths[key] = result
-                            logger.info(f"成功下载 {key} 到 {result}")
-                        else:
-                            stored = local_paths.setdefault(key, [])
-                            if not isinstance(stored, list):
-                                stored = [stored]
-                                local_paths[key] = stored
-                            stored.append(result)
-                            logger.info(f"成功下载 {key}[{meta_part}] ({url}) 到 {result}")
+                        stored = local_paths.setdefault(key, [])
+                        if not isinstance(stored, list):
+                            stored = [stored]
+                            local_paths[key] = stored
+                        stored.append(result)
+                        logger.info(f"成功下载 {key}[{meta_part}] ({url}) 到 {result}")
                         
             except Exception as e:
                 # 清理失败的文件
