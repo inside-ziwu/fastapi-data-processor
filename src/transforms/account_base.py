@@ -2,6 +2,14 @@
 
 import polars as pl
 from typing import Any, Dict, List, Optional
+
+_TEXT_SENTINELS = {"", "null", "--"}
+
+
+def _clean_text_expr(column: str) -> pl.Expr:
+    trimmed = pl.col(column).cast(pl.Utf8, strict=False).str.strip_chars()
+    lowered = trimmed.str.to_lowercase()
+    return pl.when(lowered.is_in(list(_TEXT_SENTINELS))).then(None).otherwise(trimmed)
 from .base import BaseTransform
 from ..config import ACCOUNT_BASE_MAP
 
@@ -21,9 +29,13 @@ class AccountBaseTransform(BaseTransform):
         df = self._rename_columns(df, self.mapping)
         df = self._normalize_nsc_code(df)
 
-        # Hotfix: Cast store_name to string to avoid mixed type errors
+        updates: List[pl.Expr] = []
+        if "level" in df.columns:
+            updates.append(_clean_text_expr("level").alias("level"))
         if "store_name" in df.columns:
-            df = df.with_columns(pl.col("store_name").cast(pl.Utf8))
+            updates.append(_clean_text_expr("store_name").alias("store_name"))
+        if updates:
+            df = df.with_columns(updates)
 
         # 仅保留明确需求字段
         wanted = [v for v in self.mapping.values()]
@@ -41,9 +53,7 @@ class AccountBaseTransform(BaseTransform):
         if "level" in df.columns:
             aggregations.append(pl.col("level").drop_nulls().first().alias("level"))
         if "store_name" in df.columns:
-            aggregations.append(
-                pl.col("store_name").drop_nulls().first().alias("store_name")
-            )
+            aggregations.append(pl.col("store_name").drop_nulls().first().alias("store_name"))
 
         if aggregations:
             df = df.group_by("NSC_CODE").agg(aggregations)
