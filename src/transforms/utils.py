@@ -61,17 +61,26 @@ def _field_match(src: str, col: str) -> bool:
     )
 
 
+def _clean_nsc_expr(expr: pl.Expr) -> pl.Expr:
+    """Normalize NSC code strings (trim whitespace, drop trivial decimal tails)."""
+    return (
+        expr.cast(pl.Utf8, strict=False)
+        .str.strip_chars()
+        .str.replace(r"^(-?\d+)(?:\.0+)$", r"$1", literal=False)
+    )
+
+
 def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
     """Normalize NSC_CODE column - handle multiple codes, clean formatting."""
     if "NSC_CODE" not in df.columns:
         return df
 
     # Cast to string
-    df = df.with_columns(pl.col("NSC_CODE").cast(pl.Utf8))
+    df = df.with_columns(_clean_nsc_expr(pl.col("NSC_CODE")).alias("NSC_CODE"))
 
     # Unify common separators to comma: | ， 、 / ;
     unified = (
-        pl.col("NSC_CODE")
+        _clean_nsc_expr(pl.col("NSC_CODE"))
         .str.replace_all(r"\|", ",")
         .str.replace_all("，", ",")
         .str.replace_all("、", ",")
@@ -88,12 +97,13 @@ def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
 
     # Clean up NSC code
     df = df.with_columns(
-        pl.col("_nsc_list").cast(pl.Utf8).str.strip_chars().alias("NSC_CODE")
+        _clean_nsc_expr(pl.col("_nsc_list")).alias("NSC_CODE")
     ).drop("_nsc_list")
 
     # Filter out empty NSC codes
     df = df.filter(
-        pl.col("NSC_CODE").is_not_null() & (pl.col("NSC_CODE").cast(pl.Utf8).str.strip_chars() != "")
+        pl.col("NSC_CODE").is_not_null()
+        & (_clean_nsc_expr(pl.col("NSC_CODE")) != "")
     )
 
     if df.height == 0:
