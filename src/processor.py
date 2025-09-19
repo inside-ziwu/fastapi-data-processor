@@ -116,7 +116,7 @@ class DataProcessor:
         if message_transform:
             # API 层已将消息源归一化为 list[str]
             message_paths = file_path if isinstance(file_path, (list, tuple)) else [str(file_path)]
-            non_excel = [p for p in message_paths if not p.lower().endswith((".xlsx", ".xls", ".xlsm"))]
+            non_excel = [p for p in message_paths if not self._looks_like_excel(p)]
             if non_excel:
                 if len(message_paths) > 1:
                     raise ValueError("[message] 多文件输入仅支持 Excel 格式")
@@ -147,7 +147,7 @@ class DataProcessor:
                     f"Path for {source_name} is {type(file_path).__name__}; coercing to string."
                 )
                 file_path = str(file_path)
-            is_excel = file_path.lower().endswith((".xlsx", ".xls", ".xlsm"))
+            is_excel = self._looks_like_excel(file_path)
             # Heuristic: providers may append suffixes after .xlsx or hide real type.
             # Try opening as Excel if extension check failed for message/spending/ad/account*.
             if (not is_excel) and (
@@ -413,6 +413,16 @@ class DataProcessor:
             )
 
         return df
+
+    @staticmethod
+    def _looks_like_excel(path: str) -> bool:
+        lowered = str(path).lower()
+        lowered = re.split(r"[?#]", lowered, maxsplit=1)[0]
+        if "~" in lowered:
+            candidate = lowered.split("~", 1)[0]
+            if candidate.endswith((".xlsx", ".xls", ".xlsm")):
+                return True
+        return lowered.endswith((".xlsx", ".xls", ".xlsm"))
 
     def _load_message_excel(self, file_path: str, sheets_used: list[str]) -> pl.DataFrame:
         """Load a single message Excel file and return a Polars DataFrame."""
