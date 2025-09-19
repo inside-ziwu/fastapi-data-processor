@@ -32,6 +32,22 @@ class AccountBaseTransform(BaseTransform):
             if c not in wanted_unique and c in df.columns:
                 wanted_unique.append(c)
         df = df.select(wanted_unique)
-        # No date column here; join will fallback to NSC_CODE-only
-        df = df.unique(subset=["NSC_CODE"]) if "NSC_CODE" in df.columns else df
+
+        if "NSC_CODE" not in df.columns:
+            return df
+
+        # Prefer非空值：同一个 NSC_CODE 取层级/门店的首个非空文本
+        aggregations = []
+        if "level" in df.columns:
+            aggregations.append(pl.col("level").drop_nulls().first().alias("level"))
+        if "store_name" in df.columns:
+            aggregations.append(
+                pl.col("store_name").drop_nulls().first().alias("store_name")
+            )
+
+        if aggregations:
+            df = df.group_by("NSC_CODE").agg(aggregations)
+        else:
+            df = df.unique(subset=["NSC_CODE"])
+
         return df
