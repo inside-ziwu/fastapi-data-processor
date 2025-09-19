@@ -101,355 +101,280 @@ class DataProcessor:
         return finalized
 
     def _process_single_source(
-        self, source_name: str, file_path: str
+        self, source_name: str, file_path: str | list[str] | tuple[str, ...]
     ) -> Optional[pl.DataFrame]:
         """Process a single data source."""
-        # 参数健壮性：路径必须是字符串；若不是则尽力转换为字符串并告警
-        if not isinstance(file_path, str):
-            logger.warning(
-                f"Path for {source_name} is {type(file_path).__name__}; coercing to string."
-            )
-            file_path = str(file_path)
-        # Get appropriate transform first, so we can optimize reading (e.g., CSV column pruning)
         transform = self._get_transform_for_source(source_name)
-
-        # Special handling: message Excel wants merge-all-sheets with a '日期' column = sheet name
         name_norm = (source_name or "").lower()
-        is_excel = file_path.lower().endswith((".xlsx", ".xls", ".xlsm"))
         sheets_used: list[str] = []
-        # Heuristic: providers may append suffixes after .xlsx or hide real type.
-        # Try opening as Excel if extension check failed for message/spending/ad/account*.
-        if (not is_excel) and (
-            ("spending" in name_norm) or (" ad" in name_norm) or name_norm.endswith("_ad") or name_norm == "ad"
-            or ("message" in name_norm) or ("msg" in name_norm)
-            or ("account" in name_norm)
-        ):
-            try:
-                import pandas as pd
-                pd.ExcelFile(file_path, engine="openpyxl")
-                is_excel = True
-            except Exception:
-                is_excel = False
-        # Message-specific handling
-        if transform and transform.__class__.__name__.lower().startswith("message") and not is_excel:
-            try:
-                logger.info(f"[message] Excel 识别: False (fallback to generic reader), file={file_path}")
-            except Exception:
-                pass
 
-        if transform and transform.__class__.__name__.lower().startswith("message") and is_excel:
-            try:
-                logger.info(f"[message] Excel 识别: True, file={file_path}")
-            except Exception:
-                pass
-            import pandas as pd
-            # read all sheets
-            sheets = pd.read_excel(file_path, sheet_name=None, engine="openpyxl")
-            frames = []
-            # 对照日志：记录 sheet 名与解析到的日期
-            sheet_date_pairs: list[tuple[str, str]] = []
-            for sheet_name, pdf in sheets.items():
-                sheets_used.append(str(sheet_name))
-                # 从 sheet 名推断日期：始终写入（覆盖） 'date'（ISO），失败时写入'日期'文本并告警
-                pdf = pdf.copy()
-                sheet_str = str(sheet_name or "").strip()
-                s = unicodedata.normalize("NFKC", sheet_str)
-                s = s.replace("年", "-").replace("月", "-").replace("日", "")
-                s = s.replace("/", "-").replace(".", "-")
-                s = re.sub(r"\s+", "", s)
-                iso_val: Optional[str] = None
-                # 优先在 sheet 名中检索完整日期（到日）
-                m = re.search(r"(20\d{2})-(\d{1,2})-(\d{1,2})", s)
-                if m:
-                    y, mo, da = m.group(1), int(m.group(2)), int(m.group(3))
-                    iso_val = f"{y}-{mo:02d}-{da:02d}"
-                elif re.search(r"^\d{8}$", s):
-                    iso_val = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
-                else:
-                    m = re.search(r"(20\d{2})(\d{2})(\d{2})", s)
-                    if m:
-                        y, mo, da = m.group(1), int(m.group(2)), int(m.group(3))
-                        iso_val = f"{y}-{mo:02d}-{da:02d}"
+        df: Optional[pl.DataFrame] = None
+        is_excel = False
+
+        message_transform = bool(transform and transform.__class__.__name__.lower().startswith("message"))
+
+        if message_transform:
+            message_paths = self._coerce_message_paths(file_path)
+            non_excel = [p for p in message_paths if not p.lower().endswith((".xlsx", ".xls", ".xlsm"))]
+            if non_excel:
+                if len(message_paths) > 1:
+                    raise ValueError("[message] 多文件输入仅支持 Excel 格式")
+                try:
+                    logger.info(
+                        f"[message] Excel 识别: False (fallback to generic reader), file={message_paths[0]}"
+                    )
+                except Exception:
+                    pass
+                message_transform = False
+                file_path = message_paths[0]
+            else:
+                message_frames: list[pl.DataFrame] = []
+                for path in message_paths:
+                    message_frames.append(self._load_message_excel(path, sheets_used))
+                if not message_frames:
+                    return pl.DataFrame()
+                df = message_frames[0] if len(message_frames) == 1 else pl.concat(message_frames, how="vertical")
+                is_excel = True
+                try:
+                    logger.info(
+                        f"[message] 合并 {len(message_frames)} 个文件: {[Path(p).name for p in message_paths]}"
+                    )
+                except Exception:
+                    pass
+
+        if not message_transform:
+            if not isinstance(file_path, str):
+                logger.warning(
+                    f"Path for {source_name} is {type(file_path).__name__}; coercing to string."
+                )
+                file_path = str(file_path)
+            is_excel = file_path.lower().endswith((".xlsx", ".xls", ".xlsm"))
+            # Heuristic: providers may append suffixes after .xlsx or hide real type.
+            # Try opening as Excel if extension check failed for message/spending/ad/account*.
+            if (not is_excel) and (
+                ("spending" in name_norm) or (" ad" in name_norm) or name_norm.endswith("_ad") or name_norm == "ad"
+                or ("message" in name_norm) or ("msg" in name_norm)
+                or ("account" in name_norm)
+            ):
+                try:
+                    import pandas as pd
+                    pd.ExcelFile(file_path, engine="openpyxl")
+                    is_excel = True
+                except Exception:
+                    is_excel = False
+
+            if transform and transform.__class__.__name__.lower().startswith("spending") and is_excel:
+                sheet_names_raw = None
+                if isinstance(self.config, dict):
+                    sheet_names_raw = self.config.get("spending_sheet_names")
+                if sheet_names_raw:
+                    import pandas as pd
+
+                    if isinstance(sheet_names_raw, list):
+                        tokens = sheet_names_raw
                     else:
-                        # 仅有“年-月”，补01
-                        m = re.search(r"(20\d{2})-(\d{1,2})", s)
-                        if m:
-                            y, mo = m.group(1), int(m.group(2))
-                            iso_val = f"{y}-{mo:02d}-01"
-                        else:
-                            # 仅“年”，补01-01
-                            m = re.search(r"(20\d{2})", s)
-                            if m:
-                                y = m.group(1)
-                                iso_val = f"{y}-01-01"
-                if iso_val:
-                    # 写入为标准 ISO 字符串，后续在 transform 中统一解析为 pl.Date
-                    pdf["日期"] = iso_val
-                    sheet_date_pairs.append((sheet_str, iso_val))
+                        tokens = [s.strip() for s in str(sheet_names_raw).replace("，", ",").split(",") if s.strip()]
+
+                    def _norm_name(s: str) -> str:
+                        return (
+                            (s or "").strip().lower()
+                            .replace(" ", "")
+                            .replace("（", "(")
+                            .replace("）", ")")
+                        )
+
+                    frames = []
+                    xls = pd.ExcelFile(file_path, engine="openpyxl")
+                    norm_map = {_norm_name(name): name for name in xls.sheet_names}
+
+                    for tok in tokens:
+                        try:
+                            if isinstance(tok, int) or (isinstance(tok, str) and tok.isdigit()):
+                                idx = int(tok)
+                                if 0 <= idx < len(xls.sheet_names):
+                                    frames.append(pd.read_excel(xls, sheet_name=idx, engine="openpyxl"))
+                                    sheets_used.append(xls.sheet_names[idx])
+                                continue
+
+                            tnorm = _norm_name(str(tok))
+                            if tnorm in norm_map:
+                                original = norm_map[tnorm]
+                                frames.append(pd.read_excel(xls, sheet_name=original, engine="openpyxl"))
+                                sheets_used.append(original)
+                                continue
+
+                            matched = None
+                            for sn_norm, original in norm_map.items():
+                                if tnorm in sn_norm:
+                                    matched = original
+                                    break
+                            if matched:
+                                frames.append(pd.read_excel(xls, sheet_name=matched, engine="openpyxl"))
+                                sheets_used.append(matched)
+                        except Exception:
+                            continue
+
+                    if not frames:
+                        df = None
+                    else:
+                        import pandas as pd  # ensure in scope
+                        pdf = pd.concat(frames, ignore_index=True)
+                        required_cols = ["NSC CODE", "Date", "Spending(Net)"]
+                        present = [c for c in required_cols if c in pdf.columns]
+                        if present:
+                            pdf = pdf[present]
+                        df = pl.from_pandas(pdf)
+                else:
+                    df = None
+            elif transform and transform.__class__.__name__.lower().startswith("accountbase") and is_excel:
+                import pandas as pd
+                xls = pd.ExcelFile(file_path, engine="openpyxl")
+                import unicodedata as _ud
+                def _std(s: str) -> str:
+                    return _ud.normalize("NFKC", str(s or "")).strip().lower()
+                NSC_ALIASES = {
+                    _std(x)
+                    for x in [
+                        "NSC CODE", "NSC Code", "NSC_id", "NSC Code", "reg_dealer",
+                        "主机厂经销商id列表", "主机厂经销商ID", "主机厂经销商id",
+                    ]
+                }
+                LEVEL_ALIASES = {_std("层级")}
+                STORE_ALIASES = {_std("抖音id"), _std("抖音ID")}
+                level_frames: list[pl.DataFrame] = []
+                store_frames: list[pl.DataFrame] = []
+                for sheet_name in xls.sheet_names:
+                    sheets_used.append(str(sheet_name))
+                    pdf = pd.read_excel(xls, sheet_name=sheet_name, engine="openpyxl")
                     try:
-                        logger.info(f"[message] Sheet '{sheet_str}' → 日期 {iso_val}")
+                        cols = [str(c) for c in pdf.columns]
+                        seen: dict[str, int] = {}
+                        uniq: list[str] = []
+                        for c in cols:
+                            if c in seen:
+                                seen[c] += 1
+                                uniq.append(f"{c}_{seen[c]}")
+                            else:
+                                seen[c] = 0
+                                uniq.append(c)
+                        pdf.columns = uniq
                     except Exception:
                         pass
-                else:
-                    # 严格模式：sheet 必须包含可解析日期
-                    raise ValueError(f"[message] 无法从 sheet 名解析日期: '{sheet_str}' in file: {file_path}")
-                frames.append(pdf)
-            if not frames:
-                return pl.DataFrame()
-            # 合并并清洗 pandas 对象列，避免 bytes/int 混杂触发 Arrow 转换异常
-            pdf = pd.concat(frames, ignore_index=True)
-            try:
-                obj_cols = [c for c in pdf.columns if str(pdf[c].dtype) == "object"]
-                if obj_cols:
-                    for c in obj_cols:
-                        pdf[c] = pdf[c].apply(
-                            lambda v: (
-                                v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray)) else (None if v is None else str(v))
+                    try:
+                        def _to_str(v):
+                            try:
+                                import math
+                                import numpy as _np
+                                if v is None:
+                                    return None
+                                if isinstance(v, float) and math.isnan(v):
+                                    return None
+                                if hasattr(v, "__array__") and _np.isnan(v).item() is True:  # type: ignore[attr-defined]
+                                    return None
+                                if isinstance(v, (bytes, bytearray)):
+                                    return v.decode("utf-8", "ignore")
+                                return str(v)
+                            except Exception:
+                                return str(v) if v is not None else None
+                        for _c in list(pdf.columns):
+                            pdf[_c] = pdf[_c].apply(_to_str)
+                    except Exception:
+                        pass
+                    try:
+                        pldf = pl.from_pandas(pdf)
+                    except Exception:
+                        try:
+                            import pandas as _pd
+                            data = {}
+                            for k in pdf.columns:
+                                series = pdf[k]
+                                vals = []
+                                for v in list(series.values):
+                                    if v is None or (isinstance(v, float) and v != v):
+                                        vals.append(None)
+                                    elif isinstance(v, (bytes, bytearray)):
+                                        vals.append(v.decode("utf-8", "ignore"))
+                                    else:
+                                        vals.append(str(v))
+                            data[str(k)] = vals
+                            pldf = pl.DataFrame(data)
+                        except Exception as e:
+                            raise e
+                    try:
+                        rename_map = {}
+                        found = {"NSC_CODE": None, "level": None, "store_name": None}
+                        for c in pldf.columns:
+                            key = _std(c)
+                            if key in NSC_ALIASES:
+                                rename_map[c] = "NSC_CODE"
+                                found["NSC_CODE"] = c
+                            elif key in LEVEL_ALIASES:
+                                rename_map[c] = "level"
+                                found["level"] = c
+                            elif key in STORE_ALIASES:
+                                rename_map[c] = "store_name"
+                                found["store_name"] = c
+                        if rename_map:
+                            pldf = pldf.rename(rename_map)
+                        try:
+                            logger.info(
+                                f"[account_base] sheet '{sheet_name}' headers -> NSC_CODE:{found['NSC_CODE']}, level:{found['level']}, store_name:{found['store_name']}"
                             )
-                        )
-            except Exception:
-                pass
-            df = pl.from_pandas(pdf)
-            # 打印对照日志
-            try:
-                if sheet_date_pairs:
-                    pairs_str = ", ".join([f"'{n}'→{d}" for n, d in sheet_date_pairs])
-                    logger.info(f"[message] Sheet 日期映射: {pairs_str}")
-            except Exception:
-                pass
-        # Special handling: spending Excel may have multiple specific sheets to merge
-        elif transform and transform.__class__.__name__.lower().startswith("spending") and is_excel:
-            sheet_names_raw = None
-            if isinstance(self.config, dict):
-                sheet_names_raw = self.config.get("spending_sheet_names")
-            if sheet_names_raw:
-                import pandas as pd
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    cols = set(pldf.columns)
+                    if {"NSC_CODE", "level"}.issubset(cols):
+                        level_frames.append(pldf.select(["NSC_CODE", "level"]))
+                    if {"NSC_CODE", "store_name"}.issubset(cols):
+                        store_frames.append(pldf.select(["NSC_CODE", "store_name"]))
 
-                # Normalize input into a list of tokens (strings or ints)
-                if isinstance(sheet_names_raw, list):
-                    tokens = sheet_names_raw
-                else:
-                    tokens = [s.strip() for s in str(sheet_names_raw).replace("，", ",").split(",") if s.strip()]
-
-                def _norm_name(s: str) -> str:
-                    return (
-                        (s or "").strip().lower()
-                        .replace(" ", "")
-                        .replace("（", "(")
-                        .replace("）", ")")
+                level_df = None
+                if level_frames:
+                    level_df = pl.concat(level_frames, how="vertical").with_columns(
+                        pl.col("NSC_CODE").cast(pl.Utf8),
+                        pl.col("level").cast(pl.Utf8),
+                    )
+                    level_df = (
+                        level_df.group_by("NSC_CODE").agg(pl.col("level").drop_nulls().first().alias("level"))
                     )
 
-                frames = []
-                xls = pd.ExcelFile(file_path, engine="openpyxl")
-                norm_map = {_norm_name(name): name for name in xls.sheet_names}
+                store_df = None
+                if store_frames:
+                    store_df = pl.concat(store_frames, how="vertical").with_columns(
+                        pl.col("NSC_CODE").cast(pl.Utf8),
+                        pl.col("store_name").cast(pl.Utf8),
+                    )
+                    store_df = (
+                        store_df.group_by("NSC_CODE").agg(pl.col("store_name").drop_nulls().first().alias("store_name"))
+                    )
 
-                for tok in tokens:
+                if level_df is not None and store_df is not None:
                     try:
-                        # numeric index support
-                        if isinstance(tok, int) or (isinstance(tok, str) and tok.isdigit()):
-                            idx = int(tok)
-                            if 0 <= idx < len(xls.sheet_names):
-                                frames.append(pd.read_excel(xls, sheet_name=idx, engine="openpyxl"))
-                                sheets_used.append(xls.sheet_names[idx])
-                            continue
-
-                        tnorm = _norm_name(str(tok))
-                        # direct normalized equality
-                        if tnorm in norm_map:
-                            original = norm_map[tnorm]
-                            frames.append(pd.read_excel(xls, sheet_name=original, engine="openpyxl"))
-                            sheets_used.append(original)
-                            continue
-
-                        # substring fuzzy match as last resort
-                        matched = None
-                        for sn_norm, original in norm_map.items():
-                            if tnorm in sn_norm:
-                                matched = original
-                                break
-                        if matched:
-                            frames.append(pd.read_excel(xls, sheet_name=matched, engine="openpyxl"))
-                            sheets_used.append(matched)
-                    except Exception as e:
-                        # Swallow and continue to next token
-                        continue
-
-                if not frames:
-                    # fallback: defer to generic reader path
-                    df = None
-                else:
-                    import pandas as pd  # ensure in scope
-                    pdf = pd.concat(frames, ignore_index=True)
-                    # Reduce to required columns to avoid mixed-object issues on convert
-                    required_cols = ["NSC CODE", "Date", "Spending(Net)"]
-                    present = [c for c in required_cols if c in pdf.columns]
-                    if present:
-                        pdf = pdf[present]
-                    df = pl.from_pandas(pdf)
-            else:
-                # Fallback to generic reader below
-                df = None
-        # Special handling: account_base Excel with two sheets (level + store)
-        elif transform and transform.__class__.__name__.lower().startswith("accountbase") and is_excel:
-            import pandas as pd
-            # Read all sheets and pick columns via mapping per sheet
-            xls = pd.ExcelFile(file_path, engine="openpyxl")
-            # Strict header mapping definitions (no fuzzy)
-            import unicodedata as _ud
-            def _std(s: str) -> str:
-                return _ud.normalize("NFKC", str(s or "")).strip().lower()
-            NSC_ALIASES = {
-                _std(x)
-                for x in [
-                    "NSC CODE", "NSC Code", "NSC_id", "NSC Code", "reg_dealer",
-                    "主机厂经销商id列表", "主机厂经销商ID", "主机厂经销商id",
-                ]
-            }
-            LEVEL_ALIASES = {_std("层级")}
-            STORE_ALIASES = {_std("抖音id"), _std("抖音ID")}
-            level_frames: list[pl.DataFrame] = []
-            store_frames: list[pl.DataFrame] = []
-            for sheet_name in xls.sheet_names:
-                sheets_used.append(str(sheet_name))
-                pdf = pd.read_excel(xls, sheet_name=sheet_name, engine="openpyxl")
-                # Ensure all column headers are strings to avoid Polars conversion errors
-                try:
-                    cols = [str(c) for c in pdf.columns]
-                    # Ensure unique column names
-                    seen: dict[str, int] = {}
-                    uniq: list[str] = []
-                    for c in cols:
-                        if c in seen:
-                            seen[c] += 1
-                            uniq.append(f"{c}_{seen[c]}")
-                        else:
-                            seen[c] = 0
-                            uniq.append(c)
-                    pdf.columns = uniq
-                except Exception:
-                    pass
-                # Pre-coerce ALL columns to strings to avoid mixed-type issues
-                try:
-                    def _to_str(v):
-                        try:
-                            import math
-                            import numpy as _np
-                            if v is None:
-                                return None
-                            # pandas NA/NaN
-                            if isinstance(v, float) and math.isnan(v):
-                                return None
-                            if hasattr(v, "__array__") and _np.isnan(v).item() is True:  # type: ignore[attr-defined]
-                                return None
-                            if isinstance(v, (bytes, bytearray)):
-                                return v.decode("utf-8", "ignore")
-                            return str(v)
-                        except Exception:
-                            return str(v) if v is not None else None
-                    for _c in list(pdf.columns):
-                        pdf[_c] = pdf[_c].apply(_to_str)
-                except Exception:
-                    pass
-                # Robust conversion to polars
-                try:
-                    pldf = pl.from_pandas(pdf)
-                except Exception:
-                    try:
-                        import pandas as _pd
-                        data = {}
-                        for k in pdf.columns:
-                            series = pdf[k]
-                            vals = []
-                            for v in list(series.values):
-                                if v is None or (isinstance(v, float) and v != v):
-                                    vals.append(None)
-                                elif isinstance(v, (bytes, bytearray)):
-                                    vals.append(v.decode("utf-8", "ignore"))
-                                else:
-                                    vals.append(str(v))
-                            data[str(k)] = vals
-                        pldf = pl.DataFrame(data)
-                    except Exception as e:
-                        raise e
-                # Strict rename to NSC_CODE/level/store_name before selection
-                try:
-                    rename_map = {}
-                    found = {"NSC_CODE": None, "level": None, "store_name": None}
-                    for c in pldf.columns:
-                        key = _std(c)
-                        if key in NSC_ALIASES:
-                            rename_map[c] = "NSC_CODE"
-                            found["NSC_CODE"] = c
-                        elif key in LEVEL_ALIASES:
-                            rename_map[c] = "level"
-                            found["level"] = c
-                        elif key in STORE_ALIASES:
-                            rename_map[c] = "store_name"
-                            found["store_name"] = c
-                    if rename_map:
-                        pldf = pldf.rename(rename_map)
-                    try:
-                        logger.info(
-                            f"[account_base] sheet '{sheet_name}' headers -> NSC_CODE:{found['NSC_CODE']}, level:{found['level']}, store_name:{found['store_name']}"
-                        )
+                        level_df = level_df.with_columns(pl.col("NSC_CODE").cast(pl.Utf8, strict=False))
+                        store_df = store_df.with_columns([
+                            pl.col("NSC_CODE").cast(pl.Utf8, strict=False),
+                            pl.col("store_name").cast(pl.Utf8, strict=False),
+                        ])
                     except Exception:
                         pass
-                except Exception:
-                    pass
-                cols = set(pldf.columns)
-                if {"NSC_CODE", "level"}.issubset(cols):
-                    level_frames.append(pldf.select(["NSC_CODE", "level"]))
-                if {"NSC_CODE", "store_name"}.issubset(cols):
-                    store_frames.append(pldf.select(["NSC_CODE", "store_name"]))
-
-            level_df = None
-            if level_frames:
-                level_df = pl.concat(level_frames, how="vertical").with_columns(
-                    pl.col("NSC_CODE").cast(pl.Utf8),
-                    pl.col("level").cast(pl.Utf8),
-                )
-                # Prefer first non-null level per NSC_CODE
-                level_df = (
-                    level_df.group_by("NSC_CODE").agg(pl.col("level").drop_nulls().first().alias("level"))
-                )
-
-            store_df = None
-            if store_frames:
-                store_df = pl.concat(store_frames, how="vertical").with_columns(
-                    pl.col("NSC_CODE").cast(pl.Utf8),
-                    pl.col("store_name").cast(pl.Utf8),
-                )
-                # Prefer first non-null store_name per NSC_CODE
-                store_df = (
-                    store_df.group_by("NSC_CODE").agg(pl.col("store_name").drop_nulls().first().alias("store_name"))
-                )
-
-            if level_df is not None and store_df is not None:
-                # Ensure Utf8 types before join
-                try:
-                    level_df = level_df.with_columns(pl.col("NSC_CODE").cast(pl.Utf8, strict=False))
-                    store_df = store_df.with_columns([
-                        pl.col("NSC_CODE").cast(pl.Utf8, strict=False),
-                        pl.col("store_name").cast(pl.Utf8, strict=False),
-                    ])
-                except Exception:
-                    pass
-                df = level_df.join(store_df, on="NSC_CODE", how="outer")
-                try:
-                    ln = int(level_df.height)
-                    sn = int(store_df.height)
-                    nn = int(df.select(pl.col("store_name").is_not_null().sum()).to_series(0)[0]) if "store_name" in df.columns else 0
-                    logger.info(f"[account_base] merged level rows={ln}, store rows={sn}, store_name_non_null={nn}")
-                except Exception:
-                    pass
-            elif level_df is not None:
-                df = level_df
-            elif store_df is not None:
-                df = store_df
+                    df = level_df.join(store_df, on="NSC_CODE", how="outer")
+                    try:
+                        ln = int(level_df.height)
+                        sn = int(store_df.height)
+                        nn = int(df.select(pl.col("store_name").is_not_null().sum()).to_series(0)[0]) if "store_name" in df.columns else 0
+                        logger.info(f"[account_base] merged level rows={ln}, store rows={sn}, store_name_non_null={nn}")
+                    except Exception:
+                        pass
+                elif level_df is not None:
+                    df = level_df
+                elif store_df is not None:
+                    df = store_df
+                else:
+                    df = pl.DataFrame()
             else:
-                df = pl.DataFrame()
-        else:
-            df = None
+                df = None
 
         if df is None:
             # Generic reading path (optimize CSV for large files by selecting only needed columns)
@@ -488,6 +413,98 @@ class DataProcessor:
                 f"Processed {source_name}: rows={df.shape[0]}, cols={df.shape[1]}, sheets=-"
             )
 
+        return df
+
+    def _coerce_message_paths(self, raw_path: str | list[str] | tuple[str, ...]) -> list[str]:
+        """Normalize message file input into a non-empty list of string paths."""
+        if isinstance(raw_path, (list, tuple)):
+            paths = [str(p) for p in raw_path]
+        elif isinstance(raw_path, str):
+            paths = [raw_path]
+        else:
+            raise ValueError(f"[message] 不支持的文件路径类型: {type(raw_path).__name__}")
+
+        if not paths:
+            raise ValueError("[message] 未提供有效的文件路径")
+
+        for p in paths:
+            if not isinstance(p, str) or p == "":
+                raise ValueError("[message] 文件路径必须是非空字符串")
+
+        return paths
+
+    def _load_message_excel(self, file_path: str, sheets_used: list[str]) -> pl.DataFrame:
+        """Load a single message Excel file and return a Polars DataFrame."""
+        import pandas as pd
+
+        sheets = pd.read_excel(file_path, sheet_name=None, engine="openpyxl")
+        frames = []
+        sheet_date_pairs: list[tuple[str, str]] = []
+        for sheet_name, pdf in sheets.items():
+            marker = f"{Path(file_path).name}:{sheet_name}"
+            sheets_used.append(str(marker))
+            pdf = pdf.copy()
+            sheet_str = str(sheet_name or "").strip()
+            s = unicodedata.normalize("NFKC", sheet_str)
+            s = s.replace("年", "-").replace("月", "-").replace("日", "")
+            s = s.replace("/", "-").replace(".", "-")
+            s = re.sub(r"\s+", "", s)
+            iso_val: Optional[str] = None
+            m = re.search(r"(20\d{2})-(\d{1,2})-(\d{1,2})", s)
+            if m:
+                y, mo, da = m.group(1), int(m.group(2)), int(m.group(3))
+                iso_val = f"{y}-{mo:02d}-{da:02d}"
+            elif re.search(r"^\d{8}$", s):
+                iso_val = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+            else:
+                m = re.search(r"(20\d{2})(\d{2})(\d{2})", s)
+                if m:
+                    y, mo, da = m.group(1), int(m.group(2)), int(m.group(3))
+                    iso_val = f"{y}-{mo:02d}-{da:02d}"
+                else:
+                    m = re.search(r"(20\d{2})-(\d{1,2})", s)
+                    if m:
+                        y, mo = m.group(1), int(m.group(2))
+                        iso_val = f"{y}-{mo:02d}-01"
+                    else:
+                        m = re.search(r"(20\d{2})", s)
+                        if m:
+                            y = m.group(1)
+                            iso_val = f"{y}-01-01"
+            if iso_val:
+                pdf["日期"] = iso_val
+                sheet_date_pairs.append((f"{sheet_str}", iso_val))
+                try:
+                    logger.info(f"[message] Sheet '{sheet_str}' ({Path(file_path).name}) → 日期 {iso_val}")
+                except Exception:
+                    pass
+            else:
+                raise ValueError(f"[message] 无法从 sheet 名解析日期: '{sheet_str}' in file: {file_path}")
+            frames.append(pdf)
+
+        if not frames:
+            return pl.DataFrame()
+
+        pdf = pd.concat(frames, ignore_index=True)
+        try:
+            obj_cols = [c for c in pdf.columns if str(pdf[c].dtype) == "object"]
+            if obj_cols:
+                for c in obj_cols:
+                    pdf[c] = pdf[c].apply(
+                        lambda v: (
+                            v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray)) else (None if v is None else str(v))
+                        )
+                    )
+        except Exception:
+            pass
+
+        df = pl.from_pandas(pdf)
+        try:
+            if sheet_date_pairs:
+                pairs_str = ", ".join([f"'{n}'→{d}" for n, d in sheet_date_pairs])
+                logger.info(f"[message] Sheet 日期映射: {pairs_str}")
+        except Exception:
+            pass
         return df
 
     def _infer_csv_subset_columns(self, path: str, desired_fields: list[str]) -> list[str]:

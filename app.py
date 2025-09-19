@@ -6,7 +6,7 @@ import time
 import logging
 import asyncio
 import concurrent.futures
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Union, Any
 from fastapi import FastAPI, Body, HTTPException, Header, Response, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -136,10 +136,47 @@ def download_to_file(url_or_path: str, target_dir: str) -> str:
             os.remove(dest)
         raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
 
+def normalize_msg_inputs(raw_value: Any) -> List[str]:
+    """Normalize msg_excel_file into a non-empty list of URLs.
+
+    Accepts string, list of strings, or dict with "input" list.
+    Raises HTTPException when no valid URLs are provided.
+    """
+    if raw_value is None:
+        return []
+
+    candidates: Any
+    if isinstance(raw_value, str):
+        candidates = [raw_value]
+    elif isinstance(raw_value, dict):
+        candidates = raw_value.get("input")
+    elif isinstance(raw_value, (list, tuple)):
+        candidates = raw_value
+    else:
+        raise HTTPException(status_code=400, detail="msg_excel_file 不支持的类型")
+
+    if candidates is None:
+        raise HTTPException(status_code=400, detail="msg_excel_file 至少需要一个有效链接")
+
+    normalized: List[str] = []
+    for item in candidates:
+        if not isinstance(item, str):
+            raise HTTPException(status_code=400, detail="msg_excel_file 仅支持字符串链接")
+        link = item.strip()
+        if not link:
+            raise HTTPException(status_code=400, detail="msg_excel_file 包含空链接")
+        normalized.append(link)
+
+    if not normalized:
+        raise HTTPException(status_code=400, detail="msg_excel_file 至少需要一个有效链接")
+
+    return normalized
+
+
 class ProcessRequest(BaseModel):
     video_excel_file: Optional[str] = None
     live_bi_file: Optional[str] = None
-    msg_excel_file: Optional[str] = None
+    msg_excel_file: Optional[Union[str, List[str], Dict[str, Any]]] = None
     DR1_file: Optional[str] = None
     DR2_file: Optional[str] = None
     account_base_file: Optional[str] = None
@@ -187,20 +224,41 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         "account_base_file", "leads_file", "account_bi_file", "Spending_file"
     ]
     provided = payload.dict()
-    local_paths = {}
+    local_paths: Dict[str, Any] = {}  # NOTE: msg_excel_file 使用 List[str] 存储多个本地路径
     logger.info(f"Starting file processing with payload: {list(provided.keys())}")
     
     download_start_time = time.time()
     
     # 收集需要下载的文件
+    # 归一化消息多文件输入
+    msg_raw = provided.get("msg_excel_file")
+    msg_urls: List[str] = []
+    if msg_raw is not None and not (isinstance(msg_raw, str) and msg_raw.strip() == ""):
+        msg_urls = normalize_msg_inputs(msg_raw)
+        provided["msg_excel_file"] = msg_urls
+    else:
+        provided["msg_excel_file"] = None
+
     download_tasks = []
+    task_meta: List[tuple[str, Optional[int]]] = []
     for key in file_keys:
         val = provided.get(key)
         logger.info(f"DEBUG: {key} raw value = '{repr(val)}' (type: {type(val)})")
-        if val is not None and str(val).strip() != "" and str(val).strip() != "None":
-            download_tasks.append((key, val))
+        if key == "msg_excel_file":
+            if isinstance(val, list) and val:
+                for idx, url in enumerate(val):
+                    download_tasks.append((key, url))
+                    task_meta.append((key, idx))
+            elif isinstance(val, list):
+                raise HTTPException(status_code=400, detail="msg_excel_file 至少需要一个有效链接")
+            else:
+                logger.info(f"❌ Skipping {key}: value is '{repr(val)}'")
         else:
-            logger.info(f"❌ Skipping {key}: value is '{repr(val)}'")
+            if val is not None and str(val).strip() != "" and str(val).strip() != "None":
+                download_tasks.append((key, val))
+                task_meta.append((key, None))
+            else:
+                logger.info(f"❌ Skipping {key}: value is '{repr(val)}'")
     
     if download_tasks:
         logger.info(f"准备并发下载 {len(download_tasks)} 个文件")
@@ -210,26 +268,35 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             # 构建并发任务列表
             async_tasks = []
-            keys = []
+            keys: List[tuple[str, str]] = []
             
             for key, url in download_tasks:
                 task = loop.run_in_executor(executor, download_to_file, url, run_dir)
                 async_tasks.append(task)
-                keys.append(key)
+                keys.append((key, url))
             
             # 真正的并发执行所有下载任务
             try:
                 results = await asyncio.gather(*async_tasks, return_exceptions=True)
                 
                 # 处理结果
-                for key, result in zip(keys, results):
+                for idx, ((key, url), result) in enumerate(zip(keys, results)):
                     if isinstance(result, Exception):
                         # 清理失败的文件
                         shutil.rmtree(run_dir, ignore_errors=True)
                         raise HTTPException(status_code=500, detail=f"下载失败 {key}: {str(result)}")
                     else:
-                        local_paths[key] = result
-                        logger.info(f"成功下载 {key} 到 {local_paths[key]}")
+                        meta_key, meta_part = task_meta[idx]
+                        if meta_part is None:
+                            local_paths[key] = result
+                            logger.info(f"成功下载 {key} 到 {result}")
+                        else:
+                            stored = local_paths.setdefault(key, [])
+                            if not isinstance(stored, list):
+                                stored = [stored]
+                                local_paths[key] = stored
+                            stored.append(result)
+                            logger.info(f"成功下载 {key}[{meta_part}] ({url}) 到 {result}")
                         
             except Exception as e:
                 # 清理失败的文件
