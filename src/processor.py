@@ -675,8 +675,8 @@ class DataProcessor:
 
         for source_name, df in ordered[1:]:
             try:
-                # Use how='left' to preserve all rows from first file
-                result_df = self._safe_join(result_df, df, source_name)
+                prefer_left = is_account_base(source_name)
+                result_df = self._safe_join(result_df, df, source_name, prefer_left=prefer_left)
                 logger.info(f"Merged {source_name}: result shape {result_df.shape}")
             except Exception as e:
                 logger.warning(f"Failed to merge {source_name}: {e}")
@@ -818,7 +818,11 @@ class DataProcessor:
         return aggregated
 
     def _safe_join(
-        self, left: pl.DataFrame, right: pl.DataFrame, source_name: str
+        self,
+        left: pl.DataFrame,
+        right: pl.DataFrame,
+        source_name: str,
+        prefer_left: bool = False,
     ) -> pl.DataFrame:
         """Safely join two DataFrames on NSC_CODE and/or date.
 
@@ -842,6 +846,8 @@ class DataProcessor:
 
         # suffix masking diagnostics removed from core
 
+        join_type = "left" if prefer_left else "outer"
+
         # Prefer lazy streaming join for performance/scalability
         try:
             return (
@@ -849,7 +855,7 @@ class DataProcessor:
                 .join(
                     right.lazy(),
                     on=common_keys,
-                    how="outer",
+                    how=join_type,
                     suffix=f"_{source_name}",
                 )
                 .collect(streaming=True)
@@ -860,6 +866,6 @@ class DataProcessor:
             return left.rechunk().join(
                 right.rechunk(),
                 on=common_keys,
-                how="outer",
+                how=join_type,
                 suffix=f"_{source_name}",
             )

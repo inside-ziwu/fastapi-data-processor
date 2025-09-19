@@ -38,7 +38,7 @@ ACCOUNT_BI_MAP = {
 
 LEADS_MAP = {
     "主机厂经销商id列表": "NSC_CODE",
-    "留资日期": "date",
+    "商机创建日期": "date",
     "直播间表单提交商机量": "small_wheel_leads",
 }
 

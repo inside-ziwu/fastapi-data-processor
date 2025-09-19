@@ -32,7 +32,7 @@ class LeadsTransform(BaseTransform):
 
         targets = {
             "主机厂经销商id列表": "NSC_CODE",
-            "留资日期": "date",
+            "商机创建日期": "date",
             "直播间表单提交商机量": "small_wheel_leads",
         }
 
@@ -52,13 +52,8 @@ class LeadsTransform(BaseTransform):
         df = df.rename(rename_map)
         df = self._normalize_nsc_code(df)
         # Leads: 强制确保 date 列（不依赖通用 ensure_date_column）
-        if "date" not in df.columns and "留资日期" in df.columns:
-            df = df.rename({"留资日期": "date"})
-        if "date" not in df.columns:
-            # 进一步宽松：查找包含“留资”和“日期”的列
-            candidates = [c for c in df.columns if ("留资" in c and "日期" in c)]
-            if candidates:
-                df = df.rename({candidates[0]: "date"})
+        if "date" not in df.columns and "商机创建日期" in df.columns:
+            df = df.rename({"商机创建日期": "date"})
         # 解析 date 为 pl.Date
         if "date" not in df.columns:
             raise ValueError(f"leads 缺少 date 列，现有列: {df.columns}")
