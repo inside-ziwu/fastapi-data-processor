@@ -62,9 +62,14 @@ def _field_match(src: str, col: str) -> bool:
     )
 
 
+INVALID_NSC_TOKENS = {"", "null", "--"}
+
+
 def _clean_nsc_expr(expr: pl.Expr) -> pl.Expr:
-    """Normalize NSC code strings by casting to text and trimming whitespace only."""
-    return expr.cast(pl.Utf8, strict=False).str.strip_chars()
+    """Normalize NSC code strings by casting to text, trimming whitespace, and nulling known sentinels."""
+    cleaned = expr.cast(pl.Utf8, strict=False).str.strip_chars()
+    lowered = cleaned.str.to_lowercase()
+    return pl.when(lowered.is_in(list(INVALID_NSC_TOKENS))).then(None).otherwise(cleaned)
 
 
 def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
@@ -115,10 +120,7 @@ def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns(_clean_nsc_expr(pl.col("_nsc_list")).alias("NSC_CODE")).drop("_nsc_list")
 
     # Filter out empty NSC codes
-    df = df.filter(
-        pl.col("NSC_CODE").is_not_null()
-        & (_clean_nsc_expr(pl.col("NSC_CODE")) != "")
-    )
+    df = df.filter(pl.col("NSC_CODE").is_not_null())
 
     if df.height == 0:
         raise ValueError(
