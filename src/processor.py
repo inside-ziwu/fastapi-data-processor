@@ -478,6 +478,13 @@ class DataProcessor:
 
         pdf = pd.concat(frames, ignore_index=True)
         try:
+            null_rows = int(pdf["日期"].isna().sum()) if "日期" in pdf.columns else pdf.shape[0]
+            logger.info(
+                f"[message] file {Path(file_path).name} rows={pdf.shape[0]}, null_date_rows={null_rows}"
+            )
+        except Exception:
+            pass
+        try:
             obj_cols = [c for c in pdf.columns if str(pdf[c].dtype) == "object"]
             if obj_cols:
                 for c in obj_cols:
