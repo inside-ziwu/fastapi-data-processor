@@ -299,7 +299,21 @@ class DataProcessor:
                     frames.append(pldf)
 
                 if frames:
-                    df = pl.concat(frames, how="vertical_relaxed")
+                    # 统一列集合，防止不同 sheet 缺列导致 concat 失败
+                    ordered_columns: list[str] = []
+                    for f in frames:
+                        for col in f.columns:
+                            if col not in ordered_columns:
+                                ordered_columns.append(col)
+
+                    normalized_frames: list[pl.DataFrame] = []
+                    for f in frames:
+                        missing = [c for c in ordered_columns if c not in f.columns]
+                        if missing:
+                            f = f.with_columns([pl.lit(None).alias(c) for c in missing])
+                        normalized_frames.append(f.select(ordered_columns))
+
+                    df = pl.concat(normalized_frames, how="vertical")
                 else:
                     df = pl.DataFrame()
             else:
