@@ -130,21 +130,12 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
         existing.add(target)
         if target == "NSC_CODE":
             df = df.with_columns(
-                pl.col(target)
-                .cast(pl.Utf8, strict=False)
-                .str.strip_chars()
-                .str.replace(r"^(-?\d+)(?:\.0+)$", r"$1", literal=False)
-                .alias(target)
+                pl.col(target).cast(pl.Utf8, strict=False).str.strip_chars().alias(target)
             )
-        if target == "date":
+        elif target == "date":
             df = df.with_columns(pl.col(target).cast(pl.Date, strict=False).alias(target))
         elif target in {"month", "day"}:
             df = df.with_columns(pl.col(target).cast(pl.Int64, strict=False).alias(target))
-        elif target == "NSC_CODE":
-            # Already normalized above; ensure dtype stable
-            df = df.with_columns(
-                pl.col(target).cast(pl.Utf8, strict=False).alias(target)
-            )
 
         for c in cols:
             if c in df.columns:
@@ -241,17 +232,10 @@ def _assert_key_integrity(df: pl.DataFrame) -> None:
         nulls = int(df.select(pl.col(key).is_null().sum()).to_series(0)[0])
         assert nulls == 0, f"Key column '{key}' contains nulls after normalization!"
         if key == "NSC_CODE":
-            has_decimal_tail = bool(
-                df.select(
-                    pl.col(key)
-                    .cast(pl.Utf8, strict=False)
-                    .str.strip_chars()
-                    .str.contains(r"\.0+$", literal=False)
-                    .fill_null(False)
-                    .any()
-                ).to_series(0)[0]
+            dtype = df.schema[key]
+            assert dtype in {pl.Utf8, pl.Categorical}, (
+                f"Column '{key}' has unexpected dtype: {dtype}"
             )
-            assert not has_decimal_tail, "Key column 'NSC_CODE' still contains decimal suffixes (e.g. '.0') after normalization!"
     if PERIOD_KEY in df.columns:
         # period 可空，但 dtype 必须是字符串可比
         dtype = df.schema[PERIOD_KEY]

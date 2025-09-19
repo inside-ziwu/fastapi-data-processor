@@ -1,5 +1,6 @@
 """Common utilities for data transformation modules."""
 
+import os
 import polars as pl
 from typing import Dict, List, Any, Optional
 import re
@@ -62,12 +63,8 @@ def _field_match(src: str, col: str) -> bool:
 
 
 def _clean_nsc_expr(expr: pl.Expr) -> pl.Expr:
-    """Normalize NSC code strings (trim whitespace, drop trivial decimal tails)."""
-    return (
-        expr.cast(pl.Utf8, strict=False)
-        .str.strip_chars()
-        .str.replace(r"^(-?\d+)(?:\.0+)$", r"$1", literal=False)
-    )
+    """Normalize NSC code strings by casting to text and trimming whitespace only."""
+    return expr.cast(pl.Utf8, strict=False).str.strip_chars()
 
 
 def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
@@ -77,6 +74,25 @@ def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
 
     # Cast to string
     df = df.with_columns(_clean_nsc_expr(pl.col("NSC_CODE")).alias("NSC_CODE"))
+    try:
+        import logging
+
+        diag = os.getenv("PROCESSOR_DIAG", "0").strip().lower() in {"1", "true", "yes", "on"}
+        if diag:
+            logger = logging.getLogger(__name__)
+            blank_sample = (
+                df.with_columns(pl.col("NSC_CODE").str.strip_chars().alias("_strip"))
+                .filter(pl.col("_strip") == "")
+                .select("NSC_CODE")
+                .unique()
+                .head(5)
+                .to_series()
+                .to_list()
+            )
+            if blank_sample:
+                logger.warning(f"NSC_CODE contains blank entries after normalization: {blank_sample}")
+    except Exception:
+        pass
 
     # Unify common separators to comma: | ， 、 / ;
     unified = (
@@ -96,9 +112,7 @@ def normalize_nsc_code(df: pl.DataFrame) -> pl.DataFrame:
     df = df.explode("_nsc_list")
 
     # Clean up NSC code
-    df = df.with_columns(
-        _clean_nsc_expr(pl.col("_nsc_list")).alias("NSC_CODE")
-    ).drop("_nsc_list")
+    df = df.with_columns(_clean_nsc_expr(pl.col("_nsc_list")).alias("NSC_CODE")).drop("_nsc_list")
 
     # Filter out empty NSC codes
     df = df.filter(
