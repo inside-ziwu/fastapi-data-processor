@@ -17,7 +17,7 @@ LIVE_MAP = {
     "直播有效时长（小时）": "live_effective_hours",
     "超25min直播总场次": "effective_live_sessions",
     "曝光人数": "exposures",
-    "场观": "viewers",
+    "直播间观看人数": "viewers",
     "小风车点击次数（不含小雪花）": "small_wheel_clicks",
 }
 
@@ -33,13 +33,13 @@ ACCOUNT_BI_MAP = {
     "主机厂经销商id列表": "NSC_CODE",
     "日期": "date",
     "直播间表单提交商机量": "live_leads",
-    "短-播放量": "short_video_plays",
+    "短视频播放数": "short_video_plays",
 }
 
 LEADS_MAP = {
     "主机厂经销商id列表": "NSC_CODE",
     "留资日期": "date",
-    "直播间表单提交商机量(去重)": "small_wheel_leads",
+    "直播间表单提交商机量": "small_wheel_leads",
 }
 
 DR_MAP = {

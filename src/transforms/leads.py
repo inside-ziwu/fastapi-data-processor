@@ -33,7 +33,7 @@ class LeadsTransform(BaseTransform):
         targets = {
             "主机厂经销商id列表": "NSC_CODE",
             "留资日期": "date",
-            "直播间表单提交商机量(去重)": "small_wheel_leads",
+            "直播间表单提交商机量": "small_wheel_leads",
         }
 
         norm_cols = {_norm(c): c for c in df.columns}
