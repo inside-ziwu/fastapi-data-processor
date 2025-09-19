@@ -907,7 +907,6 @@ class DataProcessor:
 
         if not common_keys:
             # Absolutely do not cross-join. It explodes memory and is almost always wrong.
-            logger = logging.getLogger(__name__)
             logger.warning(
                 f"Skip merging '{source_name}': no common join keys among {join_keys}. "
                 f"left has {left.columns}, right has {right.columns}"
@@ -986,7 +985,6 @@ class DataProcessor:
                     logger.warning(f"[account_base] post-join diagnostics failed: {exc}")
             return result
         except Exception as e:
-            logger = logging.getLogger(__name__)
             logger.warning(f"Streaming join failed for '{source_name}': {e}. Falling back to eager join.")
             result = left.rechunk().join(
                 right.rechunk(),
