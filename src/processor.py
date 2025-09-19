@@ -305,7 +305,7 @@ class DataProcessor:
                     "主机厂经销商id列表", "主机厂经销商ID", "主机厂经销商id",
                 ]
             }
-            LEVEL_ALIASES = {_std("第二期层级")}
+            LEVEL_ALIASES = {_std("层级")}
             STORE_ALIASES = {_std("抖音id"), _std("抖音ID")}
             level_frames: list[pl.DataFrame] = []
             store_frames: list[pl.DataFrame] = []
