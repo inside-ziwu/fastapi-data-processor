@@ -89,14 +89,18 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
     existing = set(df.columns)
     base_to_cols: dict[str, list[str]] = {}
     for c in df.columns:
-        if "_" not in c:
+        lower = c.lower()
+        matched = False
+        for suf in suffixes:
+            token = f"_{suf}"
+            if lower.endswith(token):
+                base = c[: -len(token)]
+                if base and base in OUTPUT_NAME_MAP:
+                    base_to_cols.setdefault(base, []).append(c)
+                matched = True
+                break
+        if matched:
             continue
-        base, suf = c.rsplit("_", 1)
-        if suf.strip().lower() not in suffixes:
-            continue
-        if base not in OUTPUT_NAME_MAP:
-            continue
-        base_to_cols.setdefault(base, []).append(c)
 
     if not base_to_cols:
         return df
