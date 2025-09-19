@@ -651,9 +651,25 @@ class DataProcessor:
             n = (name or "").lower()
             return "account_base" in n or n == "accountbase" or n.endswith("_base")
 
-        ordered = [item for item in processed_files if not is_account_base(item[0])] + [
-            item for item in processed_files if is_account_base(item[0])
-        ]
+        non_account = [item for item in processed_files if not is_account_base(item[0])]
+        account_items = [item for item in processed_files if is_account_base(item[0])]
+
+        def _merge_priority(name: str) -> tuple[int, str]:
+            lname = (name or "").lower()
+            if lname in {"dr", "dr_file"} or lname.startswith("dr"):
+                return (0, lname)
+            if "lead" in lname:
+                return (1, lname)
+            if "live" in lname:
+                return (1, lname)
+            if "spending" in lname:
+                return (1, lname)
+            if "video" in lname:
+                return (2, lname)
+            return (1, lname)
+
+        non_account.sort(key=lambda item: _merge_priority(item[0]))
+        ordered = non_account + account_items
 
         result_df = ordered[0][1]
 

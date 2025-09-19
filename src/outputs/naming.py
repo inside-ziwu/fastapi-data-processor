@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import polars as pl
 
 # Map internal standardized names -> final Chinese output names
@@ -62,6 +64,10 @@ OUTPUT_NAME_MAP: dict[str, str] = {
     "store_name": "门店名",
 }
 
+# Primary key columns that must survive join-suffix normalization intact
+KEY_BASES: set[str] = {"NSC_CODE", "date", "month", "day"}
+PERIOD_KEY = "period"
+
 
 def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = None) -> pl.DataFrame:
     """Normalize suffixed columns produced by outer joins back to their base names.
@@ -103,6 +109,44 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
             .then(None)
             .otherwise(pl.col(colname).cast(pl.Utf8))
         )
+    # First, normalize mandatory key columns to guarantee clean join keys downstream
+    def _coalesce_columns(target: str, cols: list[str]) -> None:
+        nonlocal df
+        if not cols and target not in df.columns:
+            return
+
+        expressions: list[pl.Expr] = []
+        if target in df.columns:
+            expressions.append(pl.col(target))
+        expressions.extend(pl.col(c) for c in cols)
+        if not expressions:
+            return
+
+        df = df.with_columns(pl.coalesce(expressions).alias(target))
+        existing.add(target)
+        if target == "date":
+            df = df.with_columns(pl.col(target).cast(pl.Date, strict=False).alias(target))
+        elif target in {"month", "day"}:
+            df = df.with_columns(pl.col(target).cast(pl.Int64, strict=False).alias(target))
+        elif target == "NSC_CODE":
+            df = df.with_columns(pl.col(target).cast(pl.Utf8, strict=False).alias(target))
+
+        for c in cols:
+            if c in df.columns:
+                df = df.drop(c)
+            existing.discard(c)
+
+    for key in KEY_BASES:
+        suffixed = base_to_cols.pop(key, [])
+        _coalesce_columns(key, suffixed)
+
+    # period 允许缺失：仅做合并与类型收敛
+    period_cols = base_to_cols.pop(PERIOD_KEY, [])
+    if period_cols or PERIOD_KEY in df.columns:
+        _coalesce_columns(PERIOD_KEY, period_cols)
+        if PERIOD_KEY in df.columns:
+            df = df.with_columns(pl.col(PERIOD_KEY).cast(pl.Utf8, strict=False).alias(PERIOD_KEY))
+
     for base, cols in base_to_cols.items():
         if base in existing:
             if base in TEXT_BASES:
@@ -112,6 +156,13 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
                     df = df.with_columns(co).drop(cols)
                     for c in cols:
                         existing.discard(c)
+                except Exception:
+                    pass
+            else:
+                # Even when base exists, ensure suffix data back-fills null slots
+                try:
+                    co = pl.coalesce([pl.col(base)] + [pl.col(c) for c in cols]).alias(base)
+                    df = df.with_columns(co).drop(cols)
                 except Exception:
                     pass
             continue
@@ -157,7 +208,31 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
                     except Exception:
                         pass
                     continue
+    _assert_key_integrity(df)
     return df
+
+
+def _should_assert_keys() -> bool:
+    val = os.getenv("PROCESSOR_ASSERT_KEYS", "0").strip().lower()
+    return val in {"1", "true", "yes", "on", "debug"}
+
+
+def _assert_key_integrity(df: pl.DataFrame) -> None:
+    if not _should_assert_keys():
+        return
+    for key in KEY_BASES:
+        if key not in df.columns:
+            continue
+        nulls = int(df.select(pl.col(key).is_null().sum()).to_series(0)[0])
+        assert nulls == 0, f"Key column '{key}' contains nulls after normalization!"
+    if PERIOD_KEY in df.columns:
+        # period 可空，但 dtype 必须是字符串可比
+        dtype = df.schema[PERIOD_KEY]
+        assert dtype in {
+            pl.Utf8,
+            pl.Categorical,
+            pl.Null,
+        }, f"Column '{PERIOD_KEY}' has unexpected dtype: {dtype}"
 
 
 def rename_for_output(df: pl.DataFrame) -> pl.DataFrame:
