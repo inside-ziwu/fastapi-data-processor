@@ -401,6 +401,38 @@ class DataProcessor:
         if transform:
             df = transform.transform(df)
 
+        if (
+            transform
+            and source_name
+            and "account_base" in source_name.lower()
+            and self._diag_enabled()
+        ):
+            try:
+                uniq_total = (
+                    df.select(pl.col("NSC_CODE").n_unique()).to_series(0)[0]
+                    if "NSC_CODE" in df.columns
+                    else 0
+                )
+                level_filled = (
+                    df.filter(pl.col("level").is_not_null())
+                    .select(pl.col("NSC_CODE").n_unique())
+                    .to_series(0)[0]
+                    if "level" in df.columns
+                    else 0
+                )
+                store_filled = (
+                    df.filter(pl.col("store_name").is_not_null())
+                    .select(pl.col("NSC_CODE").n_unique())
+                    .to_series(0)[0]
+                    if "store_name" in df.columns
+                    else 0
+                )
+                logger.info(
+                    f"[account_base] NSC unique={int(uniq_total)}, with level={int(level_filled)}, with store_name={int(store_filled)}"
+                )
+            except Exception:
+                logger.exception("[account_base] diagnostics failed", exc_info=True)
+
         # Unified concise per-file info
         try:
             sheets_info = f"[{', '.join(sheets_used)}]" if sheets_used else "-"
@@ -846,11 +878,32 @@ class DataProcessor:
 
         # suffix masking diagnostics removed from core
 
+        diag_account = (
+            prefer_left
+            and source_name
+            and "account_base" in source_name.lower()
+            and self._diag_enabled()
+        )
+
+        if diag_account and "NSC_CODE" in left.columns and "NSC_CODE" in right.columns:
+            try:
+                left_keys = left.select("NSC_CODE").unique()
+                right_keys = right.select("NSC_CODE").unique()
+                missing = left_keys.join(right_keys, on="NSC_CODE", how="anti")
+                missing_cnt = int(missing.height)
+                if missing_cnt:
+                    sample = missing.head(10).get_column("NSC_CODE").to_list()
+                    logger.warning(
+                        f"[account_base] NSC_CODE missing in dimension table: count={missing_cnt}, sample={sample}"
+                    )
+            except Exception as exc:
+                logger.warning(f"[account_base] mismatch diagnostics failed: {exc}")
+
         join_type = "left" if prefer_left else "outer"
 
         # Prefer lazy streaming join for performance/scalability
         try:
-            return (
+            result = (
                 left.lazy()
                 .join(
                     right.lazy(),
@@ -860,12 +913,80 @@ class DataProcessor:
                 )
                 .collect(streaming=True)
             )
+            if diag_account:
+                try:
+                    base_cols = set(result.columns)
+                    lvl_expr = (
+                        pl.col("level").cast(pl.Utf8, strict=False).str.strip_chars()
+                        if "level" in base_cols
+                        else pl.lit(None)
+                    )
+                    store_expr = (
+                        pl.col("store_name").cast(pl.Utf8, strict=False).str.strip_chars()
+                        if "store_name" in base_cols
+                        else pl.lit(None)
+                    )
+                    missing_rows = result.filter(
+                        (("level" not in base_cols) | lvl_expr.is_null() | (lvl_expr == ""))
+                        & (("store_name" not in base_cols) | store_expr.is_null() | (store_expr == ""))
+                    )
+                    if not missing_rows.is_empty():
+                        miss_cnt = int(
+                            missing_rows.select(pl.col("NSC_CODE").n_unique()).to_series(0)[0]
+                        )
+                        sample = (
+                            missing_rows.select("NSC_CODE")
+                            .unique()
+                            .head(10)
+                            .get_column("NSC_CODE")
+                            .to_list()
+                        )
+                        logger.warning(
+                            f"[account_base] level/store_name null after join: count={miss_cnt}, sample={sample}"
+                        )
+                except Exception as exc:
+                    logger.warning(f"[account_base] post-join diagnostics failed: {exc}")
+            return result
         except Exception as e:
             logger = logging.getLogger(__name__)
             logger.warning(f"Streaming join failed for '{source_name}': {e}. Falling back to eager join.")
-            return left.rechunk().join(
+            result = left.rechunk().join(
                 right.rechunk(),
                 on=common_keys,
                 how=join_type,
                 suffix=f"_{source_name}",
             )
+            if diag_account:
+                try:
+                    base_cols = set(result.columns)
+                    lvl_expr = (
+                        pl.col("level").cast(pl.Utf8, strict=False).str.strip_chars()
+                        if "level" in base_cols
+                        else pl.lit(None)
+                    )
+                    store_expr = (
+                        pl.col("store_name").cast(pl.Utf8, strict=False).str.strip_chars()
+                        if "store_name" in base_cols
+                        else pl.lit(None)
+                    )
+                    missing_rows = result.filter(
+                        (("level" not in base_cols) | lvl_expr.is_null() | (lvl_expr == ""))
+                        & (("store_name" not in base_cols) | store_expr.is_null() | (store_expr == ""))
+                    )
+                    if not missing_rows.is_empty():
+                        miss_cnt = int(
+                            missing_rows.select(pl.col("NSC_CODE").n_unique()).to_series(0)[0]
+                        )
+                        sample = (
+                            missing_rows.select("NSC_CODE")
+                            .unique()
+                            .head(10)
+                            .get_column("NSC_CODE")
+                            .to_list()
+                        )
+                        logger.warning(
+                            f"[account_base] level/store_name null after eager join: count={miss_cnt}, sample={sample}"
+                        )
+                except Exception as exc:
+                    logger.warning(f"[account_base] eager post-join diagnostics failed: {exc}")
+            return result
