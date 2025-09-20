@@ -48,25 +48,6 @@ def _norm_field_name(name: str) -> str:
     s = re.sub(r"[^\w()/+:]", "", s)
     return s
 
-# ---- Module-level: Pre-write transforms for specific Chinese fields ----
-# 某些“率”字段在飞书Number字段里以百分比展示，若保留[0,1]小数，
-# 在0小数位的显示设置下会显示为0。这里仅在写入飞书前进行放大到百分比。
-RATE_PERCENT_FIELDS = {
-    # Component rates (two naming styles)
-    "组件点击率",
-    "T月组件点击率",
-    "T-1月组件点击率",
-    "组件点击率=点击|曝光",
-    "T月组件点击率=点击|曝光",
-    "T-1月组件点击率=点击|曝光",
-    "组件留资率",
-    "T月组件留资率",
-    "T-1月组件留资率",
-    "组件留资率=留资|曝光",
-    "T月组件留资率=留资|曝光",
-    "T-1月组件留资率=留资|曝光",
-}
-
 # Build Chinese->English mapping once from FIELD_MAPPINGS (best-effort)
 try:
     from src.config import FIELD_MAPPINGS as _FM
