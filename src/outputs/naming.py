@@ -114,6 +114,20 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
             .otherwise(pl.col(colname).cast(pl.Utf8))
         )
     # First, normalize mandatory key columns to guarantee clean join keys downstream
+    def _expr_for(colname: str, target: str) -> pl.Expr:
+        expr = pl.col(colname)
+        if target == "NSC_CODE":
+            cleaned = expr.cast(pl.Utf8, strict=False).str.strip_chars()
+            return pl.when(cleaned == "").then(None).otherwise(cleaned)
+        if target in TEXT_BASES:
+            cleaned = expr.cast(pl.Utf8, strict=False).str.strip_chars()
+            return pl.when(cleaned == "").then(None).otherwise(cleaned)
+        if target == "date":
+            return expr.cast(pl.Date, strict=False)
+        if target in {"month", "day"}:
+            return expr.cast(pl.Int64, strict=False)
+        return expr
+
     def _coalesce_columns(target: str, cols: list[str]) -> None:
         nonlocal df
         if not cols and target not in df.columns:
@@ -121,8 +135,8 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
 
         expressions: list[pl.Expr] = []
         if target in df.columns:
-            expressions.append(pl.col(target))
-        expressions.extend(pl.col(c) for c in cols)
+            expressions.append(_expr_for(target, target))
+        expressions.extend(_expr_for(c, target) for c in cols)
         if not expressions:
             return
 
@@ -130,12 +144,26 @@ def normalize_join_suffixes(df: pl.DataFrame, valid_suffixes: set[str] | None = 
         existing.add(target)
         if target == "NSC_CODE":
             df = df.with_columns(
-                pl.col(target).cast(pl.Utf8, strict=False).str.strip_chars().alias(target)
+                pl.when(
+                    pl.col(target).cast(pl.Utf8, strict=False).str.strip_chars() == ""
+                )
+                .then(None)
+                .otherwise(pl.col(target).cast(pl.Utf8, strict=False).str.strip_chars())
+                .alias(target)
             )
         elif target == "date":
             df = df.with_columns(pl.col(target).cast(pl.Date, strict=False).alias(target))
         elif target in {"month", "day"}:
             df = df.with_columns(pl.col(target).cast(pl.Int64, strict=False).alias(target))
+        elif target in TEXT_BASES:
+            df = df.with_columns(
+                pl.when(
+                    pl.col(target).cast(pl.Utf8, strict=False).str.strip_chars() == ""
+                )
+                .then(None)
+                .otherwise(pl.col(target).cast(pl.Utf8, strict=False).str.strip_chars())
+                .alias(target)
+            )
 
         for c in cols:
             if c in df.columns:

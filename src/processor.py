@@ -704,13 +704,84 @@ class DataProcessor:
 
         return None
 
+    def _coalesce_suffixed_columns(
+        self, df: pl.DataFrame, source_names: List[str]
+    ) -> pl.DataFrame:
+        """Coalesce columns suffixed by join operations back into their base names."""
+        if df is None or df.is_empty():
+            return df
+
+        suffix_tokens = {f"_{name}" for name in source_names if name}
+        if not suffix_tokens:
+            return df
+
+        base_to_cols: dict[str, list[str]] = {}
+        for col_name in df.columns:
+            lower = col_name.lower()
+            for token in suffix_tokens:
+                if lower.endswith(token.lower()):
+                    base = col_name[: -len(token)]
+                    if base:
+                        base_to_cols.setdefault(base, []).append(col_name)
+                    break
+
+        if not base_to_cols:
+            return df
+
+        def _expr_for(column: str, target: str) -> pl.Expr:
+            expr = pl.col(column)
+            if target == "NSC_CODE":
+                cleaned = expr.cast(pl.Utf8, strict=False).str.strip_chars()
+                return pl.when(cleaned == "").then(None).otherwise(cleaned)
+            if target in {"level", "store_name"}:
+                cleaned = expr.cast(pl.Utf8, strict=False).str.strip_chars()
+                return pl.when(cleaned == "").then(None).otherwise(cleaned)
+            if target == "date":
+                return expr.cast(pl.Date, strict=False)
+            return expr
+
+        for base, suffixed_cols in base_to_cols.items():
+            exprs: list[pl.Expr] = []
+            if base in df.columns:
+                exprs.append(_expr_for(base, base))
+            exprs.extend(_expr_for(col, base) for col in suffixed_cols)
+            if not exprs:
+                continue
+
+            df = df.with_columns(pl.coalesce(exprs).alias(base))
+
+            if base == "NSC_CODE":
+                df = df.with_columns(
+                    pl.when(
+                        pl.col(base).cast(pl.Utf8, strict=False).str.strip_chars() == ""
+                    )
+                    .then(None)
+                    .otherwise(pl.col(base).cast(pl.Utf8, strict=False).str.strip_chars())
+                    .alias(base)
+                )
+            elif base in {"level", "store_name"}:
+                df = df.with_columns(
+                    pl.when(
+                        pl.col(base).cast(pl.Utf8, strict=False).str.strip_chars() == ""
+                    )
+                    .then(None)
+                    .otherwise(pl.col(base).cast(pl.Utf8, strict=False).str.strip_chars())
+                    .alias(base)
+                )
+
+            for col in suffixed_cols:
+                if col != base and col in df.columns:
+                    df = df.drop(col)
+
+        return df
+
     def _stream_merge_data_sources(
         self, processed_files: List[tuple[str, pl.DataFrame]]
     ) -> pl.DataFrame:
         """Stream merge data sources to avoid memory accumulation."""
         if not processed_files:
             return pl.DataFrame()
-            
+        
         if len(processed_files) == 1:
             # Only one file, return it directly
             return processed_files[0][1]
@@ -752,7 +823,10 @@ class DataProcessor:
                 logger.warning(f"Failed to merge {source_name}: {e}")
                 # Continue with partial result rather than failing completely
                 continue
-                
+        suffix_sources = [name for name, _ in ordered[1:]]
+        if result_df is not None and not result_df.is_empty():
+            result_df = self._coalesce_suffixed_columns(result_df, suffix_sources)
+
         return result_df
 
     def _finalize_wide_table(self, df: pl.DataFrame) -> pl.DataFrame:

@@ -282,9 +282,13 @@ def compute_settlement_cn(df: pl.DataFrame, dimension: str | None = None) -> pl.
     if group_mode == "id":
         # 补充门店名、层级
         if "门店名" in df.columns:
-            extra_dims.append(pl.col("门店名").first().alias("门店名"))
+            store_clean = pl.col("门店名").cast(pl.Utf8, strict=False).str.strip_chars()
+            store_clean = pl.when(store_clean == "").then(None).otherwise(store_clean)
+            extra_dims.append(store_clean.drop_nulls().first().alias("门店名"))
         if "层级" in df.columns:
-            extra_dims.append(pl.col("层级").first().alias("层级"))
+            level_clean = pl.col("层级").cast(pl.Utf8, strict=False).str.strip_chars()
+            level_clean = pl.when(level_clean == "").then(None).otherwise(level_clean)
+            extra_dims.append(level_clean.drop_nulls().first().alias("层级"))
 
     grouped = df.group_by(id_col).agg(extra_dims + agg_exprs + eff_cols)
 
