@@ -124,10 +124,20 @@ async def process_data_files(
 
                 # Convert DataFrame to records
                 records = result_df.to_dicts()
-                success = await writer.write_records(records)
+                write_result = await writer.write_records(
+                    records,
+                    attach_record_id=True,
+                )
 
-                if success:
+                if write_result.success:
                     logger.info("Successfully wrote results to Feishu")
+                    if write_result.record_ids:
+                        preview_ids = write_result.record_ids[:5]
+                        logger.info(
+                            "Preview record_id values: %s%s",
+                            preview_ids,
+                            "..." if len(write_result.record_ids) > 5 else "",
+                        )
                 else:
                     logger.error("Failed to write results to Feishu")
             else:

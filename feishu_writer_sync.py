@@ -6,6 +6,7 @@ This eliminates the fake async pattern where sync SDK calls were wrapped in asyn
 
 import logging
 import json
+from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import re
@@ -57,6 +58,17 @@ try:
             CHINESE_TO_ENGLISH[_norm_field_name(_cn)] = _en
 except Exception:
     CHINESE_TO_ENGLISH = {}
+
+
+@dataclass
+class FeishuWriteResult:
+    """结果包装：保留成功状态及生成的 record_id 列表。"""
+
+    success: bool
+    record_ids: List[str] = field(default_factory=list)
+
+    def __bool__(self) -> bool:  # 兼容历史 bool 检查
+        return self.success
 
 
 class FeishuWriterSync:
@@ -381,15 +393,20 @@ class FeishuWriterSync:
             return False
         return True
 
-    def write_records(self, records: List[Dict[str, Any]]) -> bool:
+    def write_records(
+        self,
+        records: List[Dict[str, Any]],
+        attach_record_id: bool = False,
+        record_id_field: str = "record_id",
+    ) -> FeishuWriteResult:
         """写入记录到飞书多维表格 - 只做写入，不做清洗"""
         if not self.enabled:
             logger.info("[飞书] 写入未启用，跳过写入。")
-            return True
+            return FeishuWriteResult(success=True)
 
         if not records:
             logger.info("[飞书] 没有记录可写入。")
-            return True
+            return FeishuWriteResult(success=True)
 
         try:
             logger.info(f"[飞书] 开始写入，共 {len(records)} 条记录")
@@ -398,7 +415,7 @@ class FeishuWriterSync:
             schema = self.get_table_schema()
             if not schema:
                 logger.error("[飞书] 无法获取表格schema")
-                return False
+                return FeishuWriteResult(success=False)
 
             # 构建反向映射
             reverse_mapping = self._build_reverse_mapping(schema)
@@ -421,7 +438,7 @@ class FeishuWriterSync:
 
             if not table_records:
                 logger.warning("[飞书] 没有有效记录可以写入")
-                return False
+                return FeishuWriteResult(success=False)
 
             # 写入前验证：检查第一条记录的数据类型
             if table_records:
@@ -441,6 +458,7 @@ class FeishuWriterSync:
             batch_size = 100
             total_success = 0
             total_total = len(table_records)
+            created_record_ids: List[str] = []
 
             for i in range(0, len(table_records), batch_size):
                 batch = table_records[i : i + batch_size]
@@ -465,10 +483,23 @@ class FeishuWriterSync:
                     )
 
                     if response.success():
-                        batch_success = (
-                            len(response.data.records) if response.data else 0
-                        )
+                        response_records = []
+                        if response.data and response.data.records:
+                            response_records = list(response.data.records)
+
+                        batch_success = len(response_records)
                         total_success += batch_success
+                        if not response_records:
+                            logger.warning("[飞书] 写入成功但未返回 record_id 列表")
+                        else:
+                            for rec in response_records:
+                                rid = getattr(rec, "record_id", None)
+                                if not rid:
+                                    logger.warning(
+                                        "[飞书] 返回记录缺少 record_id 字段，无法附加"
+                                    )
+                                    continue
+                                created_record_ids.append(rid)
                         logger.info(
                             f"[飞书] 批次 {i//batch_size + 1} 成功写入 {batch_success}/{len(batch)} 条记录"
                         )
@@ -491,7 +522,9 @@ class FeishuWriterSync:
                         logger.error(
                             f"[飞书] 写入失败详情: {json.dumps(error_detail, ensure_ascii=False)}"
                         )
-                        return False
+                        return FeishuWriteResult(
+                            success=False, record_ids=created_record_ids
+                        )
 
                 except Exception as e:
                     # 捕获所有异常，包括网络错误、格式错误等
@@ -500,16 +533,89 @@ class FeishuWriterSync:
                     )
                     if hasattr(e, "response"):
                         logger.error(f"[飞书] 响应内容: {e.response}")
-                    return False
+                    return FeishuWriteResult(
+                        success=False, record_ids=created_record_ids
+                    )
 
+            success = total_success == total_total
             logger.info(
                 f"[飞书] 写入完成: 成功 {total_success}/{total_total} 条记录"
             )
-            return total_success == total_total
+
+            # 如需把 record_id 写回表格字段，则追加一次批量更新
+            if success and attach_record_id and created_record_ids:
+                norm_target = _norm_field_name(record_id_field).lower()
+                record_field_name = None
+                for fname in schema.keys():
+                    if _norm_field_name(fname).lower() == norm_target:
+                        record_field_name = fname
+                        break
+
+                if not record_field_name:
+                    logger.error(
+                        f"[飞书] 未找到 record_id 对应字段: {record_id_field}"
+                    )
+                    return FeishuWriteResult(
+                        success=False, record_ids=created_record_ids
+                    )
+
+                if not hasattr(self.client.bitable.v1.app_table_record, "batch_update"):
+                    logger.error("[飞书] SDK 不支持 batch_update 接口")
+                    return FeishuWriteResult(
+                        success=False, record_ids=created_record_ids
+                    )
+
+                update_records = []
+                for rid in created_record_ids:
+                    update_records.append(
+                        AppTableRecord.builder()
+                        .record_id(rid)
+                        .fields({record_field_name: rid})
+                        .build()
+                    )
+
+                for i in range(0, len(update_records), batch_size):
+                    batch = update_records[i : i + batch_size]
+                    update_request = (
+                        BatchUpdateAppTableRecordRequest.builder()
+                        .app_token(self.app_token)
+                        .table_id(self.table_id)
+                        .request_body(
+                            BatchUpdateAppTableRecordRequestBody.builder()
+                            .records(batch)
+                            .build()
+                        )
+                        .build()
+                    )
+
+                    update_resp = (
+                        self.client.bitable.v1.app_table_record.batch_update(
+                            update_request
+                        )
+                    )
+
+                    if not update_resp.success():
+                        error_detail = {
+                            "code": update_resp.code,
+                            "message": update_resp.msg,
+                            "request_id": getattr(update_resp, "request_id", "unknown"),
+                        }
+                        logger.error(
+                            f"[飞书] record_id 回填失败: {json.dumps(error_detail, ensure_ascii=False)}"
+                        )
+                        return FeishuWriteResult(
+                            success=False, record_ids=created_record_ids
+                        )
+
+                logger.info(
+                    f"[飞书] 成功回填 record_id 字段，数量 {len(created_record_ids)}"
+                )
+
+            return FeishuWriteResult(success=success, record_ids=created_record_ids)
 
         except Exception as e:
             logger.error(f"[飞书] 写入时发生错误: {e}")
-            return False
+            return FeishuWriteResult(success=False)
 
     def validate_config(self) -> Dict[str, Any]:
         """验证配置和表格结构 - 同步版本"""
@@ -633,9 +739,18 @@ class FeishuWriterV3:
         """Async wrapper for sync method."""
         return self._sync_writer.get_table_schema()
 
-    async def write_records(self, records: List[Dict[str, Any]]) -> bool:
+    async def write_records(
+        self,
+        records: List[Dict[str, Any]],
+        attach_record_id: bool = False,
+        record_id_field: str = "record_id",
+    ) -> FeishuWriteResult:
         """Async wrapper for sync method."""
-        return self._sync_writer.write_records(records)
+        return self._sync_writer.write_records(
+            records,
+            attach_record_id=attach_record_id,
+            record_id_field=record_id_field,
+        )
 
     async def validate_config(self) -> Dict[str, Any]:
         """Async wrapper for sync method."""

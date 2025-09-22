@@ -466,18 +466,6 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         # 4. Create standard and Feishu data formats
         results_data_standard = result_df.to_dicts()  # 标准JSON保持英文
 
-        # 5. Calculate final size and construct base message
-        json_string_for_size_calc = json.dumps(results_data_standard, default=json_date_serializer)
-        data_size_bytes = len(json_string_for_size_calc.encode('utf-8'))
-        data_size_mb = data_size_bytes / (1024 * 1024)
-        size_warning = " (超过1.5MB)" if data_size_mb > 1.5 else ""
-        base_message = (
-            f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，"
-            f"数据大小约 {data_size_mb:.2f} MB{size_warning}。"
-            f"清理了 {cleaned_count} 个无效数值。"
-        )
-        logger.info(base_message)
-
         # PROFILING: After Output Prep
         output_prep_end_time = time.time()
         logger.info(f"PROFILING: Output preparation finished. Total output prep time: {output_prep_end_time - output_prep_start_time:.2f} seconds.")
@@ -487,54 +475,28 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         shutil.rmtree(run_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
-    # 始终保存文件（默认行为）
-    out_path_standard = os.path.join(run_dir, "result.json")
     request_body = await request.json()
 
-    # 预览仅返回前N条，避免把完整数据同步塞回Coze
     preview_limit_raw = request_body.get("preview_records")
     try:
         preview_limit = int(preview_limit_raw) if preview_limit_raw is not None else 0
     except (TypeError, ValueError):
         preview_limit = 0
     preview_limit = max(0, min(preview_limit, 20))
-    if preview_limit:
-        preview_slice = results_data_standard[:preview_limit]
-    else:
-        preview_slice = []
 
-    preview_records = [
-        json.dumps(row, ensure_ascii=False, default=json_date_serializer)
-        for row in preview_slice
-    ]
-    logger.info(
-        f"Preview prepared: requested={preview_limit_raw}, returned={len(preview_records)}"
-    )
+    out_path_standard = os.path.join(run_dir, "result.json")
+    dimension_token = (dimension or "").strip().lower()
+    dealer_dimension_aliases = {
+        "经销商id",
+        "经销商",
+        "nsc_code",
+        "nsc",
+        "nsc code",
+        "dealer",
+    }
+    record_id_required = dimension_token in dealer_dimension_aliases
+    feishu_record_ids: List[str] = []
 
-    # 始终保存文件（默认行为）
-    final_message = base_message
-    if preview_records and num_rows > len(preview_records):
-        final_message = (
-            f"{base_message}"
-            f" 仅返回前 {len(preview_records)} 条记录用于预览。"
-        )
-    elif preview_records:
-        final_message = (
-            f"{base_message}"
-            f" 已返回全部 {len(preview_records)} 条记录作为预览。"
-        )
-    if final_message != base_message:
-        logger.info(final_message)
-
-    with open(out_path_standard, "w", encoding="utf-8") as f:
-        json.dump(
-            {"message": final_message, "data": results_data_standard},
-            f,
-            ensure_ascii=False,
-            indent=2,
-            default=json_date_serializer,
-        )
-    
     # 飞书写入逻辑（同步，保证在Coze 6分钟限制内返回）
     if request_body.get("feishu_enabled", False):
         feishu_config = {
@@ -566,19 +528,92 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         # 同步等待飞书写入完成
         start_write = time.time()
         try:
-            success = await asyncio.wait_for(writer.write_records(results_data_standard), timeout=effective_timeout)
+            write_result = await asyncio.wait_for(
+                writer.write_records(
+                    results_data_standard,
+                    attach_record_id=record_id_required,
+                ),
+                timeout=effective_timeout,
+            )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail=f"写入飞书表格超时（>{effective_timeout}s）")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"写入飞书表格异常：{e}")
 
         elapsed_write = time.time() - start_write
-        if not success:
+        if not write_result.success:
             logger.error("[飞书] 写入失败")
             raise HTTPException(status_code=500, detail="写入飞书表格失败，请检查配置和数据格式")
+        feishu_record_ids = write_result.record_ids or []
+        if record_id_required:
+            if not feishu_record_ids:
+                logger.error("[飞书] record_id 未返回，无法写入 record_id 字段")
+                shutil.rmtree(run_dir, ignore_errors=True)
+                raise HTTPException(status_code=500, detail="飞书未返回 record_id")
+            if len(feishu_record_ids) != len(results_data_standard):
+                logger.error(
+                    f"[飞书] record_id 数量与记录数量不一致: {len(feishu_record_ids)} vs {len(results_data_standard)}"
+                )
+                shutil.rmtree(run_dir, ignore_errors=True)
+                raise HTTPException(status_code=500, detail="飞书返回 record_id 数量异常")
+            for row, rid in zip(results_data_standard, feishu_record_ids):
+                row["record_id"] = rid
+            logger.info(
+                f"[飞书] 已为 {len(feishu_record_ids)} 条记录写入 record_id 字段"
+            )
         logger.info(f"[飞书] 写入成功，用时 {elapsed_write:.1f}s")
     else:
         logger.info("[飞书] 写入未启用，跳过飞书写入。")
+
+    # 准备预览和落盘信息
+    json_string_for_size_calc = json.dumps(
+        results_data_standard, default=json_date_serializer
+    )
+    data_size_bytes = len(json_string_for_size_calc.encode("utf-8"))
+    data_size_mb = data_size_bytes / (1024 * 1024)
+    size_warning = " (超过1.5MB)" if data_size_mb > 1.5 else ""
+    base_message = (
+        f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，"
+        f"数据大小约 {data_size_mb:.2f} MB{size_warning}。"
+        f"清理了 {cleaned_count} 个无效数值。"
+    )
+    logger.info(base_message)
+
+    if preview_limit:
+        preview_slice = results_data_standard[:preview_limit]
+    else:
+        preview_slice = []
+
+    preview_records = [
+        json.dumps(row, ensure_ascii=False, default=json_date_serializer)
+        for row in preview_slice
+    ]
+    logger.info(
+        f"Preview prepared: requested={preview_limit_raw}, returned={len(preview_records)}"
+    )
+
+    final_message = base_message
+    if preview_records and num_rows > len(preview_records):
+        final_message = (
+            f"{base_message}"
+            f" 仅返回前 {len(preview_records)} 条记录用于预览。"
+        )
+    elif preview_records:
+        final_message = (
+            f"{base_message}"
+            f" 已返回全部 {len(preview_records)} 条记录作为预览。"
+        )
+    if final_message != base_message:
+        logger.info(final_message)
+
+    with open(out_path_standard, "w", encoding="utf-8") as f:
+        json.dump(
+            {"message": final_message, "data": results_data_standard},
+            f,
+            ensure_ascii=False,
+            indent=2,
+            default=json_date_serializer,
+        )
 
     elapsed = time.time() - request_start_time
     logger.info(
@@ -593,6 +628,10 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         "data_size_bytes": data_size_bytes,
         "feishu_enabled": bool(request_body.get("feishu_enabled", False)),
         "processing_time_seconds": round(elapsed, 2),
+        "dimension": dimension,
+        "record_id_count": len(feishu_record_ids),
+        "record_id_preview": feishu_record_ids[:10],
+        "record_id_attached": record_id_required and bool(feishu_record_ids),
     }
 
     return {
