@@ -466,17 +466,17 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         # 4. Create standard and Feishu data formats
         results_data_standard = result_df.to_dicts()  # 标准JSON保持英文
 
-        # 5. Calculate final size and construct message
+        # 5. Calculate final size and construct base message
         json_string_for_size_calc = json.dumps(results_data_standard, default=json_date_serializer)
         data_size_bytes = len(json_string_for_size_calc.encode('utf-8'))
         data_size_mb = data_size_bytes / (1024 * 1024)
         size_warning = " (超过1.5MB)" if data_size_mb > 1.5 else ""
-        message = (
+        base_message = (
             f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，"
             f"数据大小约 {data_size_mb:.2f} MB{size_warning}。"
             f"清理了 {cleaned_count} 个无效数值。"
         )
-        logger.info(message)
+        logger.info(base_message)
 
         # PROFILING: After Output Prep
         output_prep_end_time = time.time()
@@ -489,14 +489,53 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
 
     # 始终保存文件（默认行为）
     out_path_standard = os.path.join(run_dir, "result.json")
-    with open(out_path_standard, "w", encoding="utf-8") as f:
-        json.dump({"message": message, "data": results_data_standard}, f, ensure_ascii=False, indent=2, default=json_date_serializer)
+    request_body = await request.json()
 
-    # 用于API返回的最终结果
-    string_records = [json.dumps(row, ensure_ascii=False, default=json_date_serializer) for row in results_data_standard]
+    # 预览仅返回前N条，避免把完整数据同步塞回Coze
+    preview_limit_raw = request_body.get("preview_records")
+    try:
+        preview_limit = int(preview_limit_raw) if preview_limit_raw is not None else 0
+    except (TypeError, ValueError):
+        preview_limit = 0
+    preview_limit = max(0, min(preview_limit, 20))
+    if preview_limit:
+        preview_slice = results_data_standard[:preview_limit]
+    else:
+        preview_slice = []
+
+    preview_records = [
+        json.dumps(row, ensure_ascii=False, default=json_date_serializer)
+        for row in preview_slice
+    ]
+    logger.info(
+        f"Preview prepared: requested={preview_limit_raw}, returned={len(preview_records)}"
+    )
+
+    # 始终保存文件（默认行为）
+    final_message = base_message
+    if preview_records and num_rows > len(preview_records):
+        final_message = (
+            f"{base_message}"
+            f" 仅返回前 {len(preview_records)} 条记录用于预览。"
+        )
+    elif preview_records:
+        final_message = (
+            f"{base_message}"
+            f" 已返回全部 {len(preview_records)} 条记录作为预览。"
+        )
+    if final_message != base_message:
+        logger.info(final_message)
+
+    with open(out_path_standard, "w", encoding="utf-8") as f:
+        json.dump(
+            {"message": final_message, "data": results_data_standard},
+            f,
+            ensure_ascii=False,
+            indent=2,
+            default=json_date_serializer,
+        )
     
     # 飞书写入逻辑（同步，保证在Coze 6分钟限制内返回）
-    request_body = await request.json()
     if request_body.get("feishu_enabled", False):
         feishu_config = {
             "enabled": True,
@@ -542,22 +581,25 @@ async def process_files(request: Request, payload: ProcessRequest = Body(...), x
         logger.info("[飞书] 写入未启用，跳过飞书写入。")
 
     elapsed = time.time() - request_start_time
-    logger.info(f"PROFILING: Total request time: {elapsed:.2f} seconds. Returning {len(string_records)} records.")
-
-    # The original message is mostly correct, but let's ensure the size is based on the final string records.
-    final_size_bytes = sum(len(r.encode('utf-8')) for r in string_records)
-    final_size_mb = final_size_bytes / (1024 * 1024)
-    size_warning = " (超过1.5MB)" if final_size_mb > 1.5 else ""
-    final_message = (
-        f"处理完成，生成数据 {num_rows} 行，{num_cols} 列，"
-        f"数据大小约 {final_size_mb:.2f} MB{size_warning}。"
-        f"清理了 {cleaned_count} 个无效数值。"
+    logger.info(
+        f"PROFILING: Total request time: {elapsed:.2f} seconds. Returning {len(preview_records)} preview record(s)."
     )
+
+    response_summary = {
+        "total_rows": num_rows,
+        "total_columns": num_cols,
+        "preview_count": len(preview_records),
+        "preview_limit": preview_limit,
+        "data_size_bytes": data_size_bytes,
+        "feishu_enabled": bool(request_body.get("feishu_enabled", False)),
+        "processing_time_seconds": round(elapsed, 2),
+    }
 
     return {
         "code": 200,
         "msg": final_message,
-        "records": string_records
+        "records": preview_records,
+        "summary": response_summary,
     }
 
 @app.post("/cleanup")
